@@ -1,0 +1,216 @@
+You are Replit Agent. Build a brand-new mobile-first PWA (and TWA-ready) web app called “PlateFlow” for a carwash + parking workflow with GLOBAL license-plate support.
+
+Key constraints (must follow)
+- License plates are worldwide: do NOT hardcode a single country format.
+- For testing, prioritize: France, South Africa, Democratic Republic of Congo (DRC).
+- OCR/recognition MUST always allow manual correction before saving.
+- Backend DB is Neon Postgres. The user will provide DATABASE_URL (Neon connection string). Use Prisma + Postgres.
+- This is NOT a payment system. No paid ticket required.
+
+Tech stack
+- Next.js (TypeScript) + TailwindCSS + Framer Motion
+- Prisma ORM
+- Neon Postgres via DATABASE_URL
+- Real-time updates via Server-Sent Events (SSE)
+- PWA (manifest + service worker) + offline shell
+- TWA-ready guidance in README (Android wrapper for PWA)
+
+High-level architecture
+- Single repo with Next.js app that includes:
+  - Mobile-first Technician PWA (scan/confirm/update/upload photos)
+  - Manager pages (live queue, analytics, audit log)
+  - API routes for auth, wash jobs, parking sessions, photo uploads, analytics, events, SSE stream
+- Recognition approach:
+  - MVP: capture photo + attempt OCR + ALWAYS show confirmation/edit step.
+  - Must work even if OCR is weak or unavailable.
+  - Modular recognition service to replace later with improved OCR/ML or external LPR camera/edge device.
+
+GLOBAL plate recognition requirements (important)
+1) Do not assume a fixed pattern.
+2) Implement a robust “Plate Candidate Pipeline”:
+   - Input: image (captured from device camera)
+   - Output: array of candidate strings + confidence scores
+3) Normalize plates without destroying meaning:
+   - Trim, uppercase (where appropriate), collapse multiple spaces/hyphens, remove obviously invalid characters.
+   - Preserve hyphens/spaces as “display form” but also store a “normalized” form for matching (e.g., remove spaces and hyphens).
+4) Country hinting (not enforcement):
+   - Technician can optionally select a country hint: FR / ZA / CD / OTHER.
+   - Country hint only affects ranking and formatting suggestions; it must not reject plates that don’t match.
+5) Add “plate similarity matching” for entry/exit or duplicates:
+   - Use normalized forms and a simple distance check (e.g., Levenshtein <= 1-2) to warn about likely mistyped plates.
+6) For France / South Africa / DRC testing:
+   - Add optional helper examples and UI hints (placeholders), but DO NOT validate strictly.
+
+Data storage requirements (Neon Postgres + Prisma)
+- Use Postgres as primary. Provide Prisma schema and migrations.
+- Provide .env.example with DATABASE_URL placeholder for Neon.
+- Ensure app runs with DATABASE_URL set.
+
+Functional requirements (must implement)
+
+A) Authentication + roles
+- Users: technician, manager, admin
+- Login page with email + password
+- Session-based auth (NextAuth recommended) OR secure JWT. Keep it simple but real.
+- RBAC:
+  - Tech: can create scans/jobs and update statuses, upload photos
+  - Manager: view dashboards, analytics, audit
+  - Admin: user management
+
+B) Technician PWA (mobile-first)
+- Home screen with 2 big actions:
+  1) “Parking Scan”
+  2) “Carwash Scan”
+- Scan workflow (must be fast):
+  1) Capture plate photo (camera)
+  2) Run OCR attempt (may return zero candidates)
+  3) Show “Confirm Plate” screen:
+     - Top candidates list (tap to select)
+     - Manual edit input always available
+     - Optional “Country hint” dropdown: France / South Africa / DRC / Other
+     - Save button is disabled until plate is non-empty after trimming
+  4) On save, create event + record in DB
+- Carwash flow:
+  - Create WashJob on confirmed plate
+  - Status buttons:
+    RECEIVED → PREWASH → FOAM → RINSE → DRY → COMPLETE
+  - Each status click appends an immutable EventLog entry
+  - Allow attaching photos at any step (timestamped)
+- Offline behavior:
+  - App shell works offline
+  - If offline when submitting events/photos:
+    - Queue events in IndexedDB/localStorage
+    - Sync when back online (background retry on app open)
+  - If offline for photos: store locally + prompt user to upload later
+
+C) Parking flow (digital ticket)
+- Parking scan supports:
+  - Entry: open/create ParkingSession with entry timestamp + optional photo
+  - Exit: close ParkingSession with exit timestamp + optional photo
+- Anti-duplicate logic:
+  - If open session exists for plate (normalized match), warn on “Entry”
+  - If no open session exists, warn on “Exit”
+  - Provide override button (sometimes OCR mistakes happen)
+
+D) Manager view
+- Live Queue page:
+  - Active wash jobs (not complete)
+  - Plate (display + normalized), status, technician, elapsed time, last update
+  - Job detail page: timeline of EventLog + photo gallery
+- Analytics page:
+  - Cars washed: today / this week / this month
+  - Jobs per technician
+  - Average cycle time
+- Audit log page:
+  - Append-only event list
+  - Filters: date range, technician, plate (supports partial search), event type
+
+E) Integration hooks to existing CRM
+- On every significant event, also POST a webhook to external CRM if env vars are set:
+  - CRM_WEBHOOK_URL (optional)
+  - CRM_WEBHOOK_SECRET (optional)
+- Use retry queue table:
+  - If webhook fails, store payload + error, retry later with exponential backoff
+- Provide a toggle in env to disable webhooks in dev.
+
+F) API endpoints (implement)
+- Auth:
+  - POST /api/auth/login (or NextAuth)
+  - POST /api/auth/logout
+  - GET /api/auth/me
+- Wash jobs:
+  - POST /api/wash-jobs
+  - GET /api/wash-jobs (filters: status, technician, plate, date)
+  - GET /api/wash-jobs/:id
+  - PATCH /api/wash-jobs/:id/status
+  - POST /api/wash-jobs/:id/photos
+- Parking:
+  - POST /api/parking/entry
+  - POST /api/parking/exit
+  - GET /api/parking/sessions (filters)
+- OCR:
+  - POST /api/ocr/plate-candidates
+    - Accepts uploaded image
+    - Returns candidates[] and confidence[]
+    - Must be modular; if OCR not available, return [] quickly and rely on manual confirm
+- Analytics:
+  - GET /api/analytics/summary
+- Events:
+  - GET /api/events (audit log list)
+- Realtime:
+  - GET /api/stream (SSE)
+
+Image upload (MVP local + production-ready abstraction)
+- Implement local file storage in dev:
+  - Save under /public/uploads or a safe server directory
+  - Store URLs in DB
+- Add storage abstraction so later can switch to S3/R2 using env:
+  - STORAGE_MODE=local|s3 (default local)
+  - If s3, require S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION (optional)
+- For now, keep S3 optional but scaffolding present.
+
+Prisma data model (Postgres)
+- User: id, email (unique), passwordHash, role, createdAt
+- WashJob: id, plateDisplay, plateNormalized, countryHint, status, technicianId, startAt, endAt, createdAt, updatedAt
+- WashPhoto: id, washJobId, url, statusAtTime, createdAt
+- ParkingSession: id, plateDisplay, plateNormalized, countryHint, entryAt, exitAt, entryPhotoUrl, exitPhotoUrl, createdAt, updatedAt
+- EventLog: id, type, plateDisplay, plateNormalized, countryHint, washJobId?, parkingSessionId?, userId?, payloadJson, createdAt
+- WebhookRetry: id, targetUrl, payloadJson, attempts, lastError, nextRetryAt, createdAt
+- OfflineSyncToken (optional): for basic device sync bookkeeping
+
+Plate utilities (must implement)
+- `normalizePlate(raw: string): string`
+  - Trim
+  - Convert to uppercase
+  - Replace multiple whitespace with single
+  - Remove spaces/hyphens for normalized match ONLY
+  - Remove characters outside: A-Z, 0-9 (and keep original display separately)
+- `arePlatesProbablySame(a, b): boolean`
+  - Compare normalized forms
+  - If not exact match, allow small edit distance threshold to warn about possible typo (do not auto-merge)
+
+UI/UX requirements
+- Mobile-first: big buttons, minimal typing, clear confirmation step
+- Framer Motion for subtle transitions
+- Show “You must confirm plate” step always
+- Show technician identity on every event
+- Default no deletes (append-only audit)
+
+Project structure (suggested)
+- /app or /pages for Next.js
+- /lib for prisma, auth, plate utils, sse, webhook
+- /components for UI
+- /prisma schema + migrations
+- /public manifest/icons
+
+README must include
+- How to set DATABASE_URL with Neon
+- How to run migrations and seed users
+- How to install as PWA
+- How to package as Android TWA (high-level)
+- How to set CRM webhook env vars
+- Known limitations of OCR and why manual confirm is required
+
+ENV (.env.example)
+- DATABASE_URL= (Neon)
+- NEXTAUTH_SECRET= (or AUTH_SECRET)
+- APP_URL=
+- CRM_WEBHOOK_URL= (optional)
+- CRM_WEBHOOK_SECRET= (optional)
+- STORAGE_MODE=local
+- S3_ENDPOINT= (optional)
+- S3_BUCKET= (optional)
+- S3_ACCESS_KEY= (optional)
+- S3_SECRET_KEY= (optional)
+- S3_REGION= (optional)
+
+Finish criteria
+- With DATABASE_URL provided:
+  - Prisma migration runs
+  - Can create users (seed script)
+  - Technician can capture plate photo, confirm/edit plate, create wash job, update status, upload photos
+  - Manager sees changes live (SSE), analytics, audit log
+  - Parking entry/exit works with plate matching and warnings
+  - Webhook retries work when CRM_WEBHOOK_URL is set
+
+Now generate the complete working project with code, Prisma schema, migrations, seed, and README.
