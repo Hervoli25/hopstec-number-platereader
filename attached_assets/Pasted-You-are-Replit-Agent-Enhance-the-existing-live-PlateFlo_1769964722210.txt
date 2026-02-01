@@ -1,0 +1,173 @@
+You are Replit Agent. Enhance the existing live “PlateFlow” app (mobile-first PWA/TWA-ready) to add missing production features. The app is already deployed and working in basic form (manual plate entry + flow). Now implement role-based auth, daily recap analytics, photo checkpoints, customer view, and installability.
+
+IMPORTANT: Do not break the existing deployed flow. Implement changes incrementally with migrations. Keep the app stable.
+
+Top Problems to Fix
+1) The app does NOT save daily number-plate capture totals and has no recap overview (daily/weekly/monthly).
+2) Role-based login is missing. It currently uses Replit login only. We need credentials and roles:
+   - Technician
+   - Manager
+   - Admin (hidden from UI; only for internal use)
+3) Technicians need a guided workflow: at specific wash steps the UI must prompt to take photos (optional/required configurable).
+4) Customers need a separate interface (no access to manager/technician screens). Customers can follow washing stages live and see progress photos.
+5) The app must be downloadable/installable (PWA), and the customer will install it from a link in the existing Carwash CRM dashboard.
+6) Branding updates:
+   - About page should re-use content style/structure from our existing NutriTrack app’s About page (the agent should remember/refer to it if available in repo; if not, create a similar About layout).
+   - Footer: “Made by HOPS-TECH INNOVATION” with a link to my portfolio website (use env var PORTFOLIO_URL).
+7) Customer should have a “Confirm steps were respected” button set based on their chosen service on the website dashboard (service checklist).
+
+System Requirements
+- Mobile-first UI (Tailwind + Framer Motion).
+- Works as PWA install on Android/iOS/desktop. Provide install prompts and manifest/icons.
+- Neon Postgres (DATABASE_URL) with Prisma migrations.
+- Real-time updates (SSE or WebSockets). Use whichever is already in the app; if none, implement SSE first.
+- Strict access control: Customer UI cannot see manager/tech info; Manager cannot act as Tech; Tech cannot see analytics.
+
+AUTH & ROLES (remove Replit dependency)
+Replace “Replit auth” as the only option. Users must be able to login without Replit account.
+Implement one of these:
+Option A (preferred): NextAuth with Credentials Provider (email + password) stored in DB.
+Option B: Custom auth with secure sessions (httpOnly cookies) + bcrypt password hashing.
+Must include:
+- User table: id, email unique, passwordHash, role enum (TECHNICIAN|MANAGER|ADMIN), isActive, createdAt
+- Admin is hidden: do not show admin in UI navigation; no “create admin” from UI.
+- Create a Manager + Technician credentials system:
+  - Admin can create/disable users in an internal admin-only route protected by a secret key OR a one-time “setup mode”.
+  - Provide a seed script that creates:
+    - 1 Admin (email/password from env: ADMIN_EMAIL, ADMIN_PASSWORD)
+    - 1 Manager sample (MANAGER_EMAIL, MANAGER_PASSWORD)
+    - 1 Technician sample (TECH_EMAIL, TECH_PASSWORD)
+- Role-based routing:
+  - /tech/* requires TECHNICIAN
+  - /manager/* requires MANAGER or ADMIN
+  - /customer/* requires CUSTOMER access token (see below)
+- IMPORTANT: Keep the option to still use Replit auth if it already exists, but it must NOT be required. Credentials auth is mandatory.
+
+DATA & RECAP OVERVIEW (daily capture + metrics)
+Implement durable tracking with analytics:
+- Every plate capture (parking entry/exit + carwash start) must create an EventLog row.
+- Add aggregated analytics endpoints and UI:
+  - Today: number of unique cars scanned and number of wash jobs created
+  - This week: same
+  - This month: same
+  - Breakdown per technician for a date range
+- Add a Manager “Recap” page:
+  - Cards for today/week/month counts
+  - Simple chart is optional, but at minimum list totals.
+  - “Export CSV” button for events and wash jobs (date range).
+
+WASH FLOW UPGRADES (photos + shareable with customer)
+- Add photo prompts:
+  - At status transitions (RECEIVED, FOAM, RINSE, DRY, COMPLETE), show a modal:
+    “Add photo for this step?” with camera capture.
+  - The manager can configure photo rules:
+    - optional vs required per step (default optional)
+- Store photos in DB and file storage as currently implemented. If local storage is used, keep it working.
+- Each photo must be tied to:
+  - washJobId
+  - step/status at time of photo
+  - timestamp
+  - uploadedBy userId
+- Customer can view these photos for their own job only.
+
+CUSTOMER EXPERIENCE (separate interface)
+Customers must have a dedicated interface that they can access after they install/open the PWA.
+Customer MUST NOT login as Technician or Manager.
+Implement customer access using a “Customer Job Token”:
+- When a wash job is created, generate a unique share token (random, unguessable).
+- The token grants read-only access to the wash job progress + photos.
+- Customer URL format:
+  - /customer/job/[token]
+- The customer will open this link from the Carwash website dashboard.
+- Once opened, the customer can “Add to Home Screen” (PWA install).
+- Real-time updates:
+  - Customer page listens to SSE channel for this job (or polls if SSE is hard).
+- Customer actions:
+  - See service plan (list of steps expected based on the service they purchased).
+  - Live stage indicator + timestamps.
+  - Photo gallery per stage (if available).
+  - At the end: “Confirm service steps respected” button:
+    - This opens a checklist UI for the service steps (pre-filled from service plan).
+    - Customer can confirm/approve each step and submit feedback.
+    - Save confirmation record in DB with timestamp.
+  - Optional: “Report issue” message box saved to DB (readable by manager).
+
+SERVICE PLAN / CHECKLIST (from website order)
+We need a model for “ServicePlan” and “CustomerOrder” linkage:
+- Because this app is separate from the main CRM, implement a simple integration mechanism:
+  - Endpoint: POST /api/integrations/create-job
+    - Secured by INTEGRATION_SECRET header
+    - Payload includes:
+      - plateDisplay
+      - customerName (optional)
+      - customerEmail (optional)
+      - serviceCode (e.g. BASIC, PREMIUM, DELUXE)
+      - serviceChecklist array of step labels
+  - The endpoint creates:
+    - WashJob
+    - CustomerJobToken
+    - ServiceChecklist rows tied to the job
+- The manager/technician app can still create jobs manually without website order:
+  - In that case, default checklist is the standard wash steps.
+
+INSTALLABLE PWA / DOWNLOADABILITY
+- Ensure the PWA is correctly installable:
+  - manifest.json, icons, theme colors
+  - service worker caching app shell
+  - Provide an “Install App” button that triggers the install prompt (where supported)
+- Provide a README section: how to wrap this PWA into Android TWA later.
+- Customer link from dashboard opens the job page; from there customer can install.
+
+BRANDING / ABOUT PAGE / FOOTER
+- Update About page:
+  - Use the same style/structure as the NutriTrack app’s About page that exists in this repository or in previous work (if it’s not accessible, create a professional About page with the same design language).
+  - Add “Made by HOPS-TECH INNOVATION” with clickable link to portfolio (env var PORTFOLIO_URL).
+- Add footer across all pages with that branding.
+
+SECURITY & AUDITABILITY (anti-fraud)
+- Make EventLog append-only from UI.
+- Log:
+  - job created (by whom)
+  - each status update (by whom)
+  - photo upload (by whom)
+  - customer confirmation (by token, store as customer action)
+- No deletion actions in UI (except admin deactivating users).
+
+DB Changes (Prisma + migrations)
+Add/ensure these entities exist (adjust to current schema; migrate safely):
+- User (email/passwordHash/role/isActive)
+- WashJob (plateDisplay, plateNormalized, status, technicianId, startedAt, endedAt)
+- WashPhoto (washJobId, step, url, createdAt, uploadedBy)
+- EventLog (type, washJobId, plateNormalized, userId nullable, payload)
+- CustomerJobAccess (washJobId, token unique, createdAt, lastViewedAt)
+- ServiceChecklistItem (washJobId, label, expected boolean, confirmed boolean, confirmedAt)
+- CustomerConfirmation (washJobId, token, confirmedAt, rating optional, notes optional)
+- Analytics views can be computed by queries; no need for materialized views initially.
+
+UI Routes (must implement)
+- /login (credentials login)
+- /tech (scan/create job, job list, job detail, status update, photo prompts)
+- /manager (recap/analytics, job list, audit log, config photo rules)
+- /customer/job/[token] (live tracking, photos, confirmation)
+- /about (NutriTrack style)
+Global navigation must show correct items based on role, and show none of manager/tech nav on customer route.
+
+ENV VARS (.env.example update)
+- DATABASE_URL (Neon)
+- AUTH_SECRET or NEXTAUTH_SECRET
+- ADMIN_EMAIL, ADMIN_PASSWORD
+- MANAGER_EMAIL, MANAGER_PASSWORD
+- TECH_EMAIL, TECH_PASSWORD
+- INTEGRATION_SECRET
+- PORTFOLIO_URL
+- APP_URL
+
+Testing/Verification checklist (do before finishing)
+1) Seed creates admin/manager/tech. Login works without Replit.
+2) Technician can create job from manual plate entry, see photo prompts, upload photos.
+3) Manager sees recap totals update for today/week/month and can export CSV.
+4) Customer link works: customer can see live updates and photos and confirm checklist.
+5) PWA install works (manifest + install prompt) and customer can “install” from job link.
+6) Existing flows still work; no breaking changes.
+
+Now implement all changes with clean code, migrations, and README updates. Show me final file changes and any new commands to run.

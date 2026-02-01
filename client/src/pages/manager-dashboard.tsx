@@ -11,11 +11,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { useSSE } from "@/hooks/use-sse";
 import { queryClient } from "@/lib/queryClient";
 import { 
-  LayoutDashboard, BarChart3, ClipboardList, LogOut, 
+  BarChart3, ClipboardList, LogOut, 
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
+import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
 
 interface QueueStats {
   activeWashes: number;
@@ -73,12 +74,7 @@ export default function ManagerDashboard() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-md bg-primary flex items-center justify-center">
-              <LayoutDashboard className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <span className="font-semibold">PlateFlow Manager</span>
-          </div>
+          <img src={logoPath} alt="HOPSVOIR" className="h-9 w-auto" />
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <Avatar className="w-8 h-8">

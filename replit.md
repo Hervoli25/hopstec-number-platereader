@@ -1,11 +1,11 @@
-# PlateFlow - Carwash & Parking Management PWA
+# HOPSVOIR - Carwash & Parking Management PWA
 
 ## Overview
 
-PlateFlow is a mobile-first Progressive Web Application (PWA) for carwash and parking workflow management with global license plate recognition support. The application provides technician-facing workflows for scanning and tracking vehicle wash jobs, parking entry/exit, and manager dashboards for analytics and audit logging.
+HOPSVOIR is a mobile-first Progressive Web Application (PWA) for carwash and parking workflow management with global license plate support. The application provides technician-facing workflows for scanning and tracking vehicle wash jobs, parking entry/exit, and manager dashboards for analytics and audit logging.
 
 Key capabilities:
-- Global license plate capture and manual confirmation (France, South Africa, DRC prioritized for testing)
+- Global license plate capture with manual confirmation (France, South Africa, DRC prioritized for testing)
 - Multi-stage carwash workflow tracking (received → prewash → foam → rinse → dry → complete)
 - Parking session management with entry/exit tracking
 - Real-time updates via Server-Sent Events (SSE)
@@ -14,7 +14,9 @@ Key capabilities:
 
 ## User Preferences
 
-Preferred communication style: Simple, everyday language.
+- Preferred communication style: Simple, everyday language
+- Brand name: HOPSVOIR (uses custom logo and favicon)
+- Camera capture is for photo reference; plate numbers require manual entry/confirmation
 
 ## System Architecture
 
@@ -33,7 +35,7 @@ Preferred communication style: Simple, everyday language.
 - **API Pattern**: RESTful endpoints under `/api/*` prefix
 - **Real-time**: Server-Sent Events (SSE) for live queue updates
 - **Authentication**: Replit Auth integration with OpenID Connect, session-based with Passport.js
-- **File Uploads**: Multer for photo handling, stored in `/uploads` directory
+- **File Uploads**: Photos stored in `/uploads` directory
 
 ### Database Layer
 - **Database**: PostgreSQL (Neon-compatible)
@@ -62,9 +64,9 @@ Preferred communication style: Simple, everyday language.
 
 1. **Monorepo Structure**: Single repository with shared types between frontend and backend eliminates type drift and simplifies deployment.
 
-2. **Global Plate Recognition**: Plates are normalized (spaces/hyphens removed) for matching while preserving display format. Country hints (FR/ZA/CD/OTHER) influence UI suggestions but never reject plates.
+2. **Global Plate Support**: Plates are normalized (spaces/hyphens removed) for matching while preserving display format. Country hints (FR/ZA/CD/OTHER) influence UI suggestions but never reject plates.
 
-3. **Confirmation-First OCR**: All plate captures require manual confirmation before saving, ensuring accuracy when OCR is weak or unavailable.
+3. **Confirmation-First Flow**: All plate captures require manual confirmation before saving, ensuring accuracy. Camera is for photo reference only.
 
 4. **Role-Based Access**: Three-tier role system with middleware protection. Default role is "technician" for new users.
 

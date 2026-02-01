@@ -1,6 +1,6 @@
 {
-  "name": "PlateFlow",
-  "short_name": "PlateFlow",
+  "name": "HOPSVOIR",
+  "short_name": "HOPSVOIR",
   "description": "Smart Carwash & Parking Management with Global License Plate Recognition",
   "start_url": "/",
   "display": "standalone",

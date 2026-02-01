@@ -202,9 +202,9 @@ export default function ScanParking() {
               data-testid="card-open-camera"
             >
               <Camera className="w-16 h-16 mx-auto mb-4 text-primary" />
-              <h3 className="text-lg font-semibold mb-2">Take Photo</h3>
-              <p className="text-muted-foreground">
-                Use camera to capture license plate
+              <h3 className="text-lg font-semibold mb-2">Capture Plate Photo</h3>
+              <p className="text-muted-foreground text-sm">
+                Take a photo of the plate, then enter the plate number
               </p>
             </Card>
 
