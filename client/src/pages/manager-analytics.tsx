@@ -1,37 +1,44 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { useAuth } from "@/hooks/use-auth";
+import { AppHeader } from "@/components/app-header";
 import { 
-  BarChart3, ClipboardList, LogOut, 
-  Activity, TrendingUp, Clock, Users
+  BarChart3, ClipboardList, 
+  Activity, TrendingUp, Clock, Users, Timer
 } from "lucide-react";
-import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
 
 interface AnalyticsSummary {
   todayWashes: number;
   weekWashes: number;
   monthWashes: number;
   avgCycleTimeMinutes: number;
+  avgTimePerStage: Record<string, number>;
   technicianStats: { userId: string; name: string; count: number }[];
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  received: "Receiving",
+  prewash: "Pre-Wash",
+  foam: "Foam",
+  rinse: "Rinse",
+  dry: "Drying",
+};
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+
 export default function ManagerAnalytics() {
-  const { user, logout } = useAuth();
   const [location] = useLocation();
 
   const { data: analytics, isLoading } = useQuery<AnalyticsSummary>({
     queryKey: ["/api/analytics/summary"],
   });
-
-  const initials = user ? 
-    `${user.firstName?.charAt(0) || ""}${user.lastName?.charAt(0) || "U"}`.toUpperCase() 
-    : "M";
 
   const navItems = [
     { href: "/manager", label: "Live Queue", icon: Activity },
@@ -41,26 +48,7 @@ export default function ManagerAnalytics() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
-        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
-          <img src={logoPath} alt="HOPSVOIR" className="h-9 w-auto" />
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Avatar className="w-8 h-8">
-              <AvatarImage src={user?.profileImageUrl || undefined} />
-              <AvatarFallback className="text-sm">{initials}</AvatarFallback>
-            </Avatar>
-            <Button 
-              variant="ghost" 
-              size="icon"
-              onClick={() => logout()}
-              data-testid="button-logout"
-            >
-              <LogOut className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-      </header>
+      <AppHeader title="Manager Dashboard" />
 
       <nav className="border-b border-border bg-card">
         <div className="max-w-4xl mx-auto px-4">
@@ -150,6 +138,39 @@ export default function ManagerAnalytics() {
               </div>
             </Card>
           </div>
+
+          <Card className="p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Timer className="w-5 h-5 text-muted-foreground" />
+              <h2 className="text-lg font-semibold">Average Time per Stage</h2>
+            </div>
+            
+            {isLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-10" />
+                <Skeleton className="h-10" />
+              </div>
+            ) : analytics?.avgTimePerStage && Object.keys(analytics.avgTimePerStage).length > 0 ? (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                {Object.entries(analytics.avgTimePerStage).map(([stage, seconds]) => (
+                  <div 
+                    key={stage}
+                    className="text-center p-3 rounded-lg bg-muted/50"
+                    data-testid={`kpi-stage-${stage}`}
+                  >
+                    <p className="text-2xl font-bold font-mono">{formatDuration(seconds)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{STAGE_LABELS[stage] || stage}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                <Timer className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No stage timing data available yet</p>
+                <p className="text-xs mt-1">Data will appear after jobs are completed</p>
+              </div>
+            )}
+          </Card>
 
           <Card className="p-6">
             <div className="flex items-center gap-3 mb-6">

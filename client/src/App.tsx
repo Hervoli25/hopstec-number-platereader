@@ -44,9 +44,16 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
 function AppRouter() {
   const [location] = useLocation();
+  const { isAuthenticated, isLoading } = useAuth();
   
-  const publicPaths = ["/login", "/about"];
+  // Public routes accessible to everyone
+  const publicPaths = ["/login", "/about", "/landing"];
   const isPublicPath = publicPaths.includes(location) || location.startsWith("/customer/job/");
+  
+  // Landing page is public
+  if (location === "/landing") {
+    return <LandingPage />;
+  }
   
   if (isPublicPath) {
     return (
@@ -57,6 +64,11 @@ function AppRouter() {
         <Route component={NotFound} />
       </Switch>
     );
+  }
+
+  // Root path: show landing page for unauthenticated, dashboard for authenticated
+  if (location === "/" && !isLoading && !isAuthenticated) {
+    return <LandingPage />;
   }
 
   return (

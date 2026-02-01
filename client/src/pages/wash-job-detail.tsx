@@ -9,11 +9,59 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
   ArrowLeft, Check, Loader2, Camera, 
-  Droplets, Wind, Sparkles, CircleDot, Car
+  Droplets, Wind, Sparkles, CircleDot, Car, Clock, Calendar
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { WASH_STATUS_ORDER } from "@shared/schema";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format, differenceInMinutes, differenceInSeconds } from "date-fns";
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remainMins = mins % 60;
+  return `${hours}h ${remainMins}m`;
+}
+
+function calculateStageDurations(stageTimestamps: Record<string, string> | null | undefined): { stage: string; duration: number; startTime: string }[] {
+  if (!stageTimestamps) return [];
+  
+  // Use explicit stage order to ensure correct calculation
+  const orderedStages = ["received", "prewash", "foam", "rinse", "dry", "complete"];
+  const presentStages = orderedStages.filter(s => stageTimestamps[s]);
+  const durations: { stage: string; duration: number; startTime: string }[] = [];
+  
+  for (let i = 0; i < presentStages.length; i++) {
+    const stage = presentStages[i];
+    // Skip the complete stage - we only show time spent IN each stage
+    if (stage === "complete") continue;
+    
+    const startTime = new Date(stageTimestamps[stage]);
+    // Find the next available timestamp (could be the next stage or complete)
+    let endTime = startTime;
+    for (let j = i + 1; j < presentStages.length; j++) {
+      if (stageTimestamps[presentStages[j]]) {
+        endTime = new Date(stageTimestamps[presentStages[j]]);
+        break;
+      }
+    }
+    
+    const duration = differenceInSeconds(endTime, startTime);
+    
+    // Only include if we have a valid end time (duration > 0)
+    if (duration > 0) {
+      durations.push({
+        stage,
+        duration,
+        startTime: stageTimestamps[stage],
+      });
+    }
+  }
+  
+  return durations;
+}
 
 const STATUS_CONFIG: Record<WashStatus, { label: string; icon: typeof Car; color: string }> = {
   received: { label: "Received", icon: Car, color: "bg-blue-500" },
@@ -189,16 +237,69 @@ export default function WashJobDetail() {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
+              className="space-y-4"
             >
-              <Card className="p-6 text-center bg-green-500/10 border-green-500/20">
-                <Check className="w-12 h-12 mx-auto mb-3 text-green-500" />
-                <h3 className="text-lg font-semibold text-green-700 dark:text-green-400">
-                  Wash Complete!
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Vehicle is ready for customer
-                </p>
+              <Card className="p-6 bg-green-500/10 border-green-500/20">
+                <div className="flex items-center gap-3 mb-4">
+                  <Check className="w-10 h-10 text-green-500" />
+                  <div>
+                    <h3 className="text-lg font-semibold text-green-700 dark:text-green-400">
+                      Wash Complete!
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Vehicle is ready for customer
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="space-y-3 border-t border-green-500/20 pt-4">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Calendar className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Completed:</span>
+                    <span className="font-medium" data-testid="text-completion-date">
+                      {job.endAt ? format(new Date(job.endAt), "MMM d, yyyy 'at' h:mm a") : "N/A"}
+                    </span>
+                  </div>
+                  
+                  {job.serviceCode && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <CircleDot className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">Service:</span>
+                      <Badge variant="outline" data-testid="badge-service-code">{job.serviceCode}</Badge>
+                    </div>
+                  )}
+                  
+                  {job.startAt && job.endAt && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <Clock className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">Total Time:</span>
+                      <span className="font-medium" data-testid="text-total-time">
+                        {formatDuration(differenceInSeconds(new Date(job.endAt), new Date(job.startAt)))}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </Card>
+              
+              {job.stageTimestamps && Object.keys(job.stageTimestamps).length > 1 && (
+                <Card className="p-4">
+                  <h4 className="font-medium mb-3 text-sm">Time per Stage</h4>
+                  <div className="space-y-2">
+                    {calculateStageDurations(job.stageTimestamps as Record<string, string>)
+                      .filter(s => s.stage !== "complete")
+                      .map(({ stage, duration }) => (
+                        <div key={stage} className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            {STATUS_CONFIG[stage as WashStatus]?.label || stage}
+                          </span>
+                          <span className="font-mono font-medium" data-testid={`text-stage-time-${stage}`}>
+                            {formatDuration(duration)}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </Card>
+              )}
             </motion.div>
           )}
 

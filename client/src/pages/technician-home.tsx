@@ -1,15 +1,13 @@
 import { motion } from "framer-motion";
 import { Link } from "wouter";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/hooks/use-auth";
-import { Car, ParkingSquare, LogOut, ClipboardList } from "lucide-react";
-import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
+import { AppHeader } from "@/components/app-header";
+import { Car, ParkingSquare, ClipboardList } from "lucide-react";
 
 export default function TechnicianHome() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   const initials = user ? 
     `${user.firstName?.charAt(0) || ""}${user.lastName?.charAt(0) || "U"}`.toUpperCase() 
@@ -17,22 +15,7 @@ export default function TechnicianHome() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
-        <div className="max-w-lg mx-auto px-4 h-16 flex items-center justify-between gap-4">
-          <img src={logoPath} alt="HOPSVOIR" className="h-9 w-auto" />
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Button 
-              variant="ghost" 
-              size="icon"
-              onClick={() => logout()}
-              data-testid="button-logout"
-            >
-              <LogOut className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="max-w-lg mx-auto px-4 py-8">
         <motion.div

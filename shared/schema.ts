@@ -28,6 +28,8 @@ export const washJobs = pgTable("wash_jobs", {
   countryHint: countryHintEnum("country_hint").default("OTHER"),
   status: washStatusEnum("status").notNull().default("received"),
   technicianId: varchar("technician_id").notNull(),
+  serviceCode: varchar("service_code", { length: 100 }),
+  stageTimestamps: jsonb("stage_timestamps").$type<Record<string, string>>(),
   startAt: timestamp("start_at").defaultNow(),
   endAt: timestamp("end_at"),
   createdAt: timestamp("created_at").defaultNow(),

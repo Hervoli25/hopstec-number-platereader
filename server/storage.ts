@@ -76,6 +76,7 @@ export interface IStorage {
     weekWashes: number;
     monthWashes: number;
     avgCycleTimeMinutes: number;
+    avgTimePerStage: Record<string, number>;
     technicianStats: { userId: string; name: string; count: number }[];
   }>;
 }
@@ -233,9 +234,10 @@ export class DatabaseStorage implements IStorage {
   // Wash Jobs
   async createWashJob(job: InsertWashJob): Promise<WashJob> {
     const plateNormalized = normalizePlate(job.plateDisplay);
+    const stageTimestamps = { received: new Date().toISOString() };
     const [result] = await db
       .insert(washJobs)
-      .values({ ...job, plateNormalized })
+      .values({ ...job, plateNormalized, stageTimestamps })
       .returning();
     return result;
   }
@@ -264,18 +266,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateWashJobStatus(id: string, status: string): Promise<WashJob | undefined> {
+    // Get current job to update stage timestamps
+    const [current] = await db.select().from(washJobs).where(eq(washJobs.id, id));
+    if (!current) return undefined;
+    
+    const timestamps = (current.stageTimestamps || {}) as Record<string, string>;
+    timestamps[status] = new Date().toISOString();
+    
     const [result] = await db
       .update(washJobs)
-      .set({ status: status as any, updatedAt: new Date() })
+      .set({ 
+        status: status as any, 
+        stageTimestamps: timestamps,
+        updatedAt: new Date() 
+      })
       .where(eq(washJobs.id, id))
       .returning();
     return result;
   }
 
   async completeWashJob(id: string): Promise<WashJob | undefined> {
+    // Get current job to update stage timestamps
+    const [current] = await db.select().from(washJobs).where(eq(washJobs.id, id));
+    if (!current) return undefined;
+    
+    const timestamps = (current.stageTimestamps || {}) as Record<string, string>;
+    timestamps["complete"] = new Date().toISOString();
+    
     const [result] = await db
       .update(washJobs)
-      .set({ status: "complete", endAt: new Date(), updatedAt: new Date() })
+      .set({ 
+        status: "complete", 
+        stageTimestamps: timestamps,
+        endAt: new Date(), 
+        updatedAt: new Date() 
+      })
       .where(eq(washJobs.id, id))
       .returning();
     return result;
@@ -400,12 +425,66 @@ export class DatabaseStorage implements IStorage {
       .from(washJobs)
       .where(eq(washJobs.status, "complete"));
 
+    // Get completed jobs with stage timestamps for detailed KPIs
+    const completedJobs = await db
+      .select({ stageTimestamps: washJobs.stageTimestamps })
+      .from(washJobs)
+      .where(eq(washJobs.status, "complete"));
+
+    // Calculate average time per stage
+    const stageTimeKPIs: Record<string, { avgSeconds: number; count: number }> = {};
+    const stages = ["received", "prewash", "foam", "rinse", "dry"];
+    
+    for (const job of completedJobs) {
+      const timestamps = job.stageTimestamps as Record<string, string> | null;
+      if (!timestamps) continue;
+      
+      for (let i = 0; i < stages.length; i++) {
+        const stage = stages[i];
+        const nextStage = stages[i + 1] || "complete";
+        
+        if (timestamps[stage] && timestamps[nextStage]) {
+          const duration = (new Date(timestamps[nextStage]).getTime() - new Date(timestamps[stage]).getTime()) / 1000;
+          if (duration > 0) {
+            if (!stageTimeKPIs[stage]) {
+              stageTimeKPIs[stage] = { avgSeconds: 0, count: 0 };
+            }
+            stageTimeKPIs[stage].avgSeconds += duration;
+            stageTimeKPIs[stage].count++;
+          }
+        }
+      }
+    }
+    
+    // Calculate averages
+    const avgTimePerStage: Record<string, number> = {};
+    for (const [stage, data] of Object.entries(stageTimeKPIs)) {
+      if (data.count > 0) {
+        avgTimePerStage[stage] = Math.round(data.avgSeconds / data.count);
+      }
+    }
+
+    // Get technician stats
+    const techStats = await db
+      .select({ 
+        technicianId: washJobs.technicianId,
+        count: sql<number>`count(*)::int`
+      })
+      .from(washJobs)
+      .where(gte(washJobs.createdAt, monthStart))
+      .groupBy(washJobs.technicianId);
+
     return {
       todayWashes: todayResult?.count || 0,
       weekWashes: weekResult?.count || 0,
       monthWashes: monthResult?.count || 0,
       avgCycleTimeMinutes: avgResult?.avgMinutes || 0,
-      technicianStats: [] // Would need a join with users table
+      avgTimePerStage,
+      technicianStats: techStats.map(t => ({ 
+        userId: t.technicianId, 
+        name: t.technicianId === "integration" ? "CRM Integration" : `Technician ${t.technicianId.slice(-4)}`,
+        count: t.count 
+      }))
     };
   }
 }
