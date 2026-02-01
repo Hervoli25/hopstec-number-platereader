@@ -11,6 +11,7 @@ import type { ComponentType, ReactNode } from "react";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import Login from "@/pages/login";
+import Register from "@/pages/register";
 import TechnicianHome from "@/pages/technician-home";
 import ScanCarwash from "@/pages/scan-carwash";
 import ScanParking from "@/pages/scan-parking";
@@ -19,6 +20,7 @@ import MyJobs from "@/pages/my-jobs";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import ManagerAnalytics from "@/pages/manager-analytics";
 import ManagerAudit from "@/pages/manager-audit";
+import AdminUsers from "@/pages/admin-users";
 import CustomerJob from "@/pages/customer-job";
 import About from "@/pages/about";
 
@@ -47,7 +49,7 @@ function AppRouter() {
   const { isAuthenticated, isLoading } = useAuth();
   
   // Public routes accessible to everyone
-  const publicPaths = ["/login", "/about", "/landing"];
+  const publicPaths = ["/login", "/register", "/about", "/landing"];
   const isPublicPath = publicPaths.includes(location) || location.startsWith("/customer/job/");
   
   // Landing page is public
@@ -59,6 +61,7 @@ function AppRouter() {
     return (
       <Switch>
         <Route path="/login" component={Login} />
+        <Route path="/register" component={Register} />
         <Route path="/customer/job/:token" component={CustomerJob} />
         <Route path="/about" component={About} />
         <Route component={NotFound} />
@@ -82,6 +85,7 @@ function AppRouter() {
         <Route path="/manager" component={ManagerDashboard} />
         <Route path="/manager/analytics" component={ManagerAnalytics} />
         <Route path="/manager/audit" component={ManagerAudit} />
+        <Route path="/admin/users" component={AdminUsers} />
         <Route component={NotFound} />
       </Switch>
     </ProtectedRoute>

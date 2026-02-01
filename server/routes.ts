@@ -63,6 +63,41 @@ export async function registerRoutes(
   // Serve uploaded files
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
+  // Credentials registration endpoint
+  const credentialsRegisterSchema = z.object({
+    email: z.string().email(),
+    password: z.string().min(6),
+    firstName: z.string().min(1),
+    lastName: z.string().optional(),
+  });
+
+  app.post("/api/auth/credentials/register", async (req, res) => {
+    try {
+      const result = credentialsRegisterSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Please fill in all required fields correctly" });
+      }
+
+      const { email, password, firstName, lastName } = result.data;
+      
+      // Check if email already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ message: "An account with this email already exists" });
+      }
+
+      // Create new user as technician (default role)
+      const { createCredentialsUser } = await import("./lib/credentials-auth");
+      const name = lastName ? `${firstName} ${lastName}` : firstName;
+      await createCredentialsUser(email, password, "technician", name);
+
+      res.json({ success: true, message: "Account created successfully" });
+    } catch (error) {
+      console.error("Registration error:", error);
+      res.status(500).json({ message: "Failed to create account" });
+    }
+  });
+
   // Credentials login endpoint
   const credentialsLoginSchema = z.object({
     email: z.string().email(),
@@ -246,7 +281,7 @@ export async function registerRoutes(
   // Get single wash job
   app.get("/api/wash-jobs/:id", isAuthenticated, async (req, res) => {
     try {
-      const job = await storage.getWashJob(req.params.id);
+      const job = await storage.getWashJob(req.params.id as string);
       if (!job) {
         return res.status(404).json({ message: "Job not found" });
       }
@@ -519,6 +554,99 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching queue stats:", error);
       res.status(500).json({ message: "Failed to fetch queue stats" });
+    }
+  });
+
+  // =====================
+  // ADMIN USER MANAGEMENT
+  // =====================
+
+  // Get all users (admin only)
+  app.get("/api/admin/users", isAuthenticated, requireRole("admin"), async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      res.json(users);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Create new user (admin only)
+  app.post("/api/admin/users", isAuthenticated, requireRole("admin"), async (req, res) => {
+    try {
+      const schema = z.object({
+        email: z.string().email(),
+        password: z.string().min(6),
+        firstName: z.string().min(1),
+        lastName: z.string().optional(),
+        role: z.enum(["technician", "manager", "admin"]),
+      });
+      
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid user data" });
+      }
+
+      const { email, password, firstName, lastName, role } = result.data;
+      
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ message: "Email already exists" });
+      }
+
+      const { createCredentialsUser } = await import("./lib/credentials-auth");
+      const name = lastName ? `${firstName} ${lastName}` : firstName;
+      const user = await createCredentialsUser(email, password, role, name);
+
+      res.json(user);
+    } catch (error) {
+      console.error("Error creating user:", error);
+      res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+
+  // Update user role (admin only)
+  app.patch("/api/admin/users/:userId/role", isAuthenticated, requireRole("admin"), async (req, res) => {
+    try {
+      const userId = req.params.userId as string;
+      const { role } = req.body;
+      
+      if (!["technician", "manager", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+
+      const user = await storage.updateUser(userId, { role });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating user role:", error);
+      res.status(500).json({ message: "Failed to update role" });
+    }
+  });
+
+  // Toggle user active status (admin only)
+  app.patch("/api/admin/users/:userId/active", isAuthenticated, requireRole("admin"), async (req, res) => {
+    try {
+      const userId = req.params.userId as string;
+      const { isActive } = req.body;
+      
+      if (typeof isActive !== "boolean") {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const user = await storage.updateUser(userId, { isActive });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating user status:", error);
+      res.status(500).json({ message: "Failed to update status" });
     }
   });
 

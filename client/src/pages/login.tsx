@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Loader2, LogIn, UserCircle } from "lucide-react";
+import { Loader2, LogIn, UserCircle, UserPlus } from "lucide-react";
 import hopsovirLogo from "@/assets/images/logo.png";
 
 export default function Login() {
@@ -148,9 +148,17 @@ export default function Login() {
           </CardContent>
         </Card>
 
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          Contact your administrator if you need access credentials.
-        </p>
+        <div className="text-center mt-6 space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Don't have an account?
+          </p>
+          <Link href="/register">
+            <Button variant="outline" className="w-full max-w-[200px]" data-testid="link-register">
+              <UserPlus className="mr-2 h-4 w-4" />
+              Create Account
+            </Button>
+          </Link>
+        </div>
       </motion.div>
     </div>
   );

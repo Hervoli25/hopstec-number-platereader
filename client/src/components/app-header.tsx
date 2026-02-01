@@ -14,7 +14,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { 
   Home, LogOut, ClipboardList, BarChart3,
-  Info, ChevronDown
+  Info, ChevronDown, Users
 } from "lucide-react";
 import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
 
@@ -34,6 +34,7 @@ export function AppHeader({ title }: AppHeaderProps) {
     : "U";
 
   const isManager = roleData?.role === "manager" || roleData?.role === "admin";
+  const isAdmin = roleData?.role === "admin";
 
   return (
     <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
@@ -70,6 +71,14 @@ export function AppHeader({ title }: AppHeaderProps) {
                 <Button variant="ghost" size="sm" data-testid="nav-manager">
                   <BarChart3 className="h-4 w-4 mr-2" />
                   Manager
+                </Button>
+              </Link>
+            )}
+            {isAdmin && (
+              <Link href="/admin/users">
+                <Button variant="ghost" size="sm" data-testid="nav-admin">
+                  <Users className="h-4 w-4 mr-2" />
+                  Admin
                 </Button>
               </Link>
             )}
@@ -115,6 +124,14 @@ export function AppHeader({ title }: AppHeaderProps) {
                   <DropdownMenuItem className="cursor-pointer sm:hidden" data-testid="menu-manager">
                     <BarChart3 className="h-4 w-4 mr-2" />
                     Manager Dashboard
+                  </DropdownMenuItem>
+                </Link>
+              )}
+              {isAdmin && (
+                <Link href="/admin/users">
+                  <DropdownMenuItem className="cursor-pointer sm:hidden" data-testid="menu-admin">
+                    <Users className="h-4 w-4 mr-2" />
+                    User Management
                   </DropdownMenuItem>
                 </Link>
               )}
