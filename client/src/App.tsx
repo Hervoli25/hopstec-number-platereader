@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -6,9 +6,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { useAuth } from "@/hooks/use-auth";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { ComponentType, ReactNode } from "react";
 
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
+import Login from "@/pages/login";
 import TechnicianHome from "@/pages/technician-home";
 import ScanCarwash from "@/pages/scan-carwash";
 import ScanParking from "@/pages/scan-parking";
@@ -17,6 +19,8 @@ import MyJobs from "@/pages/my-jobs";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import ManagerAnalytics from "@/pages/manager-analytics";
 import ManagerAudit from "@/pages/manager-audit";
+import CustomerJob from "@/pages/customer-job";
+import About from "@/pages/about";
 
 function LoadingScreen() {
   return (
@@ -30,29 +34,45 @@ function LoadingScreen() {
   );
 }
 
+function ProtectedRoute({ children }: { children: ReactNode }) {
+  const { isLoading, isAuthenticated } = useAuth();
+  
+  if (isLoading) return <LoadingScreen />;
+  if (!isAuthenticated) return <LandingPage />;
+  return <>{children}</>;
+}
+
 function AppRouter() {
-  const { user, isLoading, isAuthenticated } = useAuth();
-
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-
-  if (!isAuthenticated) {
-    return <LandingPage />;
+  const [location] = useLocation();
+  
+  const publicPaths = ["/login", "/about"];
+  const isPublicPath = publicPaths.includes(location) || location.startsWith("/customer/job/");
+  
+  if (isPublicPath) {
+    return (
+      <Switch>
+        <Route path="/login" component={Login} />
+        <Route path="/customer/job/:token" component={CustomerJob} />
+        <Route path="/about" component={About} />
+        <Route component={NotFound} />
+      </Switch>
+    );
   }
 
   return (
-    <Switch>
-      <Route path="/" component={TechnicianHome} />
-      <Route path="/scan/carwash" component={ScanCarwash} />
-      <Route path="/scan/parking" component={ScanParking} />
-      <Route path="/wash-job/:id" component={WashJobDetail} />
-      <Route path="/my-jobs" component={MyJobs} />
-      <Route path="/manager" component={ManagerDashboard} />
-      <Route path="/manager/analytics" component={ManagerAnalytics} />
-      <Route path="/manager/audit" component={ManagerAudit} />
-      <Route component={NotFound} />
-    </Switch>
+    <ProtectedRoute>
+      <Switch>
+        <Route path="/" component={TechnicianHome} />
+        <Route path="/scan/carwash" component={ScanCarwash} />
+        <Route path="/scan/parking" component={ScanParking} />
+        <Route path="/wash-job/:id" component={WashJobDetail} />
+        <Route path="/my-jobs" component={MyJobs} />
+        <Route path="/manager" component={ManagerDashboard} />
+        <Route path="/manager/analytics" component={ManagerAnalytics} />
+        <Route path="/manager/audit" component={ManagerAudit} />
+        <Route component={NotFound} />
+      </Switch>
+    </ProtectedRoute>
   );
 }
 

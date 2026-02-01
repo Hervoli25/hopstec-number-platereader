@@ -76,9 +76,17 @@ Key capabilities:
 - **PostgreSQL**: Primary data store, expects `DATABASE_URL` environment variable
 - **Neon**: Cloud PostgreSQL provider (connection string compatible)
 
-### Authentication
+### Authentication (Dual-Auth System)
 - **Replit Auth**: OpenID Connect integration via `ISSUER_URL` and `REPL_ID`
+- **Credentials Auth**: Email/password login with bcrypt hashing
 - **Session Secret**: Requires `SESSION_SECRET` environment variable
+- **User Seeding**: Admin/manager/tech users created from env vars (ADMIN_EMAIL, MANAGER_EMAIL, TECH_EMAIL with corresponding passwords)
+
+### Customer Access
+- **Token-based Access**: Customers access job tracking via secure tokens (24-byte random)
+- **Public Routes**: /login, /about, /customer/job/:token are publicly accessible
+- **Live Updates**: Customer SSE endpoint for real-time job progress
+- **Confirmation Flow**: Customers can confirm checklist items with rating and feedback
 
 ### Frontend Libraries
 - **@tanstack/react-query**: Server state management

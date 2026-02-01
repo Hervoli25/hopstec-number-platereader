@@ -16,7 +16,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <Button asChild data-testid="button-login">
-              <a href="/api/login">Sign In</a>
+              <a href="/login">Sign In</a>
             </Button>
           </div>
         </div>
@@ -41,10 +41,10 @@ export default function LandingPage() {
                 </p>
                 <div className="flex flex-wrap gap-4">
                   <Button size="lg" asChild data-testid="button-get-started">
-                    <a href="/api/login">Get Started</a>
+                    <a href="/login">Get Started</a>
                   </Button>
-                  <Button size="lg" variant="outline" data-testid="button-learn-more">
-                    Learn More
+                  <Button size="lg" variant="outline" asChild data-testid="button-learn-more">
+                    <a href="/about">Learn More</a>
                   </Button>
                 </div>
                 <div className="flex items-center gap-6 mt-8 text-sm text-muted-foreground">
@@ -148,7 +148,8 @@ export default function LandingPage() {
       </main>
 
       <footer className="border-t border-border py-8">
-        <div className="max-w-6xl mx-auto px-4 text-center text-sm text-muted-foreground">
+        <div className="max-w-6xl mx-auto px-4 text-center text-sm text-muted-foreground space-y-2">
+          <p>Made by <span className="font-medium">HOPS-TECH INNOVATION</span></p>
           <p>&copy; {new Date().getFullYear()} HOPSVOIR. All rights reserved.</p>
         </div>
       </footer>

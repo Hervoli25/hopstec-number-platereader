@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, pgEnum, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, pgEnum, jsonb, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -10,6 +10,7 @@ export * from "./models/auth";
 export const userRoleEnum = pgEnum("user_role", ["technician", "manager", "admin"]);
 export const washStatusEnum = pgEnum("wash_status", ["received", "prewash", "foam", "rinse", "dry", "complete"]);
 export const countryHintEnum = pgEnum("country_hint", ["FR", "ZA", "CD", "OTHER"]);
+export const photoRuleEnum = pgEnum("photo_rule", ["optional", "required", "disabled"]);
 
 // User roles table (extends base users from auth)
 export const userRoles = pgTable("user_roles", {
@@ -39,6 +40,7 @@ export const washPhotos = pgTable("wash_photos", {
   washJobId: varchar("wash_job_id").notNull(),
   url: text("url").notNull(),
   statusAtTime: washStatusEnum("status_at_time").notNull(),
+  uploadedBy: varchar("uploaded_by"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -82,6 +84,66 @@ export const webhookRetries = pgTable("webhook_retries", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Users table (extends Replit auth users with credentials support)
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey(),
+  email: varchar("email", { length: 255 }),
+  firstName: varchar("first_name", { length: 255 }),
+  lastName: varchar("last_name", { length: 255 }),
+  profileImageUrl: varchar("profile_image_url", { length: 512 }),
+  passwordHash: text("password_hash"),
+  role: userRoleEnum("role").default("technician"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Customer job access tokens
+export const customerJobAccess = pgTable("customer_job_access", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  washJobId: varchar("wash_job_id").notNull(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  customerName: varchar("customer_name", { length: 255 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  serviceCode: varchar("service_code", { length: 50 }),
+  lastViewedAt: timestamp("last_viewed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Service checklist items
+export const serviceChecklistItems = pgTable("service_checklist_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  washJobId: varchar("wash_job_id").notNull(),
+  label: varchar("label", { length: 255 }).notNull(),
+  orderIndex: integer("order_index").default(0),
+  expected: boolean("expected").default(true),
+  confirmed: boolean("confirmed").default(false),
+  confirmedAt: timestamp("confirmed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Customer confirmations
+export const customerConfirmations = pgTable("customer_confirmations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  washJobId: varchar("wash_job_id").notNull(),
+  accessToken: varchar("access_token", { length: 64 }).notNull(),
+  rating: integer("rating"),
+  notes: text("notes"),
+  issueReported: text("issue_reported"),
+  confirmedAt: timestamp("confirmed_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Photo rules configuration (manager can set per step)
+export const photoRules = pgTable("photo_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  step: washStatusEnum("step").notNull().unique(),
+  rule: photoRuleEnum("rule").notNull().default("optional"),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -89,6 +151,11 @@ export const insertWashPhotoSchema = createInsertSchema(washPhotos).omit({ id: t
 export const insertParkingSessionSchema = createInsertSchema(parkingSessions).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertEventLogSchema = createInsertSchema(eventLogs).omit({ id: true, createdAt: true });
 export const insertWebhookRetrySchema = createInsertSchema(webhookRetries).omit({ id: true, createdAt: true });
+export const insertUserSchema = createInsertSchema(users).omit({ createdAt: true, updatedAt: true });
+export const insertCustomerJobAccessSchema = createInsertSchema(customerJobAccess).omit({ id: true, createdAt: true });
+export const insertServiceChecklistItemSchema = createInsertSchema(serviceChecklistItems).omit({ id: true, createdAt: true });
+export const insertCustomerConfirmationSchema = createInsertSchema(customerConfirmations).omit({ id: true, createdAt: true });
+export const insertPhotoRuleSchema = createInsertSchema(photoRules).omit({ id: true, createdAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -109,6 +176,21 @@ export type InsertEventLog = z.infer<typeof insertEventLogSchema>;
 export type WebhookRetry = typeof webhookRetries.$inferSelect;
 export type InsertWebhookRetry = z.infer<typeof insertWebhookRetrySchema>;
 
+export type User = typeof users.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
+
+export type CustomerJobAccess = typeof customerJobAccess.$inferSelect;
+export type InsertCustomerJobAccess = z.infer<typeof insertCustomerJobAccessSchema>;
+
+export type ServiceChecklistItem = typeof serviceChecklistItems.$inferSelect;
+export type InsertServiceChecklistItem = z.infer<typeof insertServiceChecklistItemSchema>;
+
+export type CustomerConfirmation = typeof customerConfirmations.$inferSelect;
+export type InsertCustomerConfirmation = z.infer<typeof insertCustomerConfirmationSchema>;
+
+export type PhotoRule = typeof photoRules.$inferSelect;
+export type InsertPhotoRule = z.infer<typeof insertPhotoRuleSchema>;
+
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
@@ -116,3 +198,11 @@ export type WashStatus = typeof WASH_STATUS_ORDER[number];
 // Country hints
 export const COUNTRY_HINTS = ["FR", "ZA", "CD", "OTHER"] as const;
 export type CountryHint = typeof COUNTRY_HINTS[number];
+
+// Photo rules
+export const PHOTO_RULES = ["optional", "required", "disabled"] as const;
+export type PhotoRuleType = typeof PHOTO_RULES[number];
+
+// Service codes
+export const SERVICE_CODES = ["BASIC", "PREMIUM", "DELUXE", "CUSTOM"] as const;
+export type ServiceCode = typeof SERVICE_CODES[number];

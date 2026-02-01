@@ -1,12 +1,19 @@
-import { eq, and, isNull, desc, gte, sql } from "drizzle-orm";
+import { eq, and, isNull, desc, gte, sql, lte, between } from "drizzle-orm";
 import { db } from "./db";
 import { 
-  washJobs, washPhotos, parkingSessions, eventLogs, userRoles,
+  washJobs, washPhotos, parkingSessions, eventLogs, userRoles, users,
+  customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
   type EventLog, type InsertEventLog,
-  type UserRole, type InsertUserRole
+  type UserRole, type InsertUserRole,
+  type User, type InsertUser,
+  type CustomerJobAccess, type InsertCustomerJobAccess,
+  type ServiceChecklistItem, type InsertServiceChecklistItem,
+  type CustomerConfirmation, type InsertCustomerConfirmation,
+  type PhotoRule, type InsertPhotoRule,
+  WASH_STATUS_ORDER
 } from "@shared/schema";
 import { normalizePlate } from "./lib/plate-utils";
 
@@ -14,6 +21,33 @@ export interface IStorage {
   // User roles
   getUserRole(userId: string): Promise<UserRole | undefined>;
   upsertUserRole(role: InsertUserRole): Promise<UserRole>;
+
+  // Users (credentials auth)
+  getUserById(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
+
+  // Customer job access
+  createCustomerJobAccess(access: InsertCustomerJobAccess): Promise<CustomerJobAccess>;
+  getCustomerJobAccessByToken(token: string): Promise<CustomerJobAccess | undefined>;
+  getCustomerJobAccessByJobId(washJobId: string): Promise<CustomerJobAccess | undefined>;
+  updateCustomerJobAccessViewedAt(token: string): Promise<CustomerJobAccess | undefined>;
+
+  // Service checklist
+  createServiceChecklistItems(items: InsertServiceChecklistItem[]): Promise<ServiceChecklistItem[]>;
+  getServiceChecklistItems(washJobId: string): Promise<ServiceChecklistItem[]>;
+  updateChecklistItemConfirmed(id: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined>;
+  updateChecklistItemConfirmedForJob(id: string, washJobId: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined>;
+
+  // Customer confirmations
+  createCustomerConfirmation(confirmation: InsertCustomerConfirmation): Promise<CustomerConfirmation>;
+  getCustomerConfirmation(washJobId: string): Promise<CustomerConfirmation | undefined>;
+
+  // Photo rules
+  getPhotoRules(): Promise<PhotoRule[]>;
+  upsertPhotoRule(rule: InsertPhotoRule): Promise<PhotoRule>;
 
   // Wash Jobs
   createWashJob(job: InsertWashJob): Promise<WashJob>;
@@ -71,6 +105,127 @@ export class DatabaseStorage implements IStorage {
         .insert(userRoles)
         .values(role)
         .returning();
+      return result;
+    }
+  }
+
+  // Users (credentials auth)
+  async getUserById(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const [result] = await db.insert(users).values(user).returning();
+    return result;
+  }
+
+  async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {
+    const [result] = await db
+      .update(users)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return result;
+  }
+
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  // Customer job access
+  async createCustomerJobAccess(access: InsertCustomerJobAccess): Promise<CustomerJobAccess> {
+    const [result] = await db.insert(customerJobAccess).values(access).returning();
+    return result;
+  }
+
+  async getCustomerJobAccessByToken(token: string): Promise<CustomerJobAccess | undefined> {
+    const [result] = await db.select().from(customerJobAccess).where(eq(customerJobAccess.token, token));
+    return result;
+  }
+
+  async getCustomerJobAccessByJobId(washJobId: string): Promise<CustomerJobAccess | undefined> {
+    const [result] = await db.select().from(customerJobAccess).where(eq(customerJobAccess.washJobId, washJobId));
+    return result;
+  }
+
+  async updateCustomerJobAccessViewedAt(token: string): Promise<CustomerJobAccess | undefined> {
+    const [result] = await db
+      .update(customerJobAccess)
+      .set({ lastViewedAt: new Date() })
+      .where(eq(customerJobAccess.token, token))
+      .returning();
+    return result;
+  }
+
+  // Service checklist
+  async createServiceChecklistItems(items: InsertServiceChecklistItem[]): Promise<ServiceChecklistItem[]> {
+    if (items.length === 0) return [];
+    return db.insert(serviceChecklistItems).values(items).returning();
+  }
+
+  async getServiceChecklistItems(washJobId: string): Promise<ServiceChecklistItem[]> {
+    return db
+      .select()
+      .from(serviceChecklistItems)
+      .where(eq(serviceChecklistItems.washJobId, washJobId))
+      .orderBy(serviceChecklistItems.orderIndex);
+  }
+
+  async updateChecklistItemConfirmed(id: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined> {
+    const [result] = await db
+      .update(serviceChecklistItems)
+      .set({ confirmed, confirmedAt: confirmed ? new Date() : null })
+      .where(eq(serviceChecklistItems.id, id))
+      .returning();
+    return result;
+  }
+
+  async updateChecklistItemConfirmedForJob(id: string, washJobId: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined> {
+    const [result] = await db
+      .update(serviceChecklistItems)
+      .set({ confirmed, confirmedAt: confirmed ? new Date() : null })
+      .where(and(
+        eq(serviceChecklistItems.id, id),
+        eq(serviceChecklistItems.washJobId, washJobId)
+      ))
+      .returning();
+    return result;
+  }
+
+  // Customer confirmations
+  async createCustomerConfirmation(confirmation: InsertCustomerConfirmation): Promise<CustomerConfirmation> {
+    const [result] = await db.insert(customerConfirmations).values(confirmation).returning();
+    return result;
+  }
+
+  async getCustomerConfirmation(washJobId: string): Promise<CustomerConfirmation | undefined> {
+    const [result] = await db.select().from(customerConfirmations).where(eq(customerConfirmations.washJobId, washJobId));
+    return result;
+  }
+
+  // Photo rules
+  async getPhotoRules(): Promise<PhotoRule[]> {
+    return db.select().from(photoRules);
+  }
+
+  async upsertPhotoRule(rule: InsertPhotoRule): Promise<PhotoRule> {
+    const existing = await db.select().from(photoRules).where(eq(photoRules.step, rule.step));
+    
+    if (existing.length > 0) {
+      const [result] = await db
+        .update(photoRules)
+        .set({ rule: rule.rule, updatedBy: rule.updatedBy, updatedAt: new Date() })
+        .where(eq(photoRules.step, rule.step))
+        .returning();
+      return result;
+    } else {
+      const [result] = await db.insert(photoRules).values(rule).returning();
       return result;
     }
   }

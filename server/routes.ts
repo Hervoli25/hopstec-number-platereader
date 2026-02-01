@@ -7,17 +7,29 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { normalizePlate, displayPlate } from "./lib/plate-utils";
 import { requireRole, ensureUserRole } from "./lib/roles";
 import { savePhoto } from "./lib/photo-storage";
+import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
 import { WASH_STATUS_ORDER, COUNTRY_HINTS } from "@shared/schema";
 
 // SSE clients for real-time updates
 const sseClients: Set<any> = new Set();
+const customerSseClients: Set<{ res: any; washJobId: string }> = new Set();
 
 function broadcastEvent(data: any) {
   const message = `data: ${JSON.stringify(data)}\n\n`;
   sseClients.forEach(client => {
     client.write(message);
   });
+  
+  // Also notify customer clients watching specific jobs
+  if (data.job?.id || data.washJobId) {
+    const jobId = data.job?.id || data.washJobId;
+    customerSseClients.forEach(client => {
+      if (client.washJobId === jobId) {
+        client.res.write(message);
+      }
+    });
+  }
 }
 
 // Validation schemas
@@ -45,11 +57,69 @@ export async function registerRoutes(
   await setupAuth(app);
   registerAuthRoutes(app);
 
+  // Seed credentials users from env vars
+  await seedUsers();
+
   // Serve uploaded files
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
+  // Credentials login endpoint
+  const credentialsLoginSchema = z.object({
+    email: z.string().email(),
+    password: z.string().min(1),
+  });
+
+  app.post("/api/auth/credentials/login", async (req: any, res) => {
+    try {
+      const result = credentialsLoginSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid email or password format" });
+      }
+
+      const { email, password } = result.data;
+      const authResult = await authenticateWithCredentials(email, password);
+
+      if (!authResult.success || !authResult.user) {
+        return res.status(401).json({ message: authResult.error || "Authentication failed" });
+      }
+
+      const user = authResult.user;
+      
+      // Set up passport session for credentials user
+      req.login({
+        claims: { sub: user.id },
+        authType: "credentials",
+        role: user.role,
+        email: user.email,
+        name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+      }, (err: any) => {
+        if (err) {
+          console.error("Login error:", err);
+          return res.status(500).json({ message: "Login failed" });
+        }
+        res.json({ 
+          message: "Login successful",
+          user: {
+            id: user.id,
+            email: user.email,
+            name: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+            role: user.role,
+          }
+        });
+      });
+    } catch (error) {
+      console.error("Credentials login error:", error);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
   // Middleware to ensure user has a role assigned after auth
   app.use("/api", async (req: any, res, next) => {
+    // For credentials auth, role is already in session
+    if (req.user?.authType === "credentials") {
+      return next();
+    }
+    // For Replit auth, ensure role in userRoles table
     if (req.user?.claims?.sub) {
       await ensureUserRole(req.user.claims.sub);
     }
@@ -59,6 +129,11 @@ export async function registerRoutes(
   // Get current user with role
   app.get("/api/user/role", isAuthenticated, async (req: any, res) => {
     try {
+      // For credentials auth, role is in session
+      if (req.user?.authType === "credentials") {
+        return res.json({ role: req.user.role || "technician" });
+      }
+      // For Replit auth, get from userRoles table
       const userId = req.user?.claims?.sub;
       const userRole = await storage.getUserRole(userId);
       res.json({ role: userRole?.role || "technician" });
@@ -444,6 +519,205 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching queue stats:", error);
       res.status(500).json({ message: "Failed to fetch queue stats" });
+    }
+  });
+
+  // =====================
+  // CUSTOMER ACCESS (Public routes with token)
+  // =====================
+
+  // Get job by customer token (public)
+  app.get("/api/customer/job/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getCustomerJobAccessByToken(token);
+      
+      if (!access) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      // Update last viewed
+      await storage.updateCustomerJobAccessViewedAt(token);
+
+      const job = await storage.getWashJob(access.washJobId);
+      if (!job) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      const photos = await storage.getWashPhotos(access.washJobId);
+      const checklist = await storage.getServiceChecklistItems(access.washJobId);
+      const confirmation = await storage.getCustomerConfirmation(access.washJobId);
+
+      res.json({
+        job,
+        photos,
+        checklist,
+        confirmation,
+        customerName: access.customerName,
+        serviceCode: access.serviceCode,
+      });
+    } catch (error) {
+      console.error("Error fetching customer job:", error);
+      res.status(500).json({ message: "Failed to fetch job" });
+    }
+  });
+
+  // Customer SSE for job updates
+  app.get("/api/customer/stream/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const access = await storage.getCustomerJobAccessByToken(token);
+      
+      if (!access) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      // Add to job-specific SSE clients
+      const client = { res, washJobId: access.washJobId };
+      customerSseClients.add(client);
+      
+      req.on("close", () => {
+        customerSseClients.delete(client);
+      });
+
+      res.write("data: {\"type\":\"connected\"}\n\n");
+    } catch (error) {
+      res.status(500).json({ message: "Stream error" });
+    }
+  });
+
+  // Customer confirm checklist
+  app.post("/api/customer/confirm/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const { checklistConfirmations, rating, notes, issueReported } = req.body;
+      
+      const access = await storage.getCustomerJobAccessByToken(token);
+      if (!access) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      // Update checklist items - verify each item belongs to this job
+      if (checklistConfirmations && Array.isArray(checklistConfirmations)) {
+        for (const item of checklistConfirmations) {
+          if (item.id && typeof item.confirmed === "boolean") {
+            await storage.updateChecklistItemConfirmedForJob(
+              item.id, 
+              access.washJobId, 
+              item.confirmed
+            );
+          }
+        }
+      }
+
+      // Create confirmation record
+      const confirmation = await storage.createCustomerConfirmation({
+        washJobId: access.washJobId,
+        accessToken: token,
+        rating: rating || null,
+        notes: notes || null,
+        issueReported: issueReported || null,
+      });
+
+      // Log event
+      await storage.logEvent({
+        type: "customer_confirmation",
+        washJobId: access.washJobId,
+        payloadJson: { rating, hasNotes: !!notes, hasIssue: !!issueReported },
+      });
+
+      res.json({ message: "Confirmation recorded", confirmation });
+    } catch (error) {
+      console.error("Error saving customer confirmation:", error);
+      res.status(500).json({ message: "Failed to save confirmation" });
+    }
+  });
+
+  // =====================
+  // INTEGRATION ENDPOINT (for CRM)
+  // =====================
+
+  const integrationJobSchema = z.object({
+    plateDisplay: z.string().min(1),
+    customerName: z.string().optional(),
+    customerEmail: z.string().email().optional(),
+    serviceCode: z.string().optional(),
+    serviceChecklist: z.array(z.string()).optional(),
+  });
+
+  app.post("/api/integrations/create-job", async (req, res) => {
+    try {
+      // Verify integration secret
+      const secret = req.headers["x-integration-secret"] || req.headers["authorization"];
+      if (secret !== process.env.INTEGRATION_SECRET) {
+        return res.status(401).json({ message: "Invalid integration secret" });
+      }
+
+      const result = integrationJobSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.errors[0].message });
+      }
+
+      const { plateDisplay, customerName, customerEmail, serviceCode, serviceChecklist } = result.data;
+
+      // Create wash job
+      const job = await storage.createWashJob({
+        plateDisplay: displayPlate(plateDisplay),
+        plateNormalized: normalizePlate(plateDisplay),
+        countryHint: "OTHER",
+        technicianId: "integration",
+        status: "received",
+        startAt: new Date(),
+      });
+
+      // Create customer access token
+      const token = generateJobToken();
+      const access = await storage.createCustomerJobAccess({
+        washJobId: job.id,
+        token,
+        customerName: customerName || null,
+        customerEmail: customerEmail || null,
+        serviceCode: serviceCode || null,
+      });
+
+      // Create service checklist items
+      const checklistItems = serviceChecklist || WASH_STATUS_ORDER.filter(s => s !== "received");
+      await storage.createServiceChecklistItems(
+        checklistItems.map((label, index) => ({
+          washJobId: job.id,
+          label,
+          orderIndex: index,
+          expected: true,
+          confirmed: false,
+        }))
+      );
+
+      // Log event
+      await storage.logEvent({
+        type: "integration_job_created",
+        plateDisplay: job.plateDisplay,
+        plateNormalized: job.plateNormalized,
+        washJobId: job.id,
+        payloadJson: { serviceCode, hasCustomer: !!customerName },
+      });
+
+      // Broadcast update
+      broadcastEvent({ type: "wash_created", job });
+
+      const baseUrl = process.env.APP_URL || `https://${req.hostname}`;
+      res.json({
+        job,
+        customerUrl: `${baseUrl}/customer/job/${token}`,
+        token,
+      });
+    } catch (error) {
+      console.error("Error creating integration job:", error);
+      res.status(500).json({ message: "Failed to create job" });
     }
   });
 
