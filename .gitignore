@@ -26,11 +26,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Sensitive documentation (if contains credentials/secrets)
-**/schema.md
-**/database-schema.md
-**/credentials.md
-**/secrets.md
+# Documentation files (except README.md)
+*.md
+!README.md
 
 # IDE
 .vscode/*
@@ -50,3 +48,7 @@ uploads/*
 
 # Session store
 sessions/
+
+# Vercel
+.vercel
+.vercel.json
