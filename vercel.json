@@ -4,19 +4,19 @@
   "installCommand": "npm install --include=dev",
   "outputDirectory": "dist/public",
   "functions": {
-    "api/index.ts": {
+    "api/server.ts": {
       "runtime": "@vercel/node@3.0.0",
-      "includeFiles": "server/**/*,shared/**/*,dist/**/*"
+      "includeFiles": "server/**/*,shared/**/*"
     }
   },
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/index.ts"
+      "dest": "/api/server.ts"
     },
     {
       "src": "/uploads/(.*)",
-      "dest": "/api/index.ts"
+      "dest": "/api/server.ts"
     },
     {
       "handle": "filesystem"
