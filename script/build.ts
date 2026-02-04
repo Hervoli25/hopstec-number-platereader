@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { rm, readFile, mkdir } from "fs/promises";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -30,6 +30,9 @@ const allowlist = [
   "xlsx",
   "zod",
   "zod-validation-error",
+  "bcryptjs",
+  "dotenv",
+  "memoizee",
 ];
 
 async function buildAll() {
@@ -58,6 +61,27 @@ async function buildAll() {
     minify: true,
     external: externals,
     logLevel: "info",
+  });
+
+  // Build Vercel serverless function (fully bundled)
+  console.log("building Vercel API function...");
+  await mkdir("api", { recursive: true });
+
+  await esbuild({
+    entryPoints: ["server-vercel/entry.ts"],
+    platform: "node",
+    bundle: true,
+    format: "esm",
+    outfile: "api/server.js",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: false,
+    external: ["@vercel/node"],
+    logLevel: "info",
+    banner: {
+      js: '// @vercel/node serverless function',
+    },
   });
 }
 

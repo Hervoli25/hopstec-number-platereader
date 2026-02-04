@@ -52,3 +52,6 @@ sessions/
 # Vercel
 .vercel
 .vercel.json
+
+# Build artifacts for Vercel API
+api/server.js
