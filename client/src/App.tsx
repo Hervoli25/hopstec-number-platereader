@@ -6,8 +6,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { useAuth } from "@/hooks/use-auth";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ComponentType, ReactNode } from "react";
+import type { ReactNode } from "react";
 
+import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import Login from "@/pages/login";
@@ -99,6 +100,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <AppRouter />
+          <PWAInstallPrompt />
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

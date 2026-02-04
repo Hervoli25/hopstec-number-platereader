@@ -12,8 +12,16 @@ export function requireRole(...allowedRoles: UserRoleType[]): RequestHandler {
         return res.status(401).json({ message: "Unauthorized" });
       }
 
-      const userRole = await storage.getUserRole(userId);
-      const role = userRole?.role || "technician"; // Default to technician
+      let role: UserRoleType = "technician"; // Default to technician
+
+      // For credentials auth, role is in session
+      if (req.user?.authType === "credentials") {
+        role = req.user.role || "technician";
+      } else {
+        // For Replit auth, get from userRoles table
+        const userRole = await storage.getUserRole(userId);
+        role = userRole?.role || "technician";
+      }
 
       if (!allowedRoles.includes(role as UserRoleType)) {
         return res.status(403).json({ message: "Forbidden: Insufficient permissions" });

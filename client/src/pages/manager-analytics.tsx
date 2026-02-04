@@ -2,11 +2,13 @@ import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppHeader } from "@/components/app-header";
-import { 
-  BarChart3, ClipboardList, 
-  Activity, TrendingUp, Clock, Users, Timer
+import { useToast } from "@/hooks/use-toast";
+import {
+  BarChart3, ClipboardList,
+  Activity, TrendingUp, Clock, Users, Timer, Download
 } from "lucide-react";
 
 interface AnalyticsSummary {
@@ -35,6 +37,7 @@ function formatDuration(seconds: number): string {
 
 export default function ManagerAnalytics() {
   const [location] = useLocation();
+  const { toast } = useToast();
 
   const { data: analytics, isLoading } = useQuery<AnalyticsSummary>({
     queryKey: ["/api/analytics/summary"],
@@ -45,6 +48,73 @@ export default function ManagerAnalytics() {
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
   ];
+
+  const handleExportWashJobs = async () => {
+    try {
+      const response = await fetch("/api/wash-jobs");
+      const jobs = await response.json();
+
+      const csv = [
+        ["ID", "Plate", "Status", "Technician ID", "Started", "Completed", "Cycle Time (min)"].join(","),
+        ...jobs.map((job: any) => {
+          const cycleTime = job.startAt && job.endAt
+            ? Math.round((new Date(job.endAt).getTime() - new Date(job.startAt).getTime()) / 60000)
+            : "";
+          return [
+            job.id,
+            job.plateDisplay,
+            job.status,
+            job.technicianId,
+            job.startAt || "",
+            job.endAt || "",
+            cycleTime,
+          ].join(",");
+        }),
+      ].join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `wash-jobs-${new Date().toISOString().split("T")[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      toast({ title: "Wash jobs exported", description: "CSV file downloaded" });
+    } catch (error) {
+      toast({ title: "Export failed", description: "Could not export wash jobs", variant: "destructive" });
+    }
+  };
+
+  const handleExportEvents = async () => {
+    try {
+      const response = await fetch("/api/events?limit=1000");
+      const events = await response.json();
+
+      const csv = [
+        ["ID", "Type", "Plate", "User ID", "Timestamp"].join(","),
+        ...events.map((event: any) => [
+          event.id,
+          event.type,
+          event.plateDisplay || "",
+          event.userId || "",
+          event.createdAt,
+        ].join(",")),
+      ].join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `events-${new Date().toISOString().split("T")[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      toast({ title: "Events exported", description: "CSV file downloaded" });
+    } catch (error) {
+      toast({ title: "Export failed", description: "Could not export events", variant: "destructive" });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -81,7 +151,29 @@ export default function ManagerAnalytics() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
-          <h1 className="text-2xl font-bold">Analytics</h1>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <h1 className="text-2xl font-bold">Analytics</h1>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportWashJobs}
+                data-testid="button-export-jobs"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Export Jobs
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportEvents}
+                data-testid="button-export-events"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Export Events
+              </Button>
+            </div>
+          </div>
 
           <div className="grid md:grid-cols-3 gap-4">
             <Card className="p-6">

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CameraCapture } from "@/components/camera-capture";
 import { PlateConfirmDialog } from "@/components/plate-confirm-dialog";
+import { CustomerUrlDialog } from "@/components/customer-url-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Camera, Keyboard, Loader2 } from "lucide-react";
@@ -16,25 +17,28 @@ export default function ScanCarwash() {
   const { toast } = useToast();
   const [showCamera, setShowCamera] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showCustomerUrl, setShowCustomerUrl] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<{ plate: string; confidence: number }[]>([]);
+  const [createdJob, setCreatedJob] = useState<{ id: string; customerUrl: string; plateDisplay: string } | null>(null);
 
   const createJobMutation = useMutation({
     mutationFn: async ({ plate, countryHint, photo }: { plate: string; countryHint: CountryHint; photo?: string }) => {
-      const res = await apiRequest("POST", "/api/wash-jobs", { 
-        plateDisplay: plate, 
+      const res = await apiRequest("POST", "/api/wash-jobs", {
+        plateDisplay: plate,
         countryHint,
-        photo 
+        photo
       });
       return res.json();
     },
     onSuccess: (job) => {
       queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
+      setCreatedJob(job);
+      setShowCustomerUrl(true);
       toast({
         title: "Wash job created",
         description: `Job started for plate ${job.plateDisplay}`,
       });
-      setLocation(`/wash-job/${job.id}`);
     },
     onError: (error: Error) => {
       toast({
@@ -139,6 +143,20 @@ export default function ScanCarwash() {
         capturedImage={capturedImage || undefined}
         onConfirm={handleConfirmPlate}
       />
+
+      {createdJob && (
+        <CustomerUrlDialog
+          open={showCustomerUrl}
+          onOpenChange={(open) => {
+            setShowCustomerUrl(open);
+            if (!open && createdJob) {
+              setLocation(`/wash-job/${createdJob.id}`);
+            }
+          }}
+          customerUrl={createdJob.customerUrl}
+          plateDisplay={createdJob.plateDisplay}
+        />
+      )}
 
       {createJobMutation.isPending && (
         <div className="fixed inset-0 bg-background/80 flex items-center justify-center z-50">

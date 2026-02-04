@@ -40,11 +40,11 @@ export function AppHeader({ title }: AppHeaderProps) {
     <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link href="/landing" data-testid="link-home-logo">
-            <img 
-              src={logoPath} 
-              alt="HOPSVOIR" 
-              className="h-9 w-auto cursor-pointer hover:opacity-80 transition-opacity" 
+          <Link href="/" data-testid="link-home-logo">
+            <img
+              src={logoPath}
+              alt="HOPSVOIR"
+              className="h-9 w-auto cursor-pointer hover:opacity-80 transition-opacity"
             />
           </Link>
           {title && (
@@ -54,7 +54,7 @@ export function AppHeader({ title }: AppHeaderProps) {
 
         <nav className="flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-1">
-            <Link href="/landing">
+            <Link href="/">
               <Button variant="ghost" size="sm" data-testid="nav-landing">
                 <Home className="h-4 w-4 mr-2" />
                 Home

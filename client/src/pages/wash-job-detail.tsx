@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -7,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { 
-  ArrowLeft, Check, Loader2, Camera, 
+import { PhotoCheckpointDialog } from "@/components/photo-checkpoint-dialog";
+import {
+  ArrowLeft, Check, Loader2, Camera,
   Droplets, Wind, Sparkles, CircleDot, Car, Clock, Calendar
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
@@ -76,9 +78,25 @@ export default function WashJobDetail() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [showPhotoDialog, setShowPhotoDialog] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<WashStatus | null>(null);
 
   const { data: job, isLoading } = useQuery<WashJob>({
     queryKey: ["/api/wash-jobs", params.id],
+  });
+
+  const addPhotoMutation = useMutation({
+    mutationFn: async ({ photo }: { photo: string }) => {
+      const res = await apiRequest("POST", `/api/wash-jobs/${params.id}/photos`, { photo });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs", params.id] });
+      toast({ title: "Photo added" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error adding photo", description: error.message, variant: "destructive" });
+    }
   });
 
   const updateStatusMutation = useMutation({
@@ -95,6 +113,27 @@ export default function WashJobDetail() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   });
+
+  const handleStatusClick = (newStatus: WashStatus) => {
+    // Show photo dialog before updating status
+    setPendingStatus(newStatus);
+    setShowPhotoDialog(true);
+  };
+
+  const handlePhotoConfirm = async (photo?: string) => {
+    setShowPhotoDialog(false);
+
+    // Add photo if provided
+    if (photo && pendingStatus) {
+      await addPhotoMutation.mutateAsync({ photo });
+    }
+
+    // Update status
+    if (pendingStatus) {
+      updateStatusMutation.mutate(pendingStatus);
+      setPendingStatus(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -191,7 +230,7 @@ export default function WashJobDetail() {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
                 >
-                  <Card 
+                  <Card
                     className={`p-4 flex items-center gap-4 transition-all ${
                       isCurrent ? "ring-2 ring-primary" : ""
                     } ${isPast ? "opacity-60" : ""} ${
@@ -199,7 +238,7 @@ export default function WashJobDetail() {
                     } ${isFuture ? "opacity-40" : ""}`}
                     onClick={() => {
                       if (isNext && !isComplete) {
-                        updateStatusMutation.mutate(status);
+                        handleStatusClick(status);
                       }
                     }}
                     data-testid={`card-status-${status}`}
@@ -304,8 +343,8 @@ export default function WashJobDetail() {
           )}
 
           <div className="mt-6">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               className="w-full"
               onClick={() => setLocation("/")}
               data-testid="button-done"
@@ -315,6 +354,19 @@ export default function WashJobDetail() {
           </div>
         </motion.div>
       </main>
+
+      <PhotoCheckpointDialog
+        open={showPhotoDialog}
+        onOpenChange={(open) => {
+          setShowPhotoDialog(open);
+          if (!open) {
+            setPendingStatus(null);
+          }
+        }}
+        stageName={pendingStatus ? STATUS_CONFIG[pendingStatus].label : ""}
+        onConfirm={handlePhotoConfirm}
+        isOptional={true}
+      />
     </div>
   );
 }

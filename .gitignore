@@ -4,3 +4,49 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Environment variables and sensitive data
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# Database and credentials
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Sensitive documentation (if contains credentials/secrets)
+**/schema.md
+**/database-schema.md
+**/credentials.md
+**/secrets.md
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads directory (may contain sensitive user data)
+uploads/*
+!uploads/.gitkeep
+
+# Session store
+sessions/

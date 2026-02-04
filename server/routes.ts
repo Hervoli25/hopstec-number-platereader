@@ -10,6 +10,7 @@ import { savePhoto } from "./lib/photo-storage";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
 import { WASH_STATUS_ORDER, COUNTRY_HINTS } from "@shared/schema";
+import { getUpcomingBookings, getTodayBookings, findBookingByPlate, updateBookingStatus } from "./lib/booking-db";
 
 // SSE clients for real-time updates
 const sseClients: Set<any> = new Set();
@@ -148,6 +149,22 @@ export async function registerRoutes(
     }
   });
 
+  // Universal logout endpoint (works for both credentials and Replit auth)
+  app.post("/api/auth/logout", (req: any, res) => {
+    req.logout((err: any) => {
+      if (err) {
+        console.error("Logout error:", err);
+        return res.status(500).json({ message: "Logout failed" });
+      }
+      req.session.destroy((err: any) => {
+        if (err) {
+          console.error("Session destroy error:", err);
+        }
+        res.json({ message: "Logged out successfully" });
+      });
+    });
+  });
+
   // Middleware to ensure user has a role assigned after auth
   app.use("/api", async (req: any, res, next) => {
     // For credentials auth, role is already in session
@@ -175,6 +192,37 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching user role:", error);
       res.status(500).json({ message: "Failed to fetch role" });
+    }
+  });
+
+  // Debug endpoint to check current user info (including role)
+  app.get("/api/user/me", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      let role = "technician";
+      let userDetails = null;
+
+      // For credentials auth, role is in session
+      if (req.user?.authType === "credentials") {
+        role = req.user.role || "technician";
+        userDetails = await storage.getUserById(userId);
+      } else {
+        // For Replit auth, get from userRoles table
+        const userRole = await storage.getUserRole(userId);
+        role = userRole?.role || "technician";
+      }
+
+      res.json({
+        userId,
+        role,
+        authType: req.user?.authType || "replit",
+        email: req.user?.email,
+        name: req.user?.name,
+        userDetails
+      });
+    } catch (error) {
+      console.error("Error fetching user info:", error);
+      res.status(500).json({ message: "Failed to fetch user info" });
     }
   });
 
@@ -230,6 +278,16 @@ export async function registerRoutes(
         startAt: new Date(),
       });
 
+      // Create customer access token for tracking
+      const token = generateJobToken();
+      await storage.createCustomerJobAccess({
+        washJobId: job.id,
+        token,
+        customerName: null,
+        customerEmail: null,
+        serviceCode: null,
+      });
+
       // Save initial photo if provided
       if (photoUrl) {
         await storage.addWashPhoto({
@@ -253,7 +311,13 @@ export async function registerRoutes(
       // Broadcast to SSE clients
       broadcastEvent({ type: "wash_created", job });
 
-      res.json(job);
+      // Return job with customer tracking URL
+      const baseUrl = process.env.APP_URL || `https://${req.hostname}`;
+      res.json({
+        ...job,
+        customerUrl: `${baseUrl}/customer/job/${token}`,
+        customerToken: token,
+      });
     } catch (error) {
       console.error("Error creating wash job:", error);
       res.status(500).json({ message: "Failed to create wash job" });
@@ -554,6 +618,74 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching queue stats:", error);
       res.status(500).json({ message: "Failed to fetch queue stats" });
+    }
+  });
+
+  // =====================
+  // CRM BOOKINGS (from external booking database)
+  // =====================
+
+  // Get upcoming bookings from CRM
+  app.get("/api/crm/bookings", isAuthenticated, async (req, res) => {
+    try {
+      const bookings = await getUpcomingBookings(30);
+      res.json(bookings);
+    } catch (error) {
+      console.error("Error fetching CRM bookings:", error);
+      res.status(500).json({ message: "Failed to fetch bookings" });
+    }
+  });
+
+  // Get today's bookings from CRM
+  app.get("/api/crm/bookings/today", isAuthenticated, async (req, res) => {
+    try {
+      const bookings = await getTodayBookings();
+      res.json(bookings);
+    } catch (error) {
+      console.error("Error fetching today's bookings:", error);
+      res.status(500).json({ message: "Failed to fetch bookings" });
+    }
+  });
+
+  // Search booking by license plate
+  app.get("/api/crm/bookings/search", isAuthenticated, async (req, res) => {
+    try {
+      const { plate } = req.query;
+      if (!plate || typeof plate !== "string") {
+        return res.status(400).json({ message: "Plate parameter required" });
+      }
+
+      const booking = await findBookingByPlate(plate);
+      if (!booking) {
+        return res.status(404).json({ message: "No booking found for this plate" });
+      }
+
+      res.json(booking);
+    } catch (error) {
+      console.error("Error searching CRM booking:", error);
+      res.status(500).json({ message: "Failed to search booking" });
+    }
+  });
+
+  // Update booking status in CRM (when wash completes)
+  app.patch("/api/crm/bookings/:id/status", isAuthenticated, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const status = req.body.status as string;
+
+      if (!["IN_PROGRESS", "COMPLETED", "READY_FOR_PICKUP"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const success = await updateBookingStatus(id, status as "IN_PROGRESS" | "COMPLETED" | "READY_FOR_PICKUP");
+      if (!success) {
+        return res.status(500).json({ message: "Failed to update booking status" });
+      }
+
+      res.json({ message: "Booking status updated" });
+    } catch (error) {
+      console.error("Error updating CRM booking status:", error);
+      res.status(500).json({ message: "Failed to update status" });
     }
   });
 
