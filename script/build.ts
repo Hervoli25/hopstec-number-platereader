@@ -64,7 +64,8 @@ async function buildAll() {
   });
 
   // Build Vercel serverless function
-  // Use .cjs extension to force CommonJS mode (package.json has "type": "module")
+  // Use ESM format to match the export default in entry.ts
+  // Keep dependencies external to avoid "Dynamic require" errors
   console.log("building Vercel API function...");
   await mkdir("api", { recursive: true });
 
@@ -72,8 +73,8 @@ async function buildAll() {
     entryPoints: ["server-vercel/entry.ts"],
     platform: "node",
     bundle: true,
-    format: "cjs",
-    outfile: "api/server.cjs",
+    format: "esm",
+    outfile: "api/server.js",
     define: {
       "process.env.NODE_ENV": '"production"',
     },
