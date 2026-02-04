@@ -1,0 +1,25 @@
+# Dependencies
+node_modules
+
+# Development files
+*.md
+.git
+.gitignore
+.env.local
+.env.*.local
+
+# Testing
+coverage
+*.test.ts
+*.spec.ts
+
+# IDE
+.vscode
+.idea
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build cache
+.cache

@@ -2,23 +2,28 @@
   "version": 2,
   "buildCommand": "npm run build",
   "installCommand": "npm install --include=dev",
+  "outputDirectory": "dist/public",
+  "functions": {
+    "api/index.ts": {
+      "runtime": "@vercel/node@3.0.0",
+      "includeFiles": "server/**/*,shared/**/*,dist/**/*"
+    }
+  },
   "routes": [
     {
-      "src": "/assets/(.*)",
-      "dest": "/assets/$1"
-    },
-    {
       "src": "/api/(.*)",
-      "dest": "/api/index"
+      "dest": "/api/index.ts"
     },
     {
       "src": "/uploads/(.*)",
-      "dest": "/api/index"
+      "dest": "/api/index.ts"
+    },
+    {
+      "handle": "filesystem"
     },
     {
       "src": "/(.*)",
-      "dest": "/api/index"
+      "dest": "/index.html"
     }
   ]
 }
-
