@@ -96,11 +96,11 @@ async function initializeApp() {
   return app;
 }
 
-// For Vercel serverless deployment
+// For Vercel serverless deployment - initialize on module load
 if (process.env.VERCEL) {
+  // Start initialization immediately (don't wait)
   initializeApp().catch((err) => {
     console.error("Failed to initialize app:", err);
-    process.exit(1);
   });
 }
 
@@ -127,5 +127,5 @@ if (!process.env.VERCEL) {
   })();
 }
 
-// Export for serverless environments (CommonJS)
+// Export for serverless environments
 export default app;
