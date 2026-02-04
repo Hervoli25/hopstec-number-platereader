@@ -58,9 +58,6 @@ async function buildAll() {
     minify: true,
     external: externals,
     logLevel: "info",
-    banner: {
-      js: "const __dirname = require('path').dirname(require('url').fileURLToPath(import.meta.url || 'file://' + __filename));",
-    },
   });
 }
 
