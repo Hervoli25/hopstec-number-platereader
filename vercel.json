@@ -1,29 +1,10 @@
 {
   "version": 2,
-  "framework": null,
   "buildCommand": "npm run build",
   "installCommand": "npm install --include=dev",
   "outputDirectory": "dist/public",
-  "functions": {
-    "api/server.ts": {
-      "includeFiles": "server/**/*,shared/**/*"
-    }
-  },
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/server.ts"
-    },
-    {
-      "src": "/uploads/(.*)",
-      "dest": "/api/server.ts"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/server" },
+    { "source": "/uploads/:path*", "destination": "/api/server" }
   ]
 }
