@@ -63,7 +63,8 @@ async function buildAll() {
     logLevel: "info",
   });
 
-  // Build Vercel serverless function (fully bundled)
+  // Build Vercel serverless function
+  // Use .cjs extension to force CommonJS mode (package.json has "type": "module")
   console.log("building Vercel API function...");
   await mkdir("api", { recursive: true });
 
@@ -71,17 +72,15 @@ async function buildAll() {
     entryPoints: ["server-vercel/entry.ts"],
     platform: "node",
     bundle: true,
-    format: "esm",
-    outfile: "api/server.js",
+    format: "cjs",
+    outfile: "api/server.cjs",
     define: {
       "process.env.NODE_ENV": '"production"',
     },
     minify: false,
-    external: ["@vercel/node"],
+    // Keep all node_modules external - Vercel will install them
+    packages: "external",
     logLevel: "info",
-    banner: {
-      js: '// @vercel/node serverless function',
-    },
   });
 }
 
