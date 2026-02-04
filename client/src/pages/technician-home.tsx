@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
 import { AppHeader } from "@/components/app-header";
+import { CompactFooter } from "@/components/app-footer";
 import { Car, ParkingSquare, ClipboardList } from "lucide-react";
 
 export default function TechnicianHome() {
@@ -14,10 +15,10 @@ export default function TechnicianHome() {
     : "U";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       <AppHeader />
 
-      <main className="max-w-lg mx-auto px-4 py-8">
+      <main className="flex-1 max-w-lg mx-auto px-4 py-8 w-full">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -108,6 +109,8 @@ export default function TechnicianHome() {
           </Link>
         </motion.div>
       </main>
+
+      <CompactFooter />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, Car, Clock, Calendar, CheckCircle2, User, MapPin } from "lucide-react";
+import { CompactFooter } from "@/components/app-footer";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
 
@@ -92,7 +93,7 @@ export default function MyJobs() {
   const pastJobs = myJobs?.filter(j => j.status === "complete").slice(0, 5) || [];
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
@@ -102,7 +103,7 @@ export default function MyJobs() {
         </div>
       </header>
 
-      <main className="max-w-lg mx-auto px-4 py-6">
+      <main className="flex-1 max-w-lg mx-auto px-4 py-6 w-full">
         {isLoading ? (
           <div className="space-y-3">
             <Skeleton className="h-20" />
@@ -349,6 +350,8 @@ export default function MyJobs() {
           </div>
         )}
       </main>
+
+      <CompactFooter />
     </div>
   );
 }
