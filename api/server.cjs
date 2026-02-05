@@ -50674,12 +50674,12 @@ var require_cli_options = __commonJS({
   }
 });
 
-// api/server.js
-var server_exports = {};
-__export(server_exports, {
+// api/_entry.js
+var entry_exports = {};
+__export(entry_exports, {
   default: () => handler
 });
-module.exports = __toCommonJS(server_exports);
+module.exports = __toCommonJS(entry_exports);
 var import_express2 = __toESM(require_express2(), 1);
 
 // server/routes.ts
@@ -53953,7 +53953,7 @@ async function registerRoutes(httpServer2, app2) {
   return httpServer2;
 }
 
-// api/server.js
+// api/_entry.js
 var import_http = require("http");
 
 // node_modules/dotenv/config.js
@@ -53967,7 +53967,7 @@ var import_http = require("http");
   );
 })();
 
-// api/server.js
+// api/_entry.js
 var app = (0, import_express2.default)();
 var httpServer = (0, import_http.createServer)(app);
 app.use(import_express2.default.json());

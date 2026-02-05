@@ -34,7 +34,7 @@ async function buildAll() {
   await mkdir("api", { recursive: true });
 
   await esbuild({
-    entryPoints: ["api/server.js"],
+    entryPoints: ["api/_entry.js"],
     platform: "node",
     bundle: true,
     format: "cjs",
