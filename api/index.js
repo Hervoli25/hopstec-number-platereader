@@ -53237,6 +53237,15 @@ function broadcastEvent(data) {
     });
   }
 }
+function getBaseUrl(req) {
+  if (process.env.APP_URL) {
+    return process.env.APP_URL;
+  }
+  const forwardedHost = req.get("x-forwarded-host");
+  const host2 = forwardedHost || req.hostname;
+  const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
+  return `${protocol}://${host2}`;
+}
 var createWashJobSchema = z.object({
   plateDisplay: z.string().min(1, "Plate is required"),
   countryHint: z.enum(COUNTRY_HINTS).optional().default("OTHER"),
@@ -53445,7 +53454,7 @@ async function registerRoutes(httpServer2, app2) {
         payloadJson: { hasPhoto: !!photoUrl }
       });
       broadcastEvent({ type: "wash_created", job });
-      const baseUrl = process.env.APP_URL || `https://${req.hostname}`;
+      const baseUrl = getBaseUrl(req);
       res.json({
         ...job,
         customerUrl: `${baseUrl}/customer/job/${token}`,
@@ -53947,7 +53956,7 @@ async function registerRoutes(httpServer2, app2) {
         payloadJson: { serviceCode, hasCustomer: !!customerName }
       });
       broadcastEvent({ type: "wash_created", job });
-      const baseUrl = process.env.APP_URL || `https://${req.hostname}`;
+      const baseUrl = getBaseUrl(req);
       res.json({
         job,
         customerUrl: `${baseUrl}/customer/job/${token}`,

@@ -33,6 +33,18 @@ function broadcastEvent(data: any) {
   }
 }
 
+// Helper to get base URL (handles Vercel's proxy headers)
+function getBaseUrl(req: any): string {
+  if (process.env.APP_URL) {
+    return process.env.APP_URL;
+  }
+  // Vercel and other proxies set x-forwarded-host
+  const forwardedHost = req.get('x-forwarded-host');
+  const host = forwardedHost || req.hostname;
+  const protocol = req.get('x-forwarded-proto') || req.protocol || 'https';
+  return `${protocol}://${host}`;
+}
+
 // Validation schemas
 const createWashJobSchema = z.object({
   plateDisplay: z.string().min(1, "Plate is required"),
@@ -312,7 +324,7 @@ export async function registerRoutes(
       broadcastEvent({ type: "wash_created", job });
 
       // Return job with customer tracking URL
-      const baseUrl = process.env.APP_URL || `https://${req.hostname}`;
+      const baseUrl = getBaseUrl(req);
       res.json({
         ...job,
         customerUrl: `${baseUrl}/customer/job/${token}`,
@@ -969,7 +981,7 @@ export async function registerRoutes(
       // Broadcast update
       broadcastEvent({ type: "wash_created", job });
 
-      const baseUrl = process.env.APP_URL || `https://${req.hostname}`;
+      const baseUrl = getBaseUrl(req);
       res.json({
         job,
         customerUrl: `${baseUrl}/customer/job/${token}`,
