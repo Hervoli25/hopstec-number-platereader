@@ -1,8 +1,8 @@
 // Vercel serverless function entry point
-// This gets bundled to api/server.cjs by the build script
+// This gets bundled to api/index.js by the build script
 
 import express from 'express';
-import { registerRoutes } from '../server/routes.js';
+import { registerRoutes } from './server/routes.js';
 import { createServer } from 'http';
 import 'dotenv/config';
 

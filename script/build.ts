@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile, mkdir } from "fs/promises";
+import { rm, readFile, mkdir, writeFile } from "fs/promises";
 
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
@@ -29,23 +29,35 @@ async function buildAll() {
     logLevel: "info",
   });
 
-  // Build Vercel serverless function - FULLY BUNDLED
+  // Build Vercel serverless function - FULLY BUNDLED as ESM with CJS interop
   console.log("building Vercel API function...");
   await mkdir("api", { recursive: true });
 
+  // Clean api directory except for the source file
+  await rm("api/index.js", { force: true });
+  await rm("api/server.cjs", { force: true });
+  await rm("api/server.js", { force: true });
+
   await esbuild({
-    entryPoints: ["api/_entry.js"],
+    entryPoints: ["server-vercel-entry.js"],
     platform: "node",
     bundle: true,
-    format: "cjs",
-    outfile: "api/server.cjs",
+    format: "esm",
+    outfile: "api/index.js",
     define: {
       "process.env.NODE_ENV": '"production"',
     },
     minify: false,
-    // Bundle everything except native Node modules
+    // Bundle everything - no externals
     external: [],
     logLevel: "info",
+    // Add banner to handle CJS/ESM interop
+    banner: {
+      js: `
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+`,
+    },
   });
 }
 
