@@ -53986,8 +53986,22 @@ async function initialize() {
   return initPromise;
 }
 async function handler(req, res) {
-  await initialize();
-  return app(req, res);
+  try {
+    await initialize();
+    return new Promise((resolve) => {
+      const originalEnd = res.end.bind(res);
+      res.end = function(...args) {
+        originalEnd(...args);
+        resolve();
+      };
+      app(req, res);
+    });
+  } catch (error) {
+    console.error("Handler error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Server initialization failed", error: error.message });
+    }
+  }
 }
 /*! Bundled license information:
 
