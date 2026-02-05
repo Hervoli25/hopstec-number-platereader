@@ -3,9 +3,13 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install --include=dev",
   "outputDirectory": "dist/public",
+  "functions": {
+    "api/server.js": {
+      "includeFiles": "server/**,shared/**,drizzle.config.ts,.env"
+    }
+  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/server.cjs" },
-    { "source": "/uploads/:path*", "destination": "/api/server.cjs" },
-    { "source": "/(.*)", "destination": "/api/server.cjs" }
+    { "source": "/api/:path*", "destination": "/api/server" },
+    { "source": "/uploads/:path*", "destination": "/api/server" }
   ]
 }
