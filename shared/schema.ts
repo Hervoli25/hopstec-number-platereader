@@ -46,6 +46,32 @@ export const washPhotos = pgTable("wash_photos", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Parking Settings (configurable rates and capacity)
+export const parkingSettings = pgTable("parking_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  hourlyRate: integer("hourly_rate").default(500), // in cents (e.g., 500 = $5.00)
+  dailyMaxRate: integer("daily_max_rate").default(3000), // max daily charge
+  gracePeriodMinutes: integer("grace_period_minutes").default(15),
+  totalCapacity: integer("total_capacity").default(50),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Parking Zones
+export const parkingZones = pgTable("parking_zones", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  capacity: integer("capacity").default(10),
+  hourlyRate: integer("hourly_rate"), // override global rate if set
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Parking Sessions
 export const parkingSessions = pgTable("parking_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -57,6 +83,51 @@ export const parkingSessions = pgTable("parking_sessions", {
   entryPhotoUrl: text("entry_photo_url"),
   exitPhotoUrl: text("exit_photo_url"),
   technicianId: varchar("technician_id").notNull(),
+  zoneId: varchar("zone_id"),
+  spotNumber: varchar("spot_number", { length: 20 }),
+  calculatedFee: integer("calculated_fee"), // in cents
+  paidAmount: integer("paid_amount"), // in cents
+  isPaid: boolean("is_paid").default(false),
+  washJobId: varchar("wash_job_id"), // link to wash if bundled
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Frequent Parkers (VIP recognition)
+export const frequentParkers = pgTable("frequent_parkers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  plateNormalized: varchar("plate_normalized", { length: 50 }).notNull().unique(),
+  plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
+  customerName: varchar("customer_name", { length: 255 }),
+  customerPhone: varchar("customer_phone", { length: 50 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  visitCount: integer("visit_count").default(1),
+  totalSpent: integer("total_spent").default(0), // in cents
+  isVip: boolean("is_vip").default(false),
+  monthlyPassExpiry: timestamp("monthly_pass_expiry"),
+  notes: text("notes"),
+  lastVisitAt: timestamp("last_visit_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Parking Reservations (pre-booking)
+export const parkingReservations = pgTable("parking_reservations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  plateDisplay: varchar("plate_display", { length: 50 }),
+  plateNormalized: varchar("plate_normalized", { length: 50 }),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  customerPhone: varchar("customer_phone", { length: 50 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  zoneId: varchar("zone_id"),
+  spotNumber: varchar("spot_number", { length: 20 }),
+  reservedFrom: timestamp("reserved_from").notNull(),
+  reservedUntil: timestamp("reserved_until").notNull(),
+  status: varchar("status", { length: 20 }).default("pending"), // pending, confirmed, checked_in, completed, cancelled
+  confirmationCode: varchar("confirmation_code", { length: 20 }).notNull(),
+  parkingSessionId: varchar("parking_session_id"), // linked when checked in
+  notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -151,6 +222,10 @@ export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: tru
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWashPhotoSchema = createInsertSchema(washPhotos).omit({ id: true, createdAt: true });
 export const insertParkingSessionSchema = createInsertSchema(parkingSessions).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertParkingSettingsSchema = createInsertSchema(parkingSettings).omit({ id: true, createdAt: true });
+export const insertParkingZoneSchema = createInsertSchema(parkingZones).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertFrequentParkerSchema = createInsertSchema(frequentParkers).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertParkingReservationSchema = createInsertSchema(parkingReservations).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertEventLogSchema = createInsertSchema(eventLogs).omit({ id: true, createdAt: true });
 export const insertWebhookRetrySchema = createInsertSchema(webhookRetries).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ createdAt: true, updatedAt: true });
@@ -171,6 +246,18 @@ export type InsertWashPhoto = z.infer<typeof insertWashPhotoSchema>;
 
 export type ParkingSession = typeof parkingSessions.$inferSelect;
 export type InsertParkingSession = z.infer<typeof insertParkingSessionSchema>;
+
+export type ParkingSettings = typeof parkingSettings.$inferSelect;
+export type InsertParkingSettings = z.infer<typeof insertParkingSettingsSchema>;
+
+export type ParkingZone = typeof parkingZones.$inferSelect;
+export type InsertParkingZone = z.infer<typeof insertParkingZoneSchema>;
+
+export type FrequentParker = typeof frequentParkers.$inferSelect;
+export type InsertFrequentParker = z.infer<typeof insertFrequentParkerSchema>;
+
+export type ParkingReservation = typeof parkingReservations.$inferSelect;
+export type InsertParkingReservation = z.infer<typeof insertParkingReservationSchema>;
 
 export type EventLog = typeof eventLogs.$inferSelect;
 export type InsertEventLog = z.infer<typeof insertEventLogSchema>;
@@ -208,3 +295,7 @@ export type PhotoRuleType = typeof PHOTO_RULES[number];
 // Service codes
 export const SERVICE_CODES = ["BASIC", "PREMIUM", "DELUXE", "CUSTOM"] as const;
 export type ServiceCode = typeof SERVICE_CODES[number];
+
+// Reservation statuses
+export const RESERVATION_STATUSES = ["pending", "confirmed", "checked_in", "completed", "cancelled"] as const;
+export type ReservationStatus = typeof RESERVATION_STATUSES[number];

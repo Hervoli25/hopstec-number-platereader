@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
 import { AppHeader } from "@/components/app-header";
 import { CompactFooter } from "@/components/app-footer";
-import { Car, ParkingSquare, ClipboardList } from "lucide-react";
+import { Car, ParkingSquare, ClipboardList, LayoutDashboard } from "lucide-react";
 
 export default function TechnicianHome() {
   const { user } = useAuth();
@@ -92,7 +92,7 @@ export default function TechnicianHome() {
           <h2 className="text-lg font-medium text-muted-foreground">My Work</h2>
           
           <Link href="/my-jobs">
-            <Card 
+            <Card
               className="p-4 hover-elevate active-elevate-2 cursor-pointer"
               data-testid="card-my-jobs"
             >
@@ -103,6 +103,23 @@ export default function TechnicianHome() {
                 <div className="flex-1">
                   <h3 className="font-medium">My Active Jobs</h3>
                   <p className="text-sm text-muted-foreground">View and update wash jobs</p>
+                </div>
+              </div>
+            </Card>
+          </Link>
+
+          <Link href="/parking">
+            <Card
+              className="p-4 hover-elevate active-elevate-2 cursor-pointer"
+              data-testid="card-parking-dashboard"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                  <LayoutDashboard className="w-5 h-5 text-blue-500" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-medium">Parking Dashboard</h3>
+                  <p className="text-sm text-muted-foreground">Active sessions, zones & VIPs</p>
                 </div>
               </div>
             </Card>

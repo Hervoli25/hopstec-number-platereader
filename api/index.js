@@ -42881,16 +42881,22 @@ var schema_exports = {};
 __export(schema_exports, {
   COUNTRY_HINTS: () => COUNTRY_HINTS,
   PHOTO_RULES: () => PHOTO_RULES,
+  RESERVATION_STATUSES: () => RESERVATION_STATUSES,
   SERVICE_CODES: () => SERVICE_CODES,
   WASH_STATUS_ORDER: () => WASH_STATUS_ORDER,
   countryHintEnum: () => countryHintEnum,
   customerConfirmations: () => customerConfirmations,
   customerJobAccess: () => customerJobAccess,
   eventLogs: () => eventLogs,
+  frequentParkers: () => frequentParkers,
   insertCustomerConfirmationSchema: () => insertCustomerConfirmationSchema,
   insertCustomerJobAccessSchema: () => insertCustomerJobAccessSchema,
   insertEventLogSchema: () => insertEventLogSchema,
+  insertFrequentParkerSchema: () => insertFrequentParkerSchema,
+  insertParkingReservationSchema: () => insertParkingReservationSchema,
   insertParkingSessionSchema: () => insertParkingSessionSchema,
+  insertParkingSettingsSchema: () => insertParkingSettingsSchema,
+  insertParkingZoneSchema: () => insertParkingZoneSchema,
   insertPhotoRuleSchema: () => insertPhotoRuleSchema,
   insertServiceChecklistItemSchema: () => insertServiceChecklistItemSchema,
   insertUserRoleSchema: () => insertUserRoleSchema,
@@ -42898,7 +42904,10 @@ __export(schema_exports, {
   insertWashJobSchema: () => insertWashJobSchema,
   insertWashPhotoSchema: () => insertWashPhotoSchema,
   insertWebhookRetrySchema: () => insertWebhookRetrySchema,
+  parkingReservations: () => parkingReservations,
   parkingSessions: () => parkingSessions,
+  parkingSettings: () => parkingSettings,
+  parkingZones: () => parkingZones,
   photoRuleEnum: () => photoRuleEnum,
   photoRules: () => photoRules,
   serviceChecklistItems: () => serviceChecklistItems,
@@ -42911,7 +42920,7 @@ __export(schema_exports, {
   washStatusEnum: () => washStatusEnum,
   webhookRetries: () => webhookRetries
 });
-var userRoleEnum, washStatusEnum, countryHintEnum, photoRuleEnum, userRoles, washJobs, washPhotos, parkingSessions, eventLogs, webhookRetries, users2, customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules, insertUserRoleSchema, insertWashJobSchema, insertWashPhotoSchema, insertParkingSessionSchema, insertEventLogSchema, insertWebhookRetrySchema, insertUserSchema, insertCustomerJobAccessSchema, insertServiceChecklistItemSchema, insertCustomerConfirmationSchema, insertPhotoRuleSchema, WASH_STATUS_ORDER, COUNTRY_HINTS, PHOTO_RULES, SERVICE_CODES;
+var userRoleEnum, washStatusEnum, countryHintEnum, photoRuleEnum, userRoles, washJobs, washPhotos, parkingSettings, parkingZones, parkingSessions, frequentParkers, parkingReservations, eventLogs, webhookRetries, users2, customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules, insertUserRoleSchema, insertWashJobSchema, insertWashPhotoSchema, insertParkingSessionSchema, insertParkingSettingsSchema, insertParkingZoneSchema, insertFrequentParkerSchema, insertParkingReservationSchema, insertEventLogSchema, insertWebhookRetrySchema, insertUserSchema, insertCustomerJobAccessSchema, insertServiceChecklistItemSchema, insertCustomerConfirmationSchema, insertPhotoRuleSchema, WASH_STATUS_ORDER, COUNTRY_HINTS, PHOTO_RULES, SERVICE_CODES, RESERVATION_STATUSES;
 var init_schema2 = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -42951,6 +42960,31 @@ var init_schema2 = __esm({
       uploadedBy: varchar("uploaded_by"),
       createdAt: timestamp("created_at").defaultNow()
     });
+    parkingSettings = pgTable("parking_settings", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      hourlyRate: integer("hourly_rate").default(500),
+      // in cents (e.g., 500 = $5.00)
+      dailyMaxRate: integer("daily_max_rate").default(3e3),
+      // max daily charge
+      gracePeriodMinutes: integer("grace_period_minutes").default(15),
+      totalCapacity: integer("total_capacity").default(50),
+      currency: varchar("currency", { length: 3 }).default("USD"),
+      updatedBy: varchar("updated_by"),
+      updatedAt: timestamp("updated_at").defaultNow(),
+      createdAt: timestamp("created_at").defaultNow()
+    });
+    parkingZones = pgTable("parking_zones", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      name: varchar("name", { length: 100 }).notNull(),
+      code: varchar("code", { length: 20 }).notNull().unique(),
+      capacity: integer("capacity").default(10),
+      hourlyRate: integer("hourly_rate"),
+      // override global rate if set
+      description: text("description"),
+      isActive: boolean("is_active").default(true),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow()
+    });
     parkingSessions = pgTable("parking_sessions", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
@@ -42961,6 +42995,53 @@ var init_schema2 = __esm({
       entryPhotoUrl: text("entry_photo_url"),
       exitPhotoUrl: text("exit_photo_url"),
       technicianId: varchar("technician_id").notNull(),
+      zoneId: varchar("zone_id"),
+      spotNumber: varchar("spot_number", { length: 20 }),
+      calculatedFee: integer("calculated_fee"),
+      // in cents
+      paidAmount: integer("paid_amount"),
+      // in cents
+      isPaid: boolean("is_paid").default(false),
+      washJobId: varchar("wash_job_id"),
+      // link to wash if bundled
+      notes: text("notes"),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow()
+    });
+    frequentParkers = pgTable("frequent_parkers", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      plateNormalized: varchar("plate_normalized", { length: 50 }).notNull().unique(),
+      plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
+      customerName: varchar("customer_name", { length: 255 }),
+      customerPhone: varchar("customer_phone", { length: 50 }),
+      customerEmail: varchar("customer_email", { length: 255 }),
+      visitCount: integer("visit_count").default(1),
+      totalSpent: integer("total_spent").default(0),
+      // in cents
+      isVip: boolean("is_vip").default(false),
+      monthlyPassExpiry: timestamp("monthly_pass_expiry"),
+      notes: text("notes"),
+      lastVisitAt: timestamp("last_visit_at").defaultNow(),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow()
+    });
+    parkingReservations = pgTable("parking_reservations", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      plateDisplay: varchar("plate_display", { length: 50 }),
+      plateNormalized: varchar("plate_normalized", { length: 50 }),
+      customerName: varchar("customer_name", { length: 255 }).notNull(),
+      customerPhone: varchar("customer_phone", { length: 50 }),
+      customerEmail: varchar("customer_email", { length: 255 }),
+      zoneId: varchar("zone_id"),
+      spotNumber: varchar("spot_number", { length: 20 }),
+      reservedFrom: timestamp("reserved_from").notNull(),
+      reservedUntil: timestamp("reserved_until").notNull(),
+      status: varchar("status", { length: 20 }).default("pending"),
+      // pending, confirmed, checked_in, completed, cancelled
+      confirmationCode: varchar("confirmation_code", { length: 20 }).notNull(),
+      parkingSessionId: varchar("parking_session_id"),
+      // linked when checked in
+      notes: text("notes"),
       createdAt: timestamp("created_at").defaultNow(),
       updatedAt: timestamp("updated_at").defaultNow()
     });
@@ -43039,6 +43120,10 @@ var init_schema2 = __esm({
     insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
     insertWashPhotoSchema = createInsertSchema(washPhotos).omit({ id: true, createdAt: true });
     insertParkingSessionSchema = createInsertSchema(parkingSessions).omit({ id: true, createdAt: true, updatedAt: true });
+    insertParkingSettingsSchema = createInsertSchema(parkingSettings).omit({ id: true, createdAt: true });
+    insertParkingZoneSchema = createInsertSchema(parkingZones).omit({ id: true, createdAt: true, updatedAt: true });
+    insertFrequentParkerSchema = createInsertSchema(frequentParkers).omit({ id: true, createdAt: true, updatedAt: true });
+    insertParkingReservationSchema = createInsertSchema(parkingReservations).omit({ id: true, createdAt: true, updatedAt: true });
     insertEventLogSchema = createInsertSchema(eventLogs).omit({ id: true, createdAt: true });
     insertWebhookRetrySchema = createInsertSchema(webhookRetries).omit({ id: true, createdAt: true });
     insertUserSchema = createInsertSchema(users2).omit({ createdAt: true, updatedAt: true });
@@ -43050,6 +43135,7 @@ var init_schema2 = __esm({
     COUNTRY_HINTS = ["FR", "ZA", "CD", "OTHER"];
     PHOTO_RULES = ["optional", "required", "disabled"];
     SERVICE_CODES = ["BASIC", "PREMIUM", "DELUXE", "CUSTOM"];
+    RESERVATION_STATUSES = ["pending", "confirmed", "checked_in", "completed", "cancelled"];
   }
 });
 
@@ -43259,22 +43345,205 @@ var init_storage = __esm({
         ));
         return session2;
       }
-      async closeParkingSession(id, exitPhotoUrl) {
+      async closeParkingSession(id, exitPhotoUrl, calculatedFee) {
         const [result] = await db.update(parkingSessions).set({
           exitAt: /* @__PURE__ */ new Date(),
           exitPhotoUrl: exitPhotoUrl || null,
+          calculatedFee: calculatedFee || null,
           updatedAt: /* @__PURE__ */ new Date()
         }).where(eq(parkingSessions.id, id)).returning();
         return result;
       }
       async getParkingSessions(filters) {
         let query = db.select().from(parkingSessions);
+        const conditions = [];
         if (filters?.open === true) {
-          query = query.where(isNull(parkingSessions.exitAt));
+          conditions.push(isNull(parkingSessions.exitAt));
         } else if (filters?.open === false) {
-          query = query.where(sql`${parkingSessions.exitAt} IS NOT NULL`);
+          conditions.push(sql`${parkingSessions.exitAt} IS NOT NULL`);
         }
-        return query.orderBy(desc(parkingSessions.createdAt));
+        if (filters?.plateSearch) {
+          const normalized = normalizePlate(filters.plateSearch);
+          conditions.push(sql`${parkingSessions.plateNormalized} ILIKE ${"%" + normalized + "%"}`);
+        }
+        if (filters?.fromDate) {
+          conditions.push(gte(parkingSessions.entryAt, filters.fromDate));
+        }
+        if (filters?.toDate) {
+          conditions.push(lte(parkingSessions.entryAt, filters.toDate));
+        }
+        if (filters?.zoneId) {
+          conditions.push(eq(parkingSessions.zoneId, filters.zoneId));
+        }
+        if (conditions.length > 0) {
+          query = query.where(and(...conditions));
+        }
+        return query.orderBy(desc(parkingSessions.entryAt));
+      }
+      async getParkingSession(id) {
+        const [session2] = await db.select().from(parkingSessions).where(eq(parkingSessions.id, id));
+        return session2;
+      }
+      async updateParkingSession(id, data) {
+        const [result] = await db.update(parkingSessions).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(parkingSessions.id, id)).returning();
+        return result;
+      }
+      // Parking Settings
+      async getParkingSettings() {
+        const [settings] = await db.select().from(parkingSettings).limit(1);
+        return settings;
+      }
+      async upsertParkingSettings(settings) {
+        const existing = await this.getParkingSettings();
+        if (existing) {
+          const [result] = await db.update(parkingSettings).set({ ...settings, updatedAt: /* @__PURE__ */ new Date() }).where(eq(parkingSettings.id, existing.id)).returning();
+          return result;
+        } else {
+          const [result] = await db.insert(parkingSettings).values(settings).returning();
+          return result;
+        }
+      }
+      // Parking Zones
+      async createParkingZone(zone) {
+        const [result] = await db.insert(parkingZones).values(zone).returning();
+        return result;
+      }
+      async getParkingZones(activeOnly = true) {
+        if (activeOnly) {
+          return db.select().from(parkingZones).where(eq(parkingZones.isActive, true)).orderBy(asc(parkingZones.name));
+        }
+        return db.select().from(parkingZones).orderBy(asc(parkingZones.name));
+      }
+      async getParkingZone(id) {
+        const [zone] = await db.select().from(parkingZones).where(eq(parkingZones.id, id));
+        return zone;
+      }
+      async updateParkingZone(id, data) {
+        const [result] = await db.update(parkingZones).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(parkingZones.id, id)).returning();
+        return result;
+      }
+      async getZoneOccupancy(zoneId) {
+        const [result] = await db.select({ count: sql`count(*)::int` }).from(parkingSessions).where(and(eq(parkingSessions.zoneId, zoneId), isNull(parkingSessions.exitAt)));
+        return result?.count || 0;
+      }
+      // Frequent Parkers
+      async getOrCreateFrequentParker(plateNormalized, plateDisplay) {
+        const existing = await this.getFrequentParker(plateNormalized);
+        if (existing) return existing;
+        const [result] = await db.insert(frequentParkers).values({
+          plateNormalized,
+          plateDisplay,
+          visitCount: 1,
+          lastVisitAt: /* @__PURE__ */ new Date()
+        }).returning();
+        return result;
+      }
+      async getFrequentParker(plateNormalized) {
+        const [parker] = await db.select().from(frequentParkers).where(eq(frequentParkers.plateNormalized, plateNormalized));
+        return parker;
+      }
+      async updateFrequentParker(id, data) {
+        const [result] = await db.update(frequentParkers).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(frequentParkers.id, id)).returning();
+        return result;
+      }
+      async getFrequentParkers(filters) {
+        const conditions = [];
+        if (filters?.isVip !== void 0) {
+          conditions.push(eq(frequentParkers.isVip, filters.isVip));
+        }
+        if (filters?.hasMonthlyPass) {
+          conditions.push(gte(frequentParkers.monthlyPassExpiry, /* @__PURE__ */ new Date()));
+        }
+        if (conditions.length > 0) {
+          return db.select().from(frequentParkers).where(and(...conditions)).orderBy(desc(frequentParkers.visitCount));
+        }
+        return db.select().from(frequentParkers).orderBy(desc(frequentParkers.visitCount));
+      }
+      async incrementParkerVisit(plateNormalized, amountSpent = 0) {
+        const parker = await this.getFrequentParker(plateNormalized);
+        if (!parker) return void 0;
+        const [result] = await db.update(frequentParkers).set({
+          visitCount: (parker.visitCount || 0) + 1,
+          totalSpent: (parker.totalSpent || 0) + amountSpent,
+          lastVisitAt: /* @__PURE__ */ new Date(),
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(frequentParkers.id, parker.id)).returning();
+        return result;
+      }
+      // Parking Reservations
+      async createParkingReservation(reservation) {
+        const plateNormalized = reservation.plateDisplay ? normalizePlate(reservation.plateDisplay) : null;
+        const [result] = await db.insert(parkingReservations).values({ ...reservation, plateNormalized }).returning();
+        return result;
+      }
+      async getParkingReservations(filters) {
+        const conditions = [];
+        if (filters?.status) {
+          conditions.push(eq(parkingReservations.status, filters.status));
+        }
+        if (filters?.fromDate) {
+          conditions.push(gte(parkingReservations.reservedFrom, filters.fromDate));
+        }
+        if (filters?.toDate) {
+          conditions.push(lte(parkingReservations.reservedUntil, filters.toDate));
+        }
+        if (conditions.length > 0) {
+          return db.select().from(parkingReservations).where(and(...conditions)).orderBy(asc(parkingReservations.reservedFrom));
+        }
+        return db.select().from(parkingReservations).orderBy(asc(parkingReservations.reservedFrom));
+      }
+      async getParkingReservation(id) {
+        const [reservation] = await db.select().from(parkingReservations).where(eq(parkingReservations.id, id));
+        return reservation;
+      }
+      async getParkingReservationByCode(code) {
+        const [reservation] = await db.select().from(parkingReservations).where(eq(parkingReservations.confirmationCode, code));
+        return reservation;
+      }
+      async updateParkingReservation(id, data) {
+        const [result] = await db.update(parkingReservations).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(parkingReservations.id, id)).returning();
+        return result;
+      }
+      async checkInReservation(id, parkingSessionId) {
+        const [result] = await db.update(parkingReservations).set({ status: "checked_in", parkingSessionId, updatedAt: /* @__PURE__ */ new Date() }).where(eq(parkingReservations.id, id)).returning();
+        return result;
+      }
+      // Parking Analytics
+      async getParkingAnalytics() {
+        const now = /* @__PURE__ */ new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const [activeResult] = await db.select({ count: sql`count(*)::int` }).from(parkingSessions).where(isNull(parkingSessions.exitAt));
+        const settings = await this.getParkingSettings();
+        const totalCapacity = settings?.totalCapacity || 50;
+        const [revenueResult] = await db.select({ total: sql`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int` }).from(parkingSessions).where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+        const [entriesResult] = await db.select({ count: sql`count(*)::int` }).from(parkingSessions).where(gte(parkingSessions.entryAt, todayStart));
+        const [exitsResult] = await db.select({ count: sql`count(*)::int` }).from(parkingSessions).where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+        const [avgDurationResult] = await db.select({
+          avgMinutes: sql`COALESCE(AVG(EXTRACT(EPOCH FROM (${parkingSessions.exitAt} - ${parkingSessions.entryAt})) / 60)::int, 0)`
+        }).from(parkingSessions).where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+        const zones = await this.getParkingZones();
+        const zoneOccupancy = await Promise.all(
+          zones.map(async (zone) => {
+            const occupied = await this.getZoneOccupancy(zone.id);
+            return {
+              zoneId: zone.id,
+              zoneName: zone.name,
+              occupied,
+              capacity: zone.capacity || 10
+            };
+          })
+        );
+        const totalActive = activeResult?.count || 0;
+        return {
+          totalActiveSessions: totalActive,
+          totalCapacity,
+          occupancyRate: totalCapacity > 0 ? Math.round(totalActive / totalCapacity * 100) : 0,
+          todayRevenue: revenueResult?.total || 0,
+          todayEntries: entriesResult?.count || 0,
+          todayExits: exitsResult?.count || 0,
+          avgDurationMinutes: avgDurationResult?.avgMinutes || 0,
+          zoneOccupancy
+        };
       }
       // Event Logs
       async logEvent(event) {
@@ -53218,6 +53487,112 @@ async function updateBookingStatus(bookingId, status) {
   }
 }
 
+// server/lib/parking-utils.ts
+function calculateParkingDuration(entryAt, exitAt) {
+  const end = exitAt ? new Date(exitAt) : /* @__PURE__ */ new Date();
+  const start = new Date(entryAt);
+  const diffMs = end.getTime() - start.getTime();
+  const minutes = Math.floor(diffMs / 6e4);
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  let formatted;
+  if (hours > 24) {
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    formatted = `${days}d ${remainingHours}h ${mins}m`;
+  } else if (hours > 0) {
+    formatted = `${hours}h ${mins}m`;
+  } else {
+    formatted = `${mins}m`;
+  }
+  return { minutes, formatted };
+}
+function calculateParkingFee(session2, settings, parker) {
+  const { minutes, formatted } = calculateParkingDuration(
+    session2.entryAt,
+    session2.exitAt
+  );
+  const hourlyRate = settings?.hourlyRate || 500;
+  const dailyMax = settings?.dailyMaxRate || 3e3;
+  const gracePeriod = settings?.gracePeriodMinutes || 15;
+  const currency = settings?.currency || "USD";
+  if (minutes <= gracePeriod) {
+    return {
+      durationMinutes: minutes,
+      durationFormatted: formatted,
+      baseFee: 0,
+      discount: 0,
+      finalFee: 0,
+      currency,
+      isGracePeriod: true,
+      hasMonthlyPass: false
+    };
+  }
+  if (parker?.monthlyPassExpiry && new Date(parker.monthlyPassExpiry) > /* @__PURE__ */ new Date()) {
+    return {
+      durationMinutes: minutes,
+      durationFormatted: formatted,
+      baseFee: 0,
+      discount: 0,
+      finalFee: 0,
+      currency,
+      isGracePeriod: false,
+      hasMonthlyPass: true
+    };
+  }
+  const hours = Math.ceil(minutes / 60);
+  let baseFee = hours * hourlyRate;
+  const days = Math.ceil(minutes / (24 * 60));
+  const maxFee = days * dailyMax;
+  baseFee = Math.min(baseFee, maxFee);
+  let discount = 0;
+  if (parker?.isVip) {
+    discount = Math.floor(baseFee * 0.1);
+  }
+  const finalFee = baseFee - discount;
+  return {
+    durationMinutes: minutes,
+    durationFormatted: formatted,
+    baseFee,
+    discount,
+    finalFee,
+    currency,
+    isGracePeriod: false,
+    hasMonthlyPass: false
+  };
+}
+function formatCurrency(amountCents, currency = "USD") {
+  const amount = amountCents / 100;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency
+  }).format(amount);
+}
+function generateConfirmationCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+function enrichSessionWithCalculations(session2, settings, parker) {
+  const feeResult = calculateParkingFee(session2, settings, parker);
+  return {
+    ...session2,
+    durationMinutes: feeResult.durationMinutes,
+    durationFormatted: feeResult.durationFormatted,
+    estimatedFee: feeResult.finalFee,
+    isGracePeriod: feeResult.isGracePeriod,
+    hasMonthlyPass: feeResult.hasMonthlyPass,
+    parkerInfo: parker ? {
+      customerName: parker.customerName,
+      isVip: parker.isVip || false,
+      visitCount: parker.visitCount || 0
+    } : void 0
+  };
+}
+
 // server/routes.ts
 var sseClients = /* @__PURE__ */ new Set();
 var customerSseClients = /* @__PURE__ */ new Set();
@@ -53628,7 +54003,13 @@ async function registerRoutes(httpServer2, app2) {
           console.error("Photo save error:", err);
         }
       }
-      const closedSession = await storage.closeParkingSession(session2.id, exitPhotoUrl);
+      const settings = await storage.getParkingSettings();
+      const parker = await storage.getFrequentParker(normalized);
+      const feeResult = calculateParkingFee(session2, settings || null, parker);
+      const closedSession = await storage.closeParkingSession(session2.id, exitPhotoUrl, feeResult.finalFee);
+      if (parker) {
+        await storage.incrementParkerVisit(normalized, feeResult.finalFee);
+      }
       await storage.logEvent({
         type: "parking_exit",
         plateDisplay: session2.plateDisplay,
@@ -53636,10 +54017,18 @@ async function registerRoutes(httpServer2, app2) {
         countryHint: session2.countryHint,
         parkingSessionId: session2.id,
         userId,
-        payloadJson: { hasPhoto: !!exitPhotoUrl }
+        payloadJson: {
+          hasPhoto: !!exitPhotoUrl,
+          fee: feeResult.finalFee,
+          duration: feeResult.durationMinutes
+        }
       });
       broadcastEvent({ type: "parking_exit", session: closedSession });
-      res.json(closedSession);
+      res.json({
+        ...closedSession,
+        feeDetails: feeResult,
+        formattedFee: formatCurrency(feeResult.finalFee, feeResult.currency)
+      });
     } catch (error) {
       console.error("Error processing parking exit:", error);
       res.status(500).json({ message: "Failed to process parking exit" });
@@ -53647,15 +54036,306 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.get("/api/parking/sessions", isAuthenticated, async (req, res) => {
     try {
-      const { open } = req.query;
+      const { open, plateSearch, fromDate, toDate, zoneId } = req.query;
       const filters = {};
       if (open === "true") filters.open = true;
       if (open === "false") filters.open = false;
+      if (plateSearch) filters.plateSearch = plateSearch;
+      if (fromDate) filters.fromDate = new Date(fromDate);
+      if (toDate) filters.toDate = new Date(toDate);
+      if (zoneId) filters.zoneId = zoneId;
       const sessions2 = await storage.getParkingSessions(filters);
-      res.json(sessions2);
+      const settings = await storage.getParkingSettings();
+      const enrichedSessions = await Promise.all(
+        sessions2.map(async (session2) => {
+          const parker = await storage.getFrequentParker(session2.plateNormalized);
+          return enrichSessionWithCalculations(session2, settings || null, parker);
+        })
+      );
+      res.json(enrichedSessions);
     } catch (error) {
       console.error("Error fetching parking sessions:", error);
       res.status(500).json({ message: "Failed to fetch parking sessions" });
+    }
+  });
+  app2.get("/api/parking/sessions/:id", isAuthenticated, async (req, res) => {
+    try {
+      const session2 = await storage.getParkingSession(String(req.params.id));
+      if (!session2) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      const settings = await storage.getParkingSettings();
+      const parker = await storage.getFrequentParker(session2.plateNormalized);
+      const enriched = enrichSessionWithCalculations(session2, settings || null, parker);
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching parking session:", error);
+      res.status(500).json({ message: "Failed to fetch parking session" });
+    }
+  });
+  app2.patch("/api/parking/sessions/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { zoneId, spotNumber, notes, washJobId } = req.body;
+      const session2 = await storage.updateParkingSession(String(req.params.id), {
+        zoneId,
+        spotNumber,
+        notes,
+        washJobId
+      });
+      if (!session2) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      broadcastEvent({ type: "parking_updated", session: session2 });
+      res.json(session2);
+    } catch (error) {
+      console.error("Error updating parking session:", error);
+      res.status(500).json({ message: "Failed to update parking session" });
+    }
+  });
+  app2.get("/api/parking/analytics", isAuthenticated, async (req, res) => {
+    try {
+      const analytics = await storage.getParkingAnalytics();
+      res.json(analytics);
+    } catch (error) {
+      console.error("Error fetching parking analytics:", error);
+      res.status(500).json({ message: "Failed to fetch parking analytics" });
+    }
+  });
+  app2.get("/api/parking/settings", isAuthenticated, async (req, res) => {
+    try {
+      let settings = await storage.getParkingSettings();
+      if (!settings) {
+        settings = {
+          id: "",
+          hourlyRate: 500,
+          dailyMaxRate: 3e3,
+          gracePeriodMinutes: 15,
+          totalCapacity: 50,
+          currency: "USD",
+          updatedBy: null,
+          updatedAt: null,
+          createdAt: null
+        };
+      }
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching parking settings:", error);
+      res.status(500).json({ message: "Failed to fetch parking settings" });
+    }
+  });
+  app2.put("/api/parking/settings", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { hourlyRate, dailyMaxRate, gracePeriodMinutes, totalCapacity, currency } = req.body;
+      const userId = req.user?.claims?.sub;
+      const settings = await storage.upsertParkingSettings({
+        hourlyRate,
+        dailyMaxRate,
+        gracePeriodMinutes,
+        totalCapacity,
+        currency,
+        updatedBy: userId
+      });
+      res.json(settings);
+    } catch (error) {
+      console.error("Error updating parking settings:", error);
+      res.status(500).json({ message: "Failed to update parking settings" });
+    }
+  });
+  app2.get("/api/parking/zones", isAuthenticated, async (req, res) => {
+    try {
+      const { all } = req.query;
+      const zones = await storage.getParkingZones(all !== "true");
+      const zonesWithOccupancy = await Promise.all(
+        zones.map(async (zone) => {
+          const occupied = await storage.getZoneOccupancy(zone.id);
+          return { ...zone, occupied, available: (zone.capacity || 0) - occupied };
+        })
+      );
+      res.json(zonesWithOccupancy);
+    } catch (error) {
+      console.error("Error fetching parking zones:", error);
+      res.status(500).json({ message: "Failed to fetch parking zones" });
+    }
+  });
+  app2.post("/api/parking/zones", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { name, code, capacity, hourlyRate, description } = req.body;
+      const zone = await storage.createParkingZone({
+        name,
+        code,
+        capacity,
+        hourlyRate,
+        description
+      });
+      res.json(zone);
+    } catch (error) {
+      console.error("Error creating parking zone:", error);
+      res.status(500).json({ message: "Failed to create parking zone" });
+    }
+  });
+  app2.put("/api/parking/zones/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { name, code, capacity, hourlyRate, description, isActive } = req.body;
+      const zone = await storage.updateParkingZone(String(req.params.id), {
+        name,
+        code,
+        capacity,
+        hourlyRate,
+        description,
+        isActive
+      });
+      if (!zone) {
+        return res.status(404).json({ message: "Zone not found" });
+      }
+      res.json(zone);
+    } catch (error) {
+      console.error("Error updating parking zone:", error);
+      res.status(500).json({ message: "Failed to update parking zone" });
+    }
+  });
+  app2.get("/api/parking/frequent-parkers", isAuthenticated, async (req, res) => {
+    try {
+      const { vip, monthlyPass } = req.query;
+      const filters = {};
+      if (vip === "true") filters.isVip = true;
+      if (monthlyPass === "true") filters.hasMonthlyPass = true;
+      const parkers = await storage.getFrequentParkers(filters);
+      res.json(parkers);
+    } catch (error) {
+      console.error("Error fetching frequent parkers:", error);
+      res.status(500).json({ message: "Failed to fetch frequent parkers" });
+    }
+  });
+  app2.get("/api/parking/frequent-parkers/:plate", isAuthenticated, async (req, res) => {
+    try {
+      const normalized = normalizePlate(String(req.params.plate));
+      const parker = await storage.getFrequentParker(normalized);
+      if (!parker) {
+        return res.status(404).json({ message: "Parker not found" });
+      }
+      res.json(parker);
+    } catch (error) {
+      console.error("Error fetching frequent parker:", error);
+      res.status(500).json({ message: "Failed to fetch frequent parker" });
+    }
+  });
+  app2.put("/api/parking/frequent-parkers/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { customerName, customerPhone, customerEmail, isVip, monthlyPassExpiry, notes } = req.body;
+      const parker = await storage.updateFrequentParker(String(req.params.id), {
+        customerName,
+        customerPhone,
+        customerEmail,
+        isVip,
+        monthlyPassExpiry: monthlyPassExpiry ? new Date(monthlyPassExpiry) : void 0,
+        notes
+      });
+      if (!parker) {
+        return res.status(404).json({ message: "Parker not found" });
+      }
+      res.json(parker);
+    } catch (error) {
+      console.error("Error updating frequent parker:", error);
+      res.status(500).json({ message: "Failed to update frequent parker" });
+    }
+  });
+  app2.get("/api/parking/reservations", isAuthenticated, async (req, res) => {
+    try {
+      const { status, fromDate, toDate } = req.query;
+      const filters = {};
+      if (status) filters.status = status;
+      if (fromDate) filters.fromDate = new Date(fromDate);
+      if (toDate) filters.toDate = new Date(toDate);
+      const reservations = await storage.getParkingReservations(filters);
+      res.json(reservations);
+    } catch (error) {
+      console.error("Error fetching reservations:", error);
+      res.status(500).json({ message: "Failed to fetch reservations" });
+    }
+  });
+  app2.post("/api/parking/reservations", isAuthenticated, async (req, res) => {
+    try {
+      const { plateDisplay, customerName, customerPhone, customerEmail, zoneId, spotNumber, reservedFrom, reservedUntil, notes } = req.body;
+      const confirmationCode = generateConfirmationCode();
+      const reservation = await storage.createParkingReservation({
+        plateDisplay,
+        customerName,
+        customerPhone,
+        customerEmail,
+        zoneId,
+        spotNumber,
+        reservedFrom: new Date(reservedFrom),
+        reservedUntil: new Date(reservedUntil),
+        confirmationCode,
+        status: "confirmed",
+        notes
+      });
+      res.json(reservation);
+    } catch (error) {
+      console.error("Error creating reservation:", error);
+      res.status(500).json({ message: "Failed to create reservation" });
+    }
+  });
+  app2.get("/api/parking/reservations/lookup/:code", async (req, res) => {
+    try {
+      const reservation = await storage.getParkingReservationByCode(String(req.params.code));
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+      res.json(reservation);
+    } catch (error) {
+      console.error("Error looking up reservation:", error);
+      res.status(500).json({ message: "Failed to lookup reservation" });
+    }
+  });
+  app2.put("/api/parking/reservations/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { status, plateDisplay, zoneId, spotNumber, notes } = req.body;
+      const reservation = await storage.updateParkingReservation(String(req.params.id), {
+        status,
+        plateDisplay,
+        zoneId,
+        spotNumber,
+        notes
+      });
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+      res.json(reservation);
+    } catch (error) {
+      console.error("Error updating reservation:", error);
+      res.status(500).json({ message: "Failed to update reservation" });
+    }
+  });
+  app2.post("/api/parking/reservations/:id/check-in", isAuthenticated, async (req, res) => {
+    try {
+      const reservation = await storage.getParkingReservation(String(req.params.id));
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+      if (reservation.status !== "confirmed") {
+        return res.status(400).json({ message: "Reservation is not in confirmed status" });
+      }
+      const userId = req.user?.claims?.sub;
+      const plateDisplay = reservation.plateDisplay || "RESERVED";
+      const plateNormalized = normalizePlate(plateDisplay);
+      const session2 = await storage.createParkingEntry({
+        plateDisplay,
+        plateNormalized,
+        technicianId: userId,
+        zoneId: reservation.zoneId || void 0,
+        spotNumber: reservation.spotNumber || void 0
+      });
+      await storage.checkInReservation(reservation.id, session2.id);
+      if (reservation.plateDisplay) {
+        const normalized = normalizePlate(reservation.plateDisplay);
+        await storage.getOrCreateFrequentParker(normalized, reservation.plateDisplay);
+      }
+      broadcastEvent({ type: "parking_entry", session: session2 });
+      res.json({ session: session2, reservation: { ...reservation, status: "checked_in" } });
+    } catch (error) {
+      console.error("Error checking in reservation:", error);
+      res.status(500).json({ message: "Failed to check in reservation" });
     }
   });
   app2.get("/api/events", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {

@@ -1,11 +1,16 @@
-import { eq, and, isNull, desc, gte, sql, lte, between } from "drizzle-orm";
+import { eq, and, isNull, desc, gte, sql, lte, between, or, asc } from "drizzle-orm";
 import { db } from "./db";
-import { 
+import {
   washJobs, washPhotos, parkingSessions, eventLogs, userRoles, users,
   customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules,
+  parkingSettings, parkingZones, frequentParkers, parkingReservations,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
+  type ParkingSettings, type InsertParkingSettings,
+  type ParkingZone, type InsertParkingZone,
+  type FrequentParker, type InsertFrequentParker,
+  type ParkingReservation, type InsertParkingReservation,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -63,8 +68,48 @@ export interface IStorage {
   // Parking Sessions
   createParkingEntry(session: InsertParkingSession): Promise<ParkingSession>;
   findOpenParkingSession(plateNormalized: string): Promise<ParkingSession | undefined>;
-  closeParkingSession(id: string, exitPhotoUrl?: string): Promise<ParkingSession | undefined>;
-  getParkingSessions(filters?: { open?: boolean }): Promise<ParkingSession[]>;
+  closeParkingSession(id: string, exitPhotoUrl?: string, calculatedFee?: number): Promise<ParkingSession | undefined>;
+  getParkingSessions(filters?: { open?: boolean; plateSearch?: string; fromDate?: Date; toDate?: Date; zoneId?: string }): Promise<ParkingSession[]>;
+  getParkingSession(id: string): Promise<ParkingSession | undefined>;
+  updateParkingSession(id: string, data: Partial<InsertParkingSession>): Promise<ParkingSession | undefined>;
+
+  // Parking Settings
+  getParkingSettings(): Promise<ParkingSettings | undefined>;
+  upsertParkingSettings(settings: InsertParkingSettings): Promise<ParkingSettings>;
+
+  // Parking Zones
+  createParkingZone(zone: InsertParkingZone): Promise<ParkingZone>;
+  getParkingZones(activeOnly?: boolean): Promise<ParkingZone[]>;
+  getParkingZone(id: string): Promise<ParkingZone | undefined>;
+  updateParkingZone(id: string, data: Partial<InsertParkingZone>): Promise<ParkingZone | undefined>;
+  getZoneOccupancy(zoneId: string): Promise<number>;
+
+  // Frequent Parkers
+  getOrCreateFrequentParker(plateNormalized: string, plateDisplay: string): Promise<FrequentParker>;
+  getFrequentParker(plateNormalized: string): Promise<FrequentParker | undefined>;
+  updateFrequentParker(id: string, data: Partial<InsertFrequentParker>): Promise<FrequentParker | undefined>;
+  getFrequentParkers(filters?: { isVip?: boolean; hasMonthlyPass?: boolean }): Promise<FrequentParker[]>;
+  incrementParkerVisit(plateNormalized: string, amountSpent?: number): Promise<FrequentParker | undefined>;
+
+  // Parking Reservations
+  createParkingReservation(reservation: InsertParkingReservation): Promise<ParkingReservation>;
+  getParkingReservations(filters?: { status?: string; fromDate?: Date; toDate?: Date }): Promise<ParkingReservation[]>;
+  getParkingReservation(id: string): Promise<ParkingReservation | undefined>;
+  getParkingReservationByCode(code: string): Promise<ParkingReservation | undefined>;
+  updateParkingReservation(id: string, data: Partial<InsertParkingReservation>): Promise<ParkingReservation | undefined>;
+  checkInReservation(id: string, parkingSessionId: string): Promise<ParkingReservation | undefined>;
+
+  // Parking Analytics
+  getParkingAnalytics(): Promise<{
+    totalActiveSessions: number;
+    totalCapacity: number;
+    occupancyRate: number;
+    todayRevenue: number;
+    todayEntries: number;
+    todayExits: number;
+    avgDurationMinutes: number;
+    zoneOccupancy: { zoneId: string; zoneName: string; occupied: number; capacity: number }[];
+  }>;
 
   // Event Logs
   logEvent(event: InsertEventLog): Promise<EventLog>;
@@ -337,29 +382,314 @@ export class DatabaseStorage implements IStorage {
     return session;
   }
 
-  async closeParkingSession(id: string, exitPhotoUrl?: string): Promise<ParkingSession | undefined> {
+  async closeParkingSession(id: string, exitPhotoUrl?: string, calculatedFee?: number): Promise<ParkingSession | undefined> {
     const [result] = await db
       .update(parkingSessions)
-      .set({ 
-        exitAt: new Date(), 
+      .set({
+        exitAt: new Date(),
         exitPhotoUrl: exitPhotoUrl || null,
-        updatedAt: new Date() 
+        calculatedFee: calculatedFee || null,
+        updatedAt: new Date()
       })
       .where(eq(parkingSessions.id, id))
       .returning();
     return result;
   }
 
-  async getParkingSessions(filters?: { open?: boolean }): Promise<ParkingSession[]> {
+  async getParkingSessions(filters?: { open?: boolean; plateSearch?: string; fromDate?: Date; toDate?: Date; zoneId?: string }): Promise<ParkingSession[]> {
     let query = db.select().from(parkingSessions);
-    
+    const conditions = [];
+
     if (filters?.open === true) {
-      query = query.where(isNull(parkingSessions.exitAt)) as any;
+      conditions.push(isNull(parkingSessions.exitAt));
     } else if (filters?.open === false) {
-      query = query.where(sql`${parkingSessions.exitAt} IS NOT NULL`) as any;
+      conditions.push(sql`${parkingSessions.exitAt} IS NOT NULL`);
     }
-    
-    return query.orderBy(desc(parkingSessions.createdAt));
+
+    if (filters?.plateSearch) {
+      const normalized = normalizePlate(filters.plateSearch);
+      conditions.push(sql`${parkingSessions.plateNormalized} ILIKE ${'%' + normalized + '%'}`);
+    }
+
+    if (filters?.fromDate) {
+      conditions.push(gte(parkingSessions.entryAt, filters.fromDate));
+    }
+
+    if (filters?.toDate) {
+      conditions.push(lte(parkingSessions.entryAt, filters.toDate));
+    }
+
+    if (filters?.zoneId) {
+      conditions.push(eq(parkingSessions.zoneId, filters.zoneId));
+    }
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    return query.orderBy(desc(parkingSessions.entryAt));
+  }
+
+  async getParkingSession(id: string): Promise<ParkingSession | undefined> {
+    const [session] = await db.select().from(parkingSessions).where(eq(parkingSessions.id, id));
+    return session;
+  }
+
+  async updateParkingSession(id: string, data: Partial<InsertParkingSession>): Promise<ParkingSession | undefined> {
+    const [result] = await db
+      .update(parkingSessions)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(parkingSessions.id, id))
+      .returning();
+    return result;
+  }
+
+  // Parking Settings
+  async getParkingSettings(): Promise<ParkingSettings | undefined> {
+    const [settings] = await db.select().from(parkingSettings).limit(1);
+    return settings;
+  }
+
+  async upsertParkingSettings(settings: InsertParkingSettings): Promise<ParkingSettings> {
+    const existing = await this.getParkingSettings();
+    if (existing) {
+      const [result] = await db
+        .update(parkingSettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(parkingSettings.id, existing.id))
+        .returning();
+      return result;
+    } else {
+      const [result] = await db.insert(parkingSettings).values(settings).returning();
+      return result;
+    }
+  }
+
+  // Parking Zones
+  async createParkingZone(zone: InsertParkingZone): Promise<ParkingZone> {
+    const [result] = await db.insert(parkingZones).values(zone).returning();
+    return result;
+  }
+
+  async getParkingZones(activeOnly = true): Promise<ParkingZone[]> {
+    if (activeOnly) {
+      return db.select().from(parkingZones).where(eq(parkingZones.isActive, true)).orderBy(asc(parkingZones.name));
+    }
+    return db.select().from(parkingZones).orderBy(asc(parkingZones.name));
+  }
+
+  async getParkingZone(id: string): Promise<ParkingZone | undefined> {
+    const [zone] = await db.select().from(parkingZones).where(eq(parkingZones.id, id));
+    return zone;
+  }
+
+  async updateParkingZone(id: string, data: Partial<InsertParkingZone>): Promise<ParkingZone | undefined> {
+    const [result] = await db
+      .update(parkingZones)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(parkingZones.id, id))
+      .returning();
+    return result;
+  }
+
+  async getZoneOccupancy(zoneId: string): Promise<number> {
+    const [result] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(parkingSessions)
+      .where(and(eq(parkingSessions.zoneId, zoneId), isNull(parkingSessions.exitAt)));
+    return result?.count || 0;
+  }
+
+  // Frequent Parkers
+  async getOrCreateFrequentParker(plateNormalized: string, plateDisplay: string): Promise<FrequentParker> {
+    const existing = await this.getFrequentParker(plateNormalized);
+    if (existing) return existing;
+
+    const [result] = await db.insert(frequentParkers).values({
+      plateNormalized,
+      plateDisplay,
+      visitCount: 1,
+      lastVisitAt: new Date()
+    }).returning();
+    return result;
+  }
+
+  async getFrequentParker(plateNormalized: string): Promise<FrequentParker | undefined> {
+    const [parker] = await db.select().from(frequentParkers).where(eq(frequentParkers.plateNormalized, plateNormalized));
+    return parker;
+  }
+
+  async updateFrequentParker(id: string, data: Partial<InsertFrequentParker>): Promise<FrequentParker | undefined> {
+    const [result] = await db
+      .update(frequentParkers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(frequentParkers.id, id))
+      .returning();
+    return result;
+  }
+
+  async getFrequentParkers(filters?: { isVip?: boolean; hasMonthlyPass?: boolean }): Promise<FrequentParker[]> {
+    const conditions = [];
+
+    if (filters?.isVip !== undefined) {
+      conditions.push(eq(frequentParkers.isVip, filters.isVip));
+    }
+
+    if (filters?.hasMonthlyPass) {
+      conditions.push(gte(frequentParkers.monthlyPassExpiry, new Date()));
+    }
+
+    if (conditions.length > 0) {
+      return db.select().from(frequentParkers).where(and(...conditions)).orderBy(desc(frequentParkers.visitCount));
+    }
+
+    return db.select().from(frequentParkers).orderBy(desc(frequentParkers.visitCount));
+  }
+
+  async incrementParkerVisit(plateNormalized: string, amountSpent = 0): Promise<FrequentParker | undefined> {
+    const parker = await this.getFrequentParker(plateNormalized);
+    if (!parker) return undefined;
+
+    const [result] = await db
+      .update(frequentParkers)
+      .set({
+        visitCount: (parker.visitCount || 0) + 1,
+        totalSpent: (parker.totalSpent || 0) + amountSpent,
+        lastVisitAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(eq(frequentParkers.id, parker.id))
+      .returning();
+    return result;
+  }
+
+  // Parking Reservations
+  async createParkingReservation(reservation: InsertParkingReservation): Promise<ParkingReservation> {
+    const plateNormalized = reservation.plateDisplay ? normalizePlate(reservation.plateDisplay) : null;
+    const [result] = await db
+      .insert(parkingReservations)
+      .values({ ...reservation, plateNormalized })
+      .returning();
+    return result;
+  }
+
+  async getParkingReservations(filters?: { status?: string; fromDate?: Date; toDate?: Date }): Promise<ParkingReservation[]> {
+    const conditions = [];
+
+    if (filters?.status) {
+      conditions.push(eq(parkingReservations.status, filters.status));
+    }
+
+    if (filters?.fromDate) {
+      conditions.push(gte(parkingReservations.reservedFrom, filters.fromDate));
+    }
+
+    if (filters?.toDate) {
+      conditions.push(lte(parkingReservations.reservedUntil, filters.toDate));
+    }
+
+    if (conditions.length > 0) {
+      return db.select().from(parkingReservations).where(and(...conditions)).orderBy(asc(parkingReservations.reservedFrom));
+    }
+
+    return db.select().from(parkingReservations).orderBy(asc(parkingReservations.reservedFrom));
+  }
+
+  async getParkingReservation(id: string): Promise<ParkingReservation | undefined> {
+    const [reservation] = await db.select().from(parkingReservations).where(eq(parkingReservations.id, id));
+    return reservation;
+  }
+
+  async getParkingReservationByCode(code: string): Promise<ParkingReservation | undefined> {
+    const [reservation] = await db.select().from(parkingReservations).where(eq(parkingReservations.confirmationCode, code));
+    return reservation;
+  }
+
+  async updateParkingReservation(id: string, data: Partial<InsertParkingReservation>): Promise<ParkingReservation | undefined> {
+    const [result] = await db
+      .update(parkingReservations)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(parkingReservations.id, id))
+      .returning();
+    return result;
+  }
+
+  async checkInReservation(id: string, parkingSessionId: string): Promise<ParkingReservation | undefined> {
+    const [result] = await db
+      .update(parkingReservations)
+      .set({ status: "checked_in", parkingSessionId, updatedAt: new Date() })
+      .where(eq(parkingReservations.id, id))
+      .returning();
+    return result;
+  }
+
+  // Parking Analytics
+  async getParkingAnalytics() {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Active sessions count
+    const [activeResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(parkingSessions)
+      .where(isNull(parkingSessions.exitAt));
+
+    // Get settings for capacity
+    const settings = await this.getParkingSettings();
+    const totalCapacity = settings?.totalCapacity || 50;
+
+    // Today's revenue (sum of calculated fees for closed sessions)
+    const [revenueResult] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int` })
+      .from(parkingSessions)
+      .where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+
+    // Today entries
+    const [entriesResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(parkingSessions)
+      .where(gte(parkingSessions.entryAt, todayStart));
+
+    // Today exits
+    const [exitsResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(parkingSessions)
+      .where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+
+    // Average duration for closed sessions today
+    const [avgDurationResult] = await db
+      .select({
+        avgMinutes: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${parkingSessions.exitAt} - ${parkingSessions.entryAt})) / 60)::int, 0)`
+      })
+      .from(parkingSessions)
+      .where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+
+    // Zone occupancy
+    const zones = await this.getParkingZones();
+    const zoneOccupancy = await Promise.all(
+      zones.map(async (zone) => {
+        const occupied = await this.getZoneOccupancy(zone.id);
+        return {
+          zoneId: zone.id,
+          zoneName: zone.name,
+          occupied,
+          capacity: zone.capacity || 10
+        };
+      })
+    );
+
+    const totalActive = activeResult?.count || 0;
+
+    return {
+      totalActiveSessions: totalActive,
+      totalCapacity,
+      occupancyRate: totalCapacity > 0 ? Math.round((totalActive / totalCapacity) * 100) : 0,
+      todayRevenue: revenueResult?.total || 0,
+      todayEntries: entriesResult?.count || 0,
+      todayExits: exitsResult?.count || 0,
+      avgDurationMinutes: avgDurationResult?.avgMinutes || 0,
+      zoneOccupancy
+    };
   }
 
   // Event Logs

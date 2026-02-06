@@ -24,6 +24,10 @@ import ManagerAudit from "@/pages/manager-audit";
 import AdminUsers from "@/pages/admin-users";
 import CustomerJob from "@/pages/customer-job";
 import About from "@/pages/about";
+import ParkingDashboard from "@/pages/parking-dashboard";
+import ParkingZones from "@/pages/parking-zones";
+import ParkingVIP from "@/pages/parking-vip";
+import ParkingReservations from "@/pages/parking-reservations";
 
 function LoadingScreen() {
   return (
@@ -81,6 +85,10 @@ function AppRouter() {
         <Route path="/" component={TechnicianHome} />
         <Route path="/scan/carwash" component={ScanCarwash} />
         <Route path="/scan/parking" component={ScanParking} />
+        <Route path="/parking" component={ParkingDashboard} />
+        <Route path="/parking/zones" component={ParkingZones} />
+        <Route path="/parking/vip" component={ParkingVIP} />
+        <Route path="/parking/reservations" component={ParkingReservations} />
         <Route path="/wash-job/:id" component={WashJobDetail} />
         <Route path="/my-jobs" component={MyJobs} />
         <Route path="/manager" component={ManagerDashboard} />

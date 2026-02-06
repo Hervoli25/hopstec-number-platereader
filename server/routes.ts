@@ -9,8 +9,15 @@ import { requireRole, ensureUserRole } from "./lib/roles";
 import { savePhoto } from "./lib/photo-storage";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
-import { WASH_STATUS_ORDER, COUNTRY_HINTS } from "@shared/schema";
+import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES } from "@shared/schema";
 import { getUpcomingBookings, getTodayBookings, findBookingByPlate, updateBookingStatus } from "./lib/booking-db";
+import {
+  calculateParkingFee,
+  calculateParkingDuration,
+  enrichSessionWithCalculations,
+  generateConfirmationCode,
+  formatCurrency
+} from "./lib/parking-utils";
 
 // SSE clients for real-time updates
 const sseClients: Set<any> = new Set();
@@ -525,11 +532,11 @@ export async function registerRoutes(
       const { plateDisplay, photo } = result.data;
       const userId = req.user?.claims?.sub;
       const normalized = normalizePlate(plateDisplay);
-      
+
       // Find open session
       const session = await storage.findOpenParkingSession(normalized);
       if (!session) {
-        return res.status(404).json({ 
+        return res.status(404).json({
           message: "No open parking session found for this plate"
         });
       }
@@ -545,7 +552,17 @@ export async function registerRoutes(
         }
       }
 
-      const closedSession = await storage.closeParkingSession(session.id, exitPhotoUrl);
+      // Calculate fee
+      const settings = await storage.getParkingSettings();
+      const parker = await storage.getFrequentParker(normalized);
+      const feeResult = calculateParkingFee(session, settings || null, parker);
+
+      const closedSession = await storage.closeParkingSession(session.id, exitPhotoUrl, feeResult.finalFee);
+
+      // Update frequent parker stats
+      if (parker) {
+        await storage.incrementParkerVisit(normalized, feeResult.finalFee);
+      }
 
       // Log event
       await storage.logEvent({
@@ -555,31 +572,402 @@ export async function registerRoutes(
         countryHint: session.countryHint,
         parkingSessionId: session.id,
         userId,
-        payloadJson: { hasPhoto: !!exitPhotoUrl },
+        payloadJson: {
+          hasPhoto: !!exitPhotoUrl,
+          fee: feeResult.finalFee,
+          duration: feeResult.durationMinutes
+        },
       });
 
       broadcastEvent({ type: "parking_exit", session: closedSession });
 
-      res.json(closedSession);
+      res.json({
+        ...closedSession,
+        feeDetails: feeResult,
+        formattedFee: formatCurrency(feeResult.finalFee, feeResult.currency)
+      });
     } catch (error) {
       console.error("Error processing parking exit:", error);
       res.status(500).json({ message: "Failed to process parking exit" });
     }
   });
 
-  // Get parking sessions
+  // Get parking sessions with enriched data
   app.get("/api/parking/sessions", isAuthenticated, async (req, res) => {
     try {
-      const { open } = req.query;
+      const { open, plateSearch, fromDate, toDate, zoneId } = req.query;
       const filters: any = {};
       if (open === "true") filters.open = true;
       if (open === "false") filters.open = false;
+      if (plateSearch) filters.plateSearch = plateSearch as string;
+      if (fromDate) filters.fromDate = new Date(fromDate as string);
+      if (toDate) filters.toDate = new Date(toDate as string);
+      if (zoneId) filters.zoneId = zoneId as string;
 
       const sessions = await storage.getParkingSessions(filters);
-      res.json(sessions);
+      const settings = await storage.getParkingSettings();
+
+      // Enrich sessions with duration and fee calculations
+      const enrichedSessions = await Promise.all(
+        sessions.map(async (session) => {
+          const parker = await storage.getFrequentParker(session.plateNormalized);
+          return enrichSessionWithCalculations(session, settings || null, parker);
+        })
+      );
+
+      res.json(enrichedSessions);
     } catch (error) {
       console.error("Error fetching parking sessions:", error);
       res.status(500).json({ message: "Failed to fetch parking sessions" });
+    }
+  });
+
+  // Get single parking session with details
+  app.get("/api/parking/sessions/:id", isAuthenticated, async (req, res) => {
+    try {
+      const session = await storage.getParkingSession(String(req.params.id));
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+
+      const settings = await storage.getParkingSettings();
+      const parker = await storage.getFrequentParker(session.plateNormalized);
+      const enriched = enrichSessionWithCalculations(session, settings || null, parker);
+
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching parking session:", error);
+      res.status(500).json({ message: "Failed to fetch parking session" });
+    }
+  });
+
+  // Update parking session (assign zone/spot, add notes, link to wash)
+  app.patch("/api/parking/sessions/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { zoneId, spotNumber, notes, washJobId } = req.body;
+      const session = await storage.updateParkingSession(String(req.params.id), {
+        zoneId,
+        spotNumber,
+        notes,
+        washJobId
+      });
+
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+
+      broadcastEvent({ type: "parking_updated", session });
+      res.json(session);
+    } catch (error) {
+      console.error("Error updating parking session:", error);
+      res.status(500).json({ message: "Failed to update parking session" });
+    }
+  });
+
+  // Parking analytics
+  app.get("/api/parking/analytics", isAuthenticated, async (req, res) => {
+    try {
+      const analytics = await storage.getParkingAnalytics();
+      res.json(analytics);
+    } catch (error) {
+      console.error("Error fetching parking analytics:", error);
+      res.status(500).json({ message: "Failed to fetch parking analytics" });
+    }
+  });
+
+  // =====================
+  // PARKING SETTINGS
+  // =====================
+
+  app.get("/api/parking/settings", isAuthenticated, async (req, res) => {
+    try {
+      let settings = await storage.getParkingSettings();
+      if (!settings) {
+        // Return defaults
+        settings = {
+          id: "",
+          hourlyRate: 500,
+          dailyMaxRate: 3000,
+          gracePeriodMinutes: 15,
+          totalCapacity: 50,
+          currency: "USD",
+          updatedBy: null,
+          updatedAt: null,
+          createdAt: null
+        };
+      }
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching parking settings:", error);
+      res.status(500).json({ message: "Failed to fetch parking settings" });
+    }
+  });
+
+  app.put("/api/parking/settings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const { hourlyRate, dailyMaxRate, gracePeriodMinutes, totalCapacity, currency } = req.body;
+      const userId = req.user?.claims?.sub;
+
+      const settings = await storage.upsertParkingSettings({
+        hourlyRate,
+        dailyMaxRate,
+        gracePeriodMinutes,
+        totalCapacity,
+        currency,
+        updatedBy: userId
+      });
+
+      res.json(settings);
+    } catch (error) {
+      console.error("Error updating parking settings:", error);
+      res.status(500).json({ message: "Failed to update parking settings" });
+    }
+  });
+
+  // =====================
+  // PARKING ZONES
+  // =====================
+
+  app.get("/api/parking/zones", isAuthenticated, async (req, res) => {
+    try {
+      const { all } = req.query;
+      const zones = await storage.getParkingZones(all !== "true");
+
+      // Add occupancy info
+      const zonesWithOccupancy = await Promise.all(
+        zones.map(async (zone) => {
+          const occupied = await storage.getZoneOccupancy(zone.id);
+          return { ...zone, occupied, available: (zone.capacity || 0) - occupied };
+        })
+      );
+
+      res.json(zonesWithOccupancy);
+    } catch (error) {
+      console.error("Error fetching parking zones:", error);
+      res.status(500).json({ message: "Failed to fetch parking zones" });
+    }
+  });
+
+  app.post("/api/parking/zones", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { name, code, capacity, hourlyRate, description } = req.body;
+      const zone = await storage.createParkingZone({
+        name,
+        code,
+        capacity,
+        hourlyRate,
+        description
+      });
+      res.json(zone);
+    } catch (error) {
+      console.error("Error creating parking zone:", error);
+      res.status(500).json({ message: "Failed to create parking zone" });
+    }
+  });
+
+  app.put("/api/parking/zones/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { name, code, capacity, hourlyRate, description, isActive } = req.body;
+      const zone = await storage.updateParkingZone(String(req.params.id), {
+        name,
+        code,
+        capacity,
+        hourlyRate,
+        description,
+        isActive
+      });
+
+      if (!zone) {
+        return res.status(404).json({ message: "Zone not found" });
+      }
+
+      res.json(zone);
+    } catch (error) {
+      console.error("Error updating parking zone:", error);
+      res.status(500).json({ message: "Failed to update parking zone" });
+    }
+  });
+
+  // =====================
+  // FREQUENT PARKERS / VIP
+  // =====================
+
+  app.get("/api/parking/frequent-parkers", isAuthenticated, async (req, res) => {
+    try {
+      const { vip, monthlyPass } = req.query;
+      const filters: any = {};
+      if (vip === "true") filters.isVip = true;
+      if (monthlyPass === "true") filters.hasMonthlyPass = true;
+
+      const parkers = await storage.getFrequentParkers(filters);
+      res.json(parkers);
+    } catch (error) {
+      console.error("Error fetching frequent parkers:", error);
+      res.status(500).json({ message: "Failed to fetch frequent parkers" });
+    }
+  });
+
+  app.get("/api/parking/frequent-parkers/:plate", isAuthenticated, async (req, res) => {
+    try {
+      const normalized = normalizePlate(String(req.params.plate));
+      const parker = await storage.getFrequentParker(normalized);
+
+      if (!parker) {
+        return res.status(404).json({ message: "Parker not found" });
+      }
+
+      res.json(parker);
+    } catch (error) {
+      console.error("Error fetching frequent parker:", error);
+      res.status(500).json({ message: "Failed to fetch frequent parker" });
+    }
+  });
+
+  app.put("/api/parking/frequent-parkers/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { customerName, customerPhone, customerEmail, isVip, monthlyPassExpiry, notes } = req.body;
+      const parker = await storage.updateFrequentParker(String(req.params.id), {
+        customerName,
+        customerPhone,
+        customerEmail,
+        isVip,
+        monthlyPassExpiry: monthlyPassExpiry ? new Date(monthlyPassExpiry) : undefined,
+        notes
+      });
+
+      if (!parker) {
+        return res.status(404).json({ message: "Parker not found" });
+      }
+
+      res.json(parker);
+    } catch (error) {
+      console.error("Error updating frequent parker:", error);
+      res.status(500).json({ message: "Failed to update frequent parker" });
+    }
+  });
+
+  // =====================
+  // PARKING RESERVATIONS
+  // =====================
+
+  app.get("/api/parking/reservations", isAuthenticated, async (req, res) => {
+    try {
+      const { status, fromDate, toDate } = req.query;
+      const filters: any = {};
+      if (status) filters.status = status as string;
+      if (fromDate) filters.fromDate = new Date(fromDate as string);
+      if (toDate) filters.toDate = new Date(toDate as string);
+
+      const reservations = await storage.getParkingReservations(filters);
+      res.json(reservations);
+    } catch (error) {
+      console.error("Error fetching reservations:", error);
+      res.status(500).json({ message: "Failed to fetch reservations" });
+    }
+  });
+
+  app.post("/api/parking/reservations", isAuthenticated, async (req, res) => {
+    try {
+      const { plateDisplay, customerName, customerPhone, customerEmail, zoneId, spotNumber, reservedFrom, reservedUntil, notes } = req.body;
+
+      const confirmationCode = generateConfirmationCode();
+
+      const reservation = await storage.createParkingReservation({
+        plateDisplay,
+        customerName,
+        customerPhone,
+        customerEmail,
+        zoneId,
+        spotNumber,
+        reservedFrom: new Date(reservedFrom),
+        reservedUntil: new Date(reservedUntil),
+        confirmationCode,
+        status: "confirmed",
+        notes
+      });
+
+      res.json(reservation);
+    } catch (error) {
+      console.error("Error creating reservation:", error);
+      res.status(500).json({ message: "Failed to create reservation" });
+    }
+  });
+
+  app.get("/api/parking/reservations/lookup/:code", async (req, res) => {
+    try {
+      const reservation = await storage.getParkingReservationByCode(String(req.params.code));
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+      res.json(reservation);
+    } catch (error) {
+      console.error("Error looking up reservation:", error);
+      res.status(500).json({ message: "Failed to lookup reservation" });
+    }
+  });
+
+  app.put("/api/parking/reservations/:id", isAuthenticated, async (req, res) => {
+    try {
+      const { status, plateDisplay, zoneId, spotNumber, notes } = req.body;
+      const reservation = await storage.updateParkingReservation(String(req.params.id), {
+        status,
+        plateDisplay,
+        zoneId,
+        spotNumber,
+        notes
+      });
+
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+
+      res.json(reservation);
+    } catch (error) {
+      console.error("Error updating reservation:", error);
+      res.status(500).json({ message: "Failed to update reservation" });
+    }
+  });
+
+  // Check-in with reservation code
+  app.post("/api/parking/reservations/:id/check-in", isAuthenticated, async (req: any, res) => {
+    try {
+      const reservation = await storage.getParkingReservation(String(req.params.id));
+      if (!reservation) {
+        return res.status(404).json({ message: "Reservation not found" });
+      }
+
+      if (reservation.status !== "confirmed") {
+        return res.status(400).json({ message: "Reservation is not in confirmed status" });
+      }
+
+      const userId = req.user?.claims?.sub;
+      const plateDisplay = reservation.plateDisplay || "RESERVED";
+      const plateNormalized = normalizePlate(plateDisplay);
+
+      // Create parking session
+      const session = await storage.createParkingEntry({
+        plateDisplay,
+        plateNormalized,
+        technicianId: userId,
+        zoneId: reservation.zoneId || undefined,
+        spotNumber: reservation.spotNumber || undefined
+      });
+
+      // Update reservation
+      await storage.checkInReservation(reservation.id, session.id);
+
+      // Track frequent parker
+      if (reservation.plateDisplay) {
+        const normalized = normalizePlate(reservation.plateDisplay);
+        await storage.getOrCreateFrequentParker(normalized, reservation.plateDisplay);
+      }
+
+      broadcastEvent({ type: "parking_entry", session });
+
+      res.json({ session, reservation: { ...reservation, status: "checked_in" } });
+    } catch (error) {
+      console.error("Error checking in reservation:", error);
+      res.status(500).json({ message: "Failed to check in reservation" });
     }
   });
 
