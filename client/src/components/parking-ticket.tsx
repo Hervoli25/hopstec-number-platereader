@@ -1,7 +1,8 @@
 import { QRCodeSVG } from "qrcode.react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Car, Clock, MapPin, Printer, X } from "lucide-react";
+import { Car, Clock, MapPin, Printer, X, Receipt, Tag } from "lucide-react";
+import { SUPPORTED_CURRENCIES } from "@shared/schema";
 
 interface ParkingTicketProps {
   sessionId: string;
@@ -10,6 +11,7 @@ interface ParkingTicketProps {
   zoneCode?: string;
   spotNumber?: string;
   confirmationCode?: string;
+  businessName?: string;
   onClose?: () => void;
   onPrint?: () => void;
 }
@@ -21,6 +23,7 @@ export function ParkingTicket({
   zoneCode,
   spotNumber,
   confirmationCode,
+  businessName,
   onClose,
   onPrint
 }: ParkingTicketProps) {
@@ -46,6 +49,10 @@ export function ParkingTicket({
             </Button>
           )}
         </div>
+
+        {businessName && (
+          <p className="text-sm font-semibold text-gray-700 mb-2">{businessName}</p>
+        )}
 
         <div className="border-b border-dashed border-gray-300 pb-4 mb-4">
           <div className="flex justify-center mb-4">
@@ -122,6 +129,12 @@ export function ParkingTicket({
   );
 }
 
+interface FeeLineItem {
+  label: string;
+  amount: number;
+  type: "charge" | "discount" | "tax";
+}
+
 interface ParkingReceiptProps {
   sessionId: string;
   plateDisplay: string;
@@ -130,10 +143,23 @@ interface ParkingReceiptProps {
   durationFormatted: string;
   fee: number;
   currency?: string;
+  currencySymbol?: string;
+  locale?: string;
   zoneCode?: string;
   isPaid?: boolean;
+  businessName?: string;
+  lineItems?: FeeLineItem[];
+  subtotal?: number;
+  discount?: number;
+  tax?: number;
+  breakdown?: string;
   onClose?: () => void;
   onPrint?: () => void;
+}
+
+function getCurrencyInfo(currencyCode: string = "USD") {
+  const currency = SUPPORTED_CURRENCIES.find(c => c.code === currencyCode);
+  return currency || { code: "USD", symbol: "$", name: "US Dollar", locale: "en-US" };
 }
 
 export function ParkingReceipt({
@@ -144,16 +170,33 @@ export function ParkingReceipt({
   durationFormatted,
   fee,
   currency = "USD",
+  currencySymbol,
+  locale,
   zoneCode,
   isPaid = false,
+  businessName,
+  lineItems = [],
+  subtotal,
+  discount,
+  tax,
   onClose,
   onPrint
 }: ParkingReceiptProps) {
+  const currencyInfo = getCurrencyInfo(currency);
+  const effectiveLocale = locale || currencyInfo.locale;
+  const effectiveSymbol = currencySymbol || currencyInfo.symbol;
+
   const formatCurrency = (cents: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency
-    }).format(cents / 100);
+    try {
+      return new Intl.NumberFormat(effectiveLocale, {
+        style: "currency",
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(cents / 100);
+    } catch {
+      return `${effectiveSymbol}${(cents / 100).toFixed(2)}`;
+    }
   };
 
   const handlePrint = () => {
@@ -163,6 +206,8 @@ export function ParkingReceipt({
       window.print();
     }
   };
+
+  const hasBreakdown = lineItems.length > 0;
 
   return (
     <Card className="max-w-sm mx-auto bg-white text-black print:shadow-none">
@@ -175,6 +220,10 @@ export function ParkingReceipt({
             </Button>
           )}
         </div>
+
+        {businessName && (
+          <p className="text-sm font-semibold text-gray-700 mb-2">{businessName}</p>
+        )}
 
         <div className="border-b border-dashed border-gray-300 pb-4 mb-4">
           <div className="flex justify-center mb-2">
@@ -189,29 +238,85 @@ export function ParkingReceipt({
 
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-gray-500">Plate:</span>
+            <span className="text-gray-500 flex items-center gap-1">
+              <Car className="h-3 w-3" /> Plate:
+            </span>
             <span className="font-mono font-bold">{plateDisplay}</span>
           </div>
           {zoneCode && (
             <div className="flex justify-between">
-              <span className="text-gray-500">Zone:</span>
+              <span className="text-gray-500 flex items-center gap-1">
+                <MapPin className="h-3 w-3" /> Zone:
+              </span>
               <span>{zoneCode}</span>
             </div>
           )}
           <div className="flex justify-between">
             <span className="text-gray-500">Entry:</span>
-            <span>{new Date(entryAt).toLocaleString()}</span>
+            <span>{new Date(entryAt).toLocaleString(effectiveLocale)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-gray-500">Exit:</span>
-            <span>{new Date(exitAt).toLocaleString()}</span>
+            <span>{new Date(exitAt).toLocaleString(effectiveLocale)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Duration:</span>
-            <span>{durationFormatted}</span>
+            <span className="text-gray-500 flex items-center gap-1">
+              <Clock className="h-3 w-3" /> Duration:
+            </span>
+            <span className="font-medium">{durationFormatted}</span>
           </div>
         </div>
 
+        {/* Fee Breakdown */}
+        {hasBreakdown && (
+          <div className="border-t border-dashed border-gray-300 mt-4 pt-4">
+            <div className="flex items-center gap-2 mb-3 justify-center">
+              <Receipt className="h-4 w-4 text-gray-500" />
+              <span className="text-xs font-semibold text-gray-600 uppercase">Fee Breakdown</span>
+            </div>
+            <div className="space-y-1 text-sm">
+              {lineItems.map((item, index) => (
+                <div key={index} className="flex justify-between">
+                  <span className={`text-gray-600 ${item.type === "discount" ? "flex items-center gap-1" : ""}`}>
+                    {item.type === "discount" && <Tag className="h-3 w-3 text-green-500" />}
+                    {item.label}
+                  </span>
+                  <span className={
+                    item.type === "discount"
+                      ? "text-green-600 font-medium"
+                      : item.type === "tax"
+                        ? "text-gray-500"
+                        : "text-gray-900"
+                  }>
+                    {item.type === "discount" ? "-" : ""}{formatCurrency(Math.abs(item.amount))}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Subtotal and discounts summary */}
+            {(discount && discount > 0) && (
+              <div className="flex justify-between text-sm mt-2 pt-2 border-t border-gray-200">
+                <span className="text-gray-500">Subtotal:</span>
+                <span>{formatCurrency((subtotal || 0) + (discount || 0))}</span>
+              </div>
+            )}
+            {(discount && discount > 0) && (
+              <div className="flex justify-between text-sm text-green-600">
+                <span>Savings:</span>
+                <span>-{formatCurrency(discount)}</span>
+              </div>
+            )}
+            {(tax && tax > 0) && (
+              <div className="flex justify-between text-sm text-gray-500">
+                <span>Tax:</span>
+                <span>+{formatCurrency(tax)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Total */}
         <div className="border-t border-dashed border-gray-300 mt-4 pt-4">
           <div className="flex justify-between items-center text-lg">
             <span className="font-bold">Total:</span>
@@ -230,7 +335,7 @@ export function ParkingReceipt({
         </div>
 
         <p className="text-[10px] text-gray-400 mt-4">
-          {new Date().toLocaleString()} | {sessionId.slice(0, 8)}
+          {new Date().toLocaleString(effectiveLocale)} | {sessionId.slice(0, 8)}
         </p>
       </CardContent>
     </Card>

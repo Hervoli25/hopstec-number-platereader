@@ -14,6 +14,12 @@ import type { CountryHint } from "@shared/schema";
 
 type ParkingAction = "entry" | "exit";
 
+interface FeeLineItem {
+  label: string;
+  amount: number;
+  type: "charge" | "discount" | "tax";
+}
+
 interface ParkingResult {
   id: string;
   plateDisplay: string;
@@ -25,6 +31,13 @@ interface ParkingResult {
     durationFormatted: string;
     finalFee: number;
     currency: string;
+    currencySymbol: string;
+    locale: string;
+    lineItems: FeeLineItem[];
+    subtotal: number;
+    discount: number;
+    tax: number;
+    breakdown: string;
   };
 }
 
@@ -141,6 +154,12 @@ export default function ScanParking() {
               durationFormatted={result.feeDetails?.durationFormatted || "N/A"}
               fee={result.feeDetails?.finalFee || 0}
               currency={result.feeDetails?.currency}
+              currencySymbol={result.feeDetails?.currencySymbol}
+              locale={result.feeDetails?.locale}
+              lineItems={result.feeDetails?.lineItems}
+              subtotal={result.feeDetails?.subtotal}
+              discount={result.feeDetails?.discount}
+              tax={result.feeDetails?.tax}
               onClose={() => setLocation("/")}
             />
           )}

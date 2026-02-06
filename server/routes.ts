@@ -552,10 +552,12 @@ export async function registerRoutes(
         }
       }
 
-      // Calculate fee
+      // Calculate fee with business settings
       const settings = await storage.getParkingSettings();
+      const businessSettings = await storage.getBusinessSettings();
       const parker = await storage.getFrequentParker(normalized);
-      const feeResult = calculateParkingFee(session, settings || null, parker);
+      const validations = await storage.getParkingValidations(session.id);
+      const feeResult = calculateParkingFee(session, settings || null, parker, businessSettings, validations);
 
       const closedSession = await storage.closeParkingSession(session.id, exitPhotoUrl, feeResult.finalFee);
 
@@ -687,8 +689,18 @@ export async function registerRoutes(
         settings = {
           id: "",
           hourlyRate: 500,
+          firstHourRate: null,
           dailyMaxRate: 3000,
+          weeklyRate: null,
+          monthlyPassRate: 5000,
+          nightRate: null,
+          nightStartHour: 22,
+          nightEndHour: 6,
+          weekendRate: null,
           gracePeriodMinutes: 15,
+          overstayPenaltyRate: null,
+          lostTicketFee: 2000,
+          validationDiscountPercent: 0,
           totalCapacity: 50,
           currency: "USD",
           updatedBy: null,
@@ -705,13 +717,28 @@ export async function registerRoutes(
 
   app.put("/api/parking/settings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const { hourlyRate, dailyMaxRate, gracePeriodMinutes, totalCapacity, currency } = req.body;
+      const {
+        hourlyRate, firstHourRate, dailyMaxRate, weeklyRate, monthlyPassRate,
+        nightRate, nightStartHour, nightEndHour, weekendRate,
+        gracePeriodMinutes, overstayPenaltyRate, lostTicketFee, validationDiscountPercent,
+        totalCapacity, currency
+      } = req.body;
       const userId = req.user?.claims?.sub;
 
       const settings = await storage.upsertParkingSettings({
         hourlyRate,
+        firstHourRate,
         dailyMaxRate,
+        weeklyRate,
+        monthlyPassRate,
+        nightRate,
+        nightStartHour,
+        nightEndHour,
+        weekendRate,
         gracePeriodMinutes,
+        overstayPenaltyRate,
+        lostTicketFee,
+        validationDiscountPercent,
         totalCapacity,
         currency,
         updatedBy: userId
@@ -721,6 +748,72 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating parking settings:", error);
       res.status(500).json({ message: "Failed to update parking settings" });
+    }
+  });
+
+  // =====================
+  // BUSINESS SETTINGS
+  // =====================
+
+  app.get("/api/business/settings", isAuthenticated, async (req, res) => {
+    try {
+      let settings = await storage.getBusinessSettings();
+      if (!settings) {
+        // Return defaults
+        settings = {
+          id: "",
+          businessName: "ParkWash Pro",
+          businessLogo: null,
+          businessAddress: null,
+          businessPhone: null,
+          businessEmail: null,
+          currency: "USD",
+          currencySymbol: "$",
+          locale: "en-US",
+          timezone: "UTC",
+          taxRate: 0,
+          taxLabel: "Tax",
+          receiptFooter: null,
+          updatedBy: null,
+          updatedAt: null,
+          createdAt: null
+        };
+      }
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching business settings:", error);
+      res.status(500).json({ message: "Failed to fetch business settings" });
+    }
+  });
+
+  app.put("/api/business/settings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const {
+        businessName, businessLogo, businessAddress, businessPhone, businessEmail,
+        currency, currencySymbol, locale, timezone, taxRate, taxLabel, receiptFooter
+      } = req.body;
+      const userId = req.user?.claims?.sub;
+
+      const settings = await storage.upsertBusinessSettings({
+        businessName,
+        businessLogo,
+        businessAddress,
+        businessPhone,
+        businessEmail,
+        currency,
+        currencySymbol,
+        locale,
+        timezone,
+        taxRate,
+        taxLabel,
+        receiptFooter,
+        updatedBy: userId
+      });
+
+      res.json(settings);
+    } catch (error) {
+      console.error("Error updating business settings:", error);
+      res.status(500).json({ message: "Failed to update business settings" });
     }
   });
 

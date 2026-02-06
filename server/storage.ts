@@ -4,6 +4,7 @@ import {
   washJobs, washPhotos, parkingSessions, eventLogs, userRoles, users,
   customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules,
   parkingSettings, parkingZones, frequentParkers, parkingReservations,
+  businessSettings, servicePackages, customerMemberships, parkingValidations,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -11,6 +12,10 @@ import {
   type ParkingZone, type InsertParkingZone,
   type FrequentParker, type InsertFrequentParker,
   type ParkingReservation, type InsertParkingReservation,
+  type BusinessSettings, type InsertBusinessSettings,
+  type ServicePackage, type InsertServicePackage,
+  type CustomerMembership, type InsertCustomerMembership,
+  type ParkingValidation, type InsertParkingValidation,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -110,6 +115,28 @@ export interface IStorage {
     avgDurationMinutes: number;
     zoneOccupancy: { zoneId: string; zoneName: string; occupied: number; capacity: number }[];
   }>;
+
+  // Business Settings
+  getBusinessSettings(): Promise<BusinessSettings | undefined>;
+  upsertBusinessSettings(settings: InsertBusinessSettings): Promise<BusinessSettings>;
+
+  // Service Packages
+  createServicePackage(pkg: InsertServicePackage): Promise<ServicePackage>;
+  getServicePackages(activeOnly?: boolean): Promise<ServicePackage[]>;
+  getServicePackage(id: string): Promise<ServicePackage | undefined>;
+  updateServicePackage(id: string, data: Partial<InsertServicePackage>): Promise<ServicePackage | undefined>;
+
+  // Customer Memberships
+  createCustomerMembership(membership: InsertCustomerMembership): Promise<CustomerMembership>;
+  getCustomerMemberships(filters?: { status?: string; plateNormalized?: string }): Promise<CustomerMembership[]>;
+  getCustomerMembership(id: string): Promise<CustomerMembership | undefined>;
+  getActiveMembershipForPlate(plateNormalized: string): Promise<CustomerMembership | undefined>;
+  updateCustomerMembership(id: string, data: Partial<InsertCustomerMembership>): Promise<CustomerMembership | undefined>;
+  incrementMembershipWashUsed(id: string): Promise<CustomerMembership | undefined>;
+
+  // Parking Validations
+  createParkingValidation(validation: InsertParkingValidation): Promise<ParkingValidation>;
+  getParkingValidations(parkingSessionId: string): Promise<ParkingValidation[]>;
 
   // Event Logs
   logEvent(event: InsertEventLog): Promise<EventLog>;
@@ -810,12 +837,143 @@ export class DatabaseStorage implements IStorage {
       monthWashes: monthResult?.count || 0,
       avgCycleTimeMinutes: avgResult?.avgMinutes || 0,
       avgTimePerStage,
-      technicianStats: techStats.map(t => ({ 
-        userId: t.technicianId, 
+      technicianStats: techStats.map(t => ({
+        userId: t.technicianId,
         name: t.technicianId === "integration" ? "CRM Integration" : `Technician ${t.technicianId.slice(-4)}`,
-        count: t.count 
+        count: t.count
       }))
     };
+  }
+
+  // Business Settings
+  async getBusinessSettings(): Promise<BusinessSettings | undefined> {
+    const [settings] = await db.select().from(businessSettings).limit(1);
+    return settings;
+  }
+
+  async upsertBusinessSettings(settings: InsertBusinessSettings): Promise<BusinessSettings> {
+    const existing = await this.getBusinessSettings();
+    if (existing) {
+      const [result] = await db
+        .update(businessSettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(businessSettings.id, existing.id))
+        .returning();
+      return result;
+    } else {
+      const [result] = await db.insert(businessSettings).values(settings).returning();
+      return result;
+    }
+  }
+
+  // Service Packages
+  async createServicePackage(pkg: InsertServicePackage): Promise<ServicePackage> {
+    const insertData = {
+      ...pkg,
+      services: pkg.services ? (pkg.services as string[]) : []
+    };
+    const [result] = await db.insert(servicePackages).values(insertData as any).returning();
+    return result;
+  }
+
+  async getServicePackages(activeOnly = true): Promise<ServicePackage[]> {
+    if (activeOnly) {
+      return db.select().from(servicePackages).where(eq(servicePackages.isActive, true)).orderBy(asc(servicePackages.sortOrder));
+    }
+    return db.select().from(servicePackages).orderBy(asc(servicePackages.sortOrder));
+  }
+
+  async getServicePackage(id: string): Promise<ServicePackage | undefined> {
+    const [pkg] = await db.select().from(servicePackages).where(eq(servicePackages.id, id));
+    return pkg;
+  }
+
+  async updateServicePackage(id: string, data: Partial<InsertServicePackage>): Promise<ServicePackage | undefined> {
+    const updateData: any = { ...data, updatedAt: new Date() };
+    if (data.services) {
+      updateData.services = data.services as string[];
+    }
+    const [result] = await db
+      .update(servicePackages)
+      .set(updateData)
+      .where(eq(servicePackages.id, id))
+      .returning();
+    return result;
+  }
+
+  // Customer Memberships
+  async createCustomerMembership(membership: InsertCustomerMembership): Promise<CustomerMembership> {
+    const [result] = await db.insert(customerMemberships).values(membership).returning();
+    return result;
+  }
+
+  async getCustomerMemberships(filters?: { status?: string; plateNormalized?: string }): Promise<CustomerMembership[]> {
+    const conditions = [];
+
+    if (filters?.status) {
+      conditions.push(eq(customerMemberships.status, filters.status));
+    }
+
+    if (filters?.plateNormalized) {
+      conditions.push(eq(customerMemberships.plateNormalized, filters.plateNormalized));
+    }
+
+    if (conditions.length > 0) {
+      return db.select().from(customerMemberships).where(and(...conditions)).orderBy(desc(customerMemberships.createdAt));
+    }
+
+    return db.select().from(customerMemberships).orderBy(desc(customerMemberships.createdAt));
+  }
+
+  async getCustomerMembership(id: string): Promise<CustomerMembership | undefined> {
+    const [membership] = await db.select().from(customerMemberships).where(eq(customerMemberships.id, id));
+    return membership;
+  }
+
+  async getActiveMembershipForPlate(plateNormalized: string): Promise<CustomerMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(customerMemberships)
+      .where(and(
+        eq(customerMemberships.plateNormalized, plateNormalized),
+        eq(customerMemberships.status, "active"),
+        gte(customerMemberships.expiryDate, new Date())
+      ));
+    return membership;
+  }
+
+  async updateCustomerMembership(id: string, data: Partial<InsertCustomerMembership>): Promise<CustomerMembership | undefined> {
+    const [result] = await db
+      .update(customerMemberships)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(customerMemberships.id, id))
+      .returning();
+    return result;
+  }
+
+  async incrementMembershipWashUsed(id: string): Promise<CustomerMembership | undefined> {
+    const membership = await this.getCustomerMembership(id);
+    if (!membership) return undefined;
+
+    const [result] = await db
+      .update(customerMemberships)
+      .set({
+        washesUsed: (membership.washesUsed || 0) + 1,
+        updatedAt: new Date()
+      })
+      .where(eq(customerMemberships.id, id))
+      .returning();
+    return result;
+  }
+
+  // Parking Validations
+  async createParkingValidation(validation: InsertParkingValidation): Promise<ParkingValidation> {
+    const [result] = await db.insert(parkingValidations).values(validation).returning();
+    return result;
+  }
+
+  async getParkingValidations(parkingSessionId: string): Promise<ParkingValidation[]> {
+    return db.select().from(parkingValidations).where(eq(parkingValidations.parkingSessionId, parkingSessionId));
   }
 }
 

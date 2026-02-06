@@ -46,13 +46,48 @@ export const washPhotos = pgTable("wash_photos", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Business Settings (for white-labeling and multi-tenancy)
+export const businessSettings = pgTable("business_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  businessName: varchar("business_name", { length: 255 }).default("ParkWash Pro"),
+  businessLogo: text("business_logo"), // URL or base64
+  businessAddress: text("business_address"),
+  businessPhone: varchar("business_phone", { length: 50 }),
+  businessEmail: varchar("business_email", { length: 255 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  currencySymbol: varchar("currency_symbol", { length: 10 }).default("$"),
+  locale: varchar("locale", { length: 10 }).default("en-US"), // for number/date formatting
+  timezone: varchar("timezone", { length: 50 }).default("UTC"),
+  taxRate: integer("tax_rate").default(0), // percentage * 100 (e.g., 1500 = 15%)
+  taxLabel: varchar("tax_label", { length: 50 }).default("Tax"),
+  receiptFooter: text("receipt_footer"),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Parking Settings (configurable rates and capacity)
 export const parkingSettings = pgTable("parking_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  hourlyRate: integer("hourly_rate").default(500), // in cents (e.g., 500 = $5.00)
-  dailyMaxRate: integer("daily_max_rate").default(3000), // max daily charge
+  // Base rates (in smallest currency unit - cents, centimes, etc.)
+  hourlyRate: integer("hourly_rate").default(500),
+  firstHourRate: integer("first_hour_rate"), // If set, first hour has different rate
+  dailyMaxRate: integer("daily_max_rate").default(3000),
+  weeklyRate: integer("weekly_rate"), // Discount for weekly parkers
+  monthlyPassRate: integer("monthly_pass_rate").default(5000), // Monthly pass price
+  // Time-based pricing
+  nightRate: integer("night_rate"), // Override rate for night hours
+  nightStartHour: integer("night_start_hour").default(22), // 10 PM
+  nightEndHour: integer("night_end_hour").default(6), // 6 AM
+  weekendRate: integer("weekend_rate"), // Override rate for weekends
+  // Policies
   gracePeriodMinutes: integer("grace_period_minutes").default(15),
+  overstayPenaltyRate: integer("overstay_penalty_rate"), // Penalty per hour for overstay
+  lostTicketFee: integer("lost_ticket_fee").default(2000), // Fee for lost ticket
+  validationDiscountPercent: integer("validation_discount_percent").default(0), // For mall validation
+  // Capacity
   totalCapacity: integer("total_capacity").default(50),
+  // Currency (now uses businessSettings, kept for backward compatibility)
   currency: varchar("currency", { length: 3 }).default("USD"),
   updatedBy: varchar("updated_by"),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -217,6 +252,57 @@ export const photoRules = pgTable("photo_rules", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Service Packages (for carwash packages/bundles)
+export const servicePackages = pgTable("service_packages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  description: text("description"),
+  price: integer("price").notNull(), // in smallest currency unit
+  durationMinutes: integer("duration_minutes").default(30), // estimated time
+  services: jsonb("services").$type<string[]>().default([]), // list of included services
+  isActive: boolean("is_active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Customer Memberships (for recurring customers)
+export const customerMemberships = pgTable("customer_memberships", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  customerPhone: varchar("customer_phone", { length: 50 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  plateNormalized: varchar("plate_normalized", { length: 50 }),
+  plateDisplay: varchar("plate_display", { length: 50 }),
+  membershipType: varchar("membership_type", { length: 50 }).notNull(), // wash_unlimited, parking_monthly, combo
+  price: integer("price").notNull(), // monthly price
+  startDate: timestamp("start_date").notNull(),
+  expiryDate: timestamp("expiry_date").notNull(),
+  autoRenew: boolean("auto_renew").default(false),
+  washesIncluded: integer("washes_included"), // null = unlimited
+  washesUsed: integer("washes_used").default(0),
+  parkingIncluded: boolean("parking_included").default(false),
+  status: varchar("status", { length: 20 }).default("active"), // active, expired, cancelled
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Parking Validations (for mall/store validations)
+export const parkingValidations = pgTable("parking_validations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  parkingSessionId: varchar("parking_session_id").notNull(),
+  validatorName: varchar("validator_name", { length: 255 }).notNull(), // Store name
+  validatorCode: varchar("validator_code", { length: 50 }).notNull(), // Store code
+  discountMinutes: integer("discount_minutes").default(0), // Free minutes
+  discountPercent: integer("discount_percent").default(0), // % off total
+  discountAmount: integer("discount_amount").default(0), // Fixed amount off
+  validatedBy: varchar("validated_by"),
+  validatedAt: timestamp("validated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -233,6 +319,10 @@ export const insertCustomerJobAccessSchema = createInsertSchema(customerJobAcces
 export const insertServiceChecklistItemSchema = createInsertSchema(serviceChecklistItems).omit({ id: true, createdAt: true });
 export const insertCustomerConfirmationSchema = createInsertSchema(customerConfirmations).omit({ id: true, createdAt: true });
 export const insertPhotoRuleSchema = createInsertSchema(photoRules).omit({ id: true, createdAt: true });
+export const insertBusinessSettingsSchema = createInsertSchema(businessSettings).omit({ id: true, createdAt: true });
+export const insertServicePackageSchema = createInsertSchema(servicePackages).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCustomerMembershipSchema = createInsertSchema(customerMemberships).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertParkingValidationSchema = createInsertSchema(parkingValidations).omit({ id: true, createdAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -280,6 +370,18 @@ export type InsertCustomerConfirmation = z.infer<typeof insertCustomerConfirmati
 export type PhotoRule = typeof photoRules.$inferSelect;
 export type InsertPhotoRule = z.infer<typeof insertPhotoRuleSchema>;
 
+export type BusinessSettings = typeof businessSettings.$inferSelect;
+export type InsertBusinessSettings = z.infer<typeof insertBusinessSettingsSchema>;
+
+export type ServicePackage = typeof servicePackages.$inferSelect;
+export type InsertServicePackage = z.infer<typeof insertServicePackageSchema>;
+
+export type CustomerMembership = typeof customerMemberships.$inferSelect;
+export type InsertCustomerMembership = z.infer<typeof insertCustomerMembershipSchema>;
+
+export type ParkingValidation = typeof parkingValidations.$inferSelect;
+export type InsertParkingValidation = z.infer<typeof insertParkingValidationSchema>;
+
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
@@ -299,3 +401,33 @@ export type ServiceCode = typeof SERVICE_CODES[number];
 // Reservation statuses
 export const RESERVATION_STATUSES = ["pending", "confirmed", "checked_in", "completed", "cancelled"] as const;
 export type ReservationStatus = typeof RESERVATION_STATUSES[number];
+
+// Membership types
+export const MEMBERSHIP_TYPES = ["wash_unlimited", "wash_count", "parking_monthly", "combo"] as const;
+export type MembershipType = typeof MEMBERSHIP_TYPES[number];
+
+// Supported currencies with metadata
+export const SUPPORTED_CURRENCIES = [
+  { code: "USD", symbol: "$", name: "US Dollar", locale: "en-US" },
+  { code: "EUR", symbol: "€", name: "Euro", locale: "fr-FR" },
+  { code: "GBP", symbol: "£", name: "British Pound", locale: "en-GB" },
+  { code: "ZAR", symbol: "R", name: "South African Rand", locale: "en-ZA" },
+  { code: "CDF", symbol: "FC", name: "Congolese Franc", locale: "fr-CD" },
+  { code: "XAF", symbol: "FCFA", name: "CFA Franc BEAC", locale: "fr-CM" },
+  { code: "XOF", symbol: "CFA", name: "CFA Franc BCEAO", locale: "fr-SN" },
+  { code: "NGN", symbol: "₦", name: "Nigerian Naira", locale: "en-NG" },
+  { code: "KES", symbol: "KSh", name: "Kenyan Shilling", locale: "en-KE" },
+  { code: "GHS", symbol: "₵", name: "Ghanaian Cedi", locale: "en-GH" },
+  { code: "MAD", symbol: "DH", name: "Moroccan Dirham", locale: "ar-MA" },
+  { code: "EGP", symbol: "E£", name: "Egyptian Pound", locale: "ar-EG" },
+  { code: "RWF", symbol: "FRw", name: "Rwandan Franc", locale: "rw-RW" },
+  { code: "TZS", symbol: "TSh", name: "Tanzanian Shilling", locale: "sw-TZ" },
+  { code: "UGX", symbol: "USh", name: "Ugandan Shilling", locale: "en-UG" },
+  { code: "BWP", symbol: "P", name: "Botswana Pula", locale: "en-BW" },
+  { code: "MZN", symbol: "MT", name: "Mozambican Metical", locale: "pt-MZ" },
+  { code: "AOA", symbol: "Kz", name: "Angolan Kwanza", locale: "pt-AO" },
+  { code: "AED", symbol: "د.إ", name: "UAE Dirham", locale: "ar-AE" },
+  { code: "SAR", symbol: "﷼", name: "Saudi Riyal", locale: "ar-SA" },
+] as const;
+
+export type CurrencyCode = typeof SUPPORTED_CURRENCIES[number]["code"];

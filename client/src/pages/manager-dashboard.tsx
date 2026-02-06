@@ -15,7 +15,7 @@ import { queryClient } from "@/lib/queryClient";
 import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
-  TrendingUp, Calendar, Target, ArrowRight, Zap
+  TrendingUp, Calendar, Target, ArrowRight, Zap, Settings
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
@@ -94,6 +94,7 @@ export default function ManagerDashboard() {
     { href: "/manager", label: "Live Queue", icon: Activity },
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
+    { href: "/manager/settings", label: "Settings", icon: Settings },
   ];
 
   const handleRefresh = () => {

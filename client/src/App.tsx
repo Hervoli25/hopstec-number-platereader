@@ -28,6 +28,7 @@ import ParkingDashboard from "@/pages/parking-dashboard";
 import ParkingZones from "@/pages/parking-zones";
 import ParkingVIP from "@/pages/parking-vip";
 import ParkingReservations from "@/pages/parking-reservations";
+import BusinessSettings from "@/pages/business-settings";
 
 function LoadingScreen() {
   return (
@@ -94,6 +95,7 @@ function AppRouter() {
         <Route path="/manager" component={ManagerDashboard} />
         <Route path="/manager/analytics" component={ManagerAnalytics} />
         <Route path="/manager/audit" component={ManagerAudit} />
+        <Route path="/manager/settings" component={BusinessSettings} />
         <Route path="/admin/users" component={AdminUsers} />
         <Route component={NotFound} />
       </Switch>
