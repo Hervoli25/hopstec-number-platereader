@@ -6,12 +6,27 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CameraCapture } from "@/components/camera-capture";
 import { PlateConfirmDialog } from "@/components/plate-confirm-dialog";
+import { ParkingTicket, ParkingReceipt } from "@/components/parking-ticket";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Camera, Keyboard, Loader2, LogIn, LogOut } from "lucide-react";
 import type { CountryHint } from "@shared/schema";
 
 type ParkingAction = "entry" | "exit";
+
+interface ParkingResult {
+  id: string;
+  plateDisplay: string;
+  entryAt: string;
+  exitAt?: string;
+  zoneId?: string;
+  spotNumber?: string;
+  feeDetails?: {
+    durationFormatted: string;
+    finalFee: number;
+    currency: string;
+  };
+}
 
 export default function ScanParking() {
   const [, setLocation] = useLocation();
@@ -21,34 +36,37 @@ export default function ScanParking() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<{ plate: string; confidence: number }[]>([]);
   const [action, setAction] = useState<ParkingAction | null>(null);
+  const [result, setResult] = useState<ParkingResult | null>(null);
+  const [completedAction, setCompletedAction] = useState<ParkingAction | null>(null);
 
   const parkingMutation = useMutation({
-    mutationFn: async ({ 
-      plate, 
-      countryHint, 
-      photo, 
-      action 
-    }: { 
-      plate: string; 
-      countryHint: CountryHint; 
+    mutationFn: async ({
+      plate,
+      countryHint,
+      photo,
+      action
+    }: {
+      plate: string;
+      countryHint: CountryHint;
       photo?: string;
       action: ParkingAction;
     }) => {
       const endpoint = action === "entry" ? "/api/parking/entry" : "/api/parking/exit";
-      const res = await apiRequest("POST", endpoint, { 
-        plateDisplay: plate, 
+      const res = await apiRequest("POST", endpoint, {
+        plateDisplay: plate,
         countryHint,
-        photo 
+        photo
       });
       return res.json();
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/parking"] });
+      setResult(data);
+      setCompletedAction(variables.action);
       toast({
         title: variables.action === "entry" ? "Vehicle entered" : "Vehicle exited",
         description: `Plate ${variables.plate} recorded successfully`,
       });
-      setLocation("/");
     },
     onError: (error: Error) => {
       toast({
@@ -89,6 +107,51 @@ export default function ScanParking() {
         onCapture={handleCapture}
         onCancel={() => { setShowCamera(false); setAction(null); }}
       />
+    );
+  }
+
+  // Show ticket or receipt after successful action
+  if (result && completedAction) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border">
+          <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-4">
+            <h1 className="font-semibold">
+              {completedAction === "entry" ? "Entry Ticket" : "Exit Receipt"}
+            </h1>
+          </div>
+        </header>
+
+        <main className="max-w-lg mx-auto px-4 py-8">
+          {completedAction === "entry" ? (
+            <ParkingTicket
+              sessionId={result.id}
+              plateDisplay={result.plateDisplay}
+              entryAt={result.entryAt}
+              zoneCode={result.zoneId || undefined}
+              spotNumber={result.spotNumber || undefined}
+              onClose={() => setLocation("/")}
+            />
+          ) : (
+            <ParkingReceipt
+              sessionId={result.id}
+              plateDisplay={result.plateDisplay}
+              entryAt={result.entryAt}
+              exitAt={result.exitAt || new Date().toISOString()}
+              durationFormatted={result.feeDetails?.durationFormatted || "N/A"}
+              fee={result.feeDetails?.finalFee || 0}
+              currency={result.feeDetails?.currency}
+              onClose={() => setLocation("/")}
+            />
+          )}
+
+          <div className="mt-6 text-center">
+            <Button variant="outline" onClick={() => setLocation("/")}>
+              Done
+            </Button>
+          </div>
+        </main>
+      </div>
     );
   }
 
