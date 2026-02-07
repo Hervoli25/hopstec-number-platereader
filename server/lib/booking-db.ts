@@ -2,6 +2,7 @@ import pg from "pg";
 
 // Booking system database connection
 // This connects to your existing CRM/booking system database
+// Includes Notification and Subscription/Membership integration
 
 const BOOKING_DB_URL = process.env.BOOKING_DATABASE_URL;
 
