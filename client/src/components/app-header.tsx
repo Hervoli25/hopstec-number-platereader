@@ -12,9 +12,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
-import { 
+import {
   Home, LogOut, ClipboardList, BarChart3,
-  Info, ChevronDown, Users
+  Info, ChevronDown, Users, HelpCircle
 } from "lucide-react";
 import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
 
@@ -147,6 +147,12 @@ export function AppHeader({ title }: AppHeaderProps) {
                 <DropdownMenuItem className="cursor-pointer" data-testid="menu-about">
                   <Info className="h-4 w-4 mr-2" />
                   About
+                </DropdownMenuItem>
+              </Link>
+              <Link href="/help">
+                <DropdownMenuItem className="cursor-pointer" data-testid="menu-help">
+                  <HelpCircle className="h-4 w-4 mr-2" />
+                  Help Center
                 </DropdownMenuItem>
               </Link>
               <DropdownMenuSeparator />

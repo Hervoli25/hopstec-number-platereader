@@ -303,6 +303,52 @@ export const parkingValidations = pgTable("parking_validations", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Customer Notifications (SMS/Email queue)
+export const customerNotifications = pgTable("customer_notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Customer info
+  customerName: varchar("customer_name", { length: 255 }),
+  customerPhone: varchar("customer_phone", { length: 50 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  plateNormalized: varchar("plate_normalized", { length: 50 }),
+  // Notification details
+  channel: varchar("channel", { length: 20 }).notNull(), // sms, email, both
+  type: varchar("type", { length: 50 }).notNull(), // wash_ready, wash_complete, parking_reminder, membership_expiry, booking_confirmation
+  subject: varchar("subject", { length: 255 }), // email subject
+  message: text("message").notNull(),
+  // Reference to related entities
+  washJobId: varchar("wash_job_id"),
+  parkingSessionId: varchar("parking_session_id"),
+  bookingId: varchar("booking_id"), // CRM booking ID
+  membershipId: varchar("membership_id"),
+  // Delivery status
+  status: varchar("status", { length: 20 }).default("pending"), // pending, sent, failed, cancelled
+  sentAt: timestamp("sent_at"),
+  failedAt: timestamp("failed_at"),
+  failureReason: text("failure_reason"),
+  retryCount: integer("retry_count").default(0),
+  // Scheduling
+  scheduledFor: timestamp("scheduled_for"), // null = send immediately
+  // Tracking
+  externalId: varchar("external_id", { length: 255 }), // Twilio SID, SendGrid ID, etc.
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Notification Templates (for customizable messages)
+export const notificationTemplates = pgTable("notification_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 50 }).notNull().unique(), // wash_ready, wash_complete, etc.
+  name: varchar("name", { length: 100 }).notNull(),
+  channel: varchar("channel", { length: 20 }).notNull(), // sms, email
+  subject: varchar("subject", { length: 255 }), // for email
+  body: text("body").notNull(), // supports {{placeholders}}
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -323,6 +369,8 @@ export const insertBusinessSettingsSchema = createInsertSchema(businessSettings)
 export const insertServicePackageSchema = createInsertSchema(servicePackages).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertCustomerMembershipSchema = createInsertSchema(customerMemberships).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertParkingValidationSchema = createInsertSchema(parkingValidations).omit({ id: true, createdAt: true });
+export const insertCustomerNotificationSchema = createInsertSchema(customerNotifications).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -382,6 +430,12 @@ export type InsertCustomerMembership = z.infer<typeof insertCustomerMembershipSc
 export type ParkingValidation = typeof parkingValidations.$inferSelect;
 export type InsertParkingValidation = z.infer<typeof insertParkingValidationSchema>;
 
+export type CustomerNotification = typeof customerNotifications.$inferSelect;
+export type InsertCustomerNotification = z.infer<typeof insertCustomerNotificationSchema>;
+
+export type NotificationTemplate = typeof notificationTemplates.$inferSelect;
+export type InsertNotificationTemplate = z.infer<typeof insertNotificationTemplateSchema>;
+
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
@@ -405,6 +459,31 @@ export type ReservationStatus = typeof RESERVATION_STATUSES[number];
 // Membership types
 export const MEMBERSHIP_TYPES = ["wash_unlimited", "wash_count", "parking_monthly", "combo"] as const;
 export type MembershipType = typeof MEMBERSHIP_TYPES[number];
+
+// Notification channels
+export const NOTIFICATION_CHANNELS = ["sms", "email", "both"] as const;
+export type NotificationChannel = typeof NOTIFICATION_CHANNELS[number];
+
+// Notification types
+export const NOTIFICATION_TYPES = [
+  "wash_ready",           // Car is ready for pickup
+  "wash_complete",        // Wash job completed
+  "parking_entry",        // Vehicle entered parking
+  "parking_reminder",     // Parking time reminder
+  "parking_exit",         // Vehicle exited with receipt
+  "booking_confirmation", // CRM booking confirmed
+  "booking_reminder",     // Upcoming booking reminder
+  "membership_welcome",   // New membership welcome
+  "membership_expiry",    // Membership expiring soon
+  "membership_renewed",   // Membership auto-renewed
+  "payment_received",     // Payment confirmation
+  "custom"               // Custom notification
+] as const;
+export type NotificationType = typeof NOTIFICATION_TYPES[number];
+
+// Notification statuses
+export const NOTIFICATION_STATUSES = ["pending", "queued", "sent", "failed", "cancelled"] as const;
+export type NotificationStatus = typeof NOTIFICATION_STATUSES[number];
 
 // Supported currencies with metadata
 export const SUPPORTED_CURRENCIES = [

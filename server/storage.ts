@@ -5,6 +5,7 @@ import {
   customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules,
   parkingSettings, parkingZones, frequentParkers, parkingReservations,
   businessSettings, servicePackages, customerMemberships, parkingValidations,
+  customerNotifications, notificationTemplates,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -16,6 +17,8 @@ import {
   type ServicePackage, type InsertServicePackage,
   type CustomerMembership, type InsertCustomerMembership,
   type ParkingValidation, type InsertParkingValidation,
+  type CustomerNotification, type InsertCustomerNotification,
+  type NotificationTemplate, type InsertNotificationTemplate,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -137,6 +140,24 @@ export interface IStorage {
   // Parking Validations
   createParkingValidation(validation: InsertParkingValidation): Promise<ParkingValidation>;
   getParkingValidations(parkingSessionId: string): Promise<ParkingValidation[]>;
+
+  // Customer Notifications
+  createNotification(notification: InsertCustomerNotification): Promise<CustomerNotification>;
+  getNotifications(filters?: { status?: string; type?: string; customerPhone?: string; limit?: number }): Promise<CustomerNotification[]>;
+  getNotification(id: string): Promise<CustomerNotification | undefined>;
+  updateNotificationStatus(id: string, status: string, externalId?: string, failureReason?: string): Promise<CustomerNotification | undefined>;
+  getPendingNotifications(limit?: number): Promise<CustomerNotification[]>;
+
+  // Notification Templates
+  createNotificationTemplate(template: InsertNotificationTemplate): Promise<NotificationTemplate>;
+  getNotificationTemplates(activeOnly?: boolean): Promise<NotificationTemplate[]>;
+  getNotificationTemplate(code: string): Promise<NotificationTemplate | undefined>;
+  updateNotificationTemplate(id: string, data: Partial<InsertNotificationTemplate>): Promise<NotificationTemplate | undefined>;
+
+  // Membership lookup by plate (for CRM integration)
+  findMembershipByPlate(plateNormalized: string): Promise<CustomerMembership | undefined>;
+  findMembershipByPhone(phone: string): Promise<CustomerMembership | undefined>;
+  findMembershipByEmail(email: string): Promise<CustomerMembership | undefined>;
 
   // Event Logs
   logEvent(event: InsertEventLog): Promise<EventLog>;
@@ -974,6 +995,144 @@ export class DatabaseStorage implements IStorage {
 
   async getParkingValidations(parkingSessionId: string): Promise<ParkingValidation[]> {
     return db.select().from(parkingValidations).where(eq(parkingValidations.parkingSessionId, parkingSessionId));
+  }
+
+  // Customer Notifications
+  async createNotification(notification: InsertCustomerNotification): Promise<CustomerNotification> {
+    const [result] = await db.insert(customerNotifications).values(notification).returning();
+    return result;
+  }
+
+  async getNotifications(filters?: { status?: string; type?: string; customerPhone?: string; limit?: number }): Promise<CustomerNotification[]> {
+    const conditions = [];
+
+    if (filters?.status) {
+      conditions.push(eq(customerNotifications.status, filters.status));
+    }
+    if (filters?.type) {
+      conditions.push(eq(customerNotifications.type, filters.type));
+    }
+    if (filters?.customerPhone) {
+      conditions.push(eq(customerNotifications.customerPhone, filters.customerPhone));
+    }
+
+    let query = db.select().from(customerNotifications);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    query = query.orderBy(desc(customerNotifications.createdAt)) as any;
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+
+    return query;
+  }
+
+  async getNotification(id: string): Promise<CustomerNotification | undefined> {
+    const [notification] = await db.select().from(customerNotifications).where(eq(customerNotifications.id, id));
+    return notification;
+  }
+
+  async updateNotificationStatus(id: string, status: string, externalId?: string, failureReason?: string): Promise<CustomerNotification | undefined> {
+    const updateData: any = {
+      status,
+      updatedAt: new Date()
+    };
+
+    if (status === "sent") {
+      updateData.sentAt = new Date();
+    } else if (status === "failed") {
+      updateData.failedAt = new Date();
+      if (failureReason) updateData.failureReason = failureReason;
+    }
+    if (externalId) updateData.externalId = externalId;
+
+    const [result] = await db
+      .update(customerNotifications)
+      .set(updateData)
+      .where(eq(customerNotifications.id, id))
+      .returning();
+    return result;
+  }
+
+  async getPendingNotifications(limit = 50): Promise<CustomerNotification[]> {
+    return db
+      .select()
+      .from(customerNotifications)
+      .where(and(
+        eq(customerNotifications.status, "pending"),
+        or(
+          isNull(customerNotifications.scheduledFor),
+          lte(customerNotifications.scheduledFor, new Date())
+        )
+      ))
+      .orderBy(asc(customerNotifications.createdAt))
+      .limit(limit);
+  }
+
+  // Notification Templates
+  async createNotificationTemplate(template: InsertNotificationTemplate): Promise<NotificationTemplate> {
+    const [result] = await db.insert(notificationTemplates).values(template).returning();
+    return result;
+  }
+
+  async getNotificationTemplates(activeOnly = true): Promise<NotificationTemplate[]> {
+    if (activeOnly) {
+      return db.select().from(notificationTemplates).where(eq(notificationTemplates.isActive, true));
+    }
+    return db.select().from(notificationTemplates);
+  }
+
+  async getNotificationTemplate(code: string): Promise<NotificationTemplate | undefined> {
+    const [template] = await db.select().from(notificationTemplates).where(eq(notificationTemplates.code, code));
+    return template;
+  }
+
+  async updateNotificationTemplate(id: string, data: Partial<InsertNotificationTemplate>): Promise<NotificationTemplate | undefined> {
+    const [result] = await db
+      .update(notificationTemplates)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(notificationTemplates.id, id))
+      .returning();
+    return result;
+  }
+
+  // Membership lookup by plate (for CRM integration)
+  async findMembershipByPlate(plateNormalized: string): Promise<CustomerMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(customerMemberships)
+      .where(and(
+        eq(customerMemberships.plateNormalized, plateNormalized),
+        eq(customerMemberships.status, "active"),
+        gte(customerMemberships.expiryDate, new Date())
+      ));
+    return membership;
+  }
+
+  async findMembershipByPhone(phone: string): Promise<CustomerMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(customerMemberships)
+      .where(and(
+        eq(customerMemberships.customerPhone, phone),
+        eq(customerMemberships.status, "active"),
+        gte(customerMemberships.expiryDate, new Date())
+      ));
+    return membership;
+  }
+
+  async findMembershipByEmail(email: string): Promise<CustomerMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(customerMemberships)
+      .where(and(
+        eq(customerMemberships.customerEmail, email),
+        eq(customerMemberships.status, "active"),
+        gte(customerMemberships.expiryDate, new Date())
+      ));
+    return membership;
   }
 }
 

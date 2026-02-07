@@ -10,7 +10,22 @@ import { savePhoto } from "./lib/photo-storage";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
 import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES } from "@shared/schema";
-import { getUpcomingBookings, getTodayBookings, findBookingByPlate, updateBookingStatus } from "./lib/booking-db";
+import {
+  getUpcomingBookings,
+  getTodayBookings,
+  findBookingByPlate,
+  updateBookingStatus,
+  getCRMNotifications,
+  createCRMNotification,
+  updateCRMNotificationStatus,
+  getCRMNotificationsForCustomer,
+  getCRMSubscriptions,
+  findCRMSubscriptionByPlate,
+  findCRMSubscriptionByEmail,
+  findCRMSubscriptionByPhone,
+  getBookingWithMembership,
+  getUpcomingBookingsWithMemberships
+} from "./lib/booking-db";
 import {
   calculateParkingFee,
   calculateParkingDuration,
@@ -1179,6 +1194,205 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating CRM booking status:", error);
       res.status(500).json({ message: "Failed to update status" });
+    }
+  });
+
+  // Get booking with membership info
+  app.get("/api/crm/bookings/:id/details", isAuthenticated, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const booking = await getBookingWithMembership(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+      res.json(booking);
+    } catch (error) {
+      console.error("Error fetching booking details:", error);
+      res.status(500).json({ message: "Failed to fetch booking details" });
+    }
+  });
+
+  // Get upcoming bookings with membership info
+  app.get("/api/crm/bookings/with-memberships", isAuthenticated, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 30;
+      const bookings = await getUpcomingBookingsWithMemberships(limit);
+      res.json(bookings);
+    } catch (error) {
+      console.error("Error fetching bookings with memberships:", error);
+      res.status(500).json({ message: "Failed to fetch bookings" });
+    }
+  });
+
+  // =====================
+  // CRM NOTIFICATIONS (from external CRM database)
+  // =====================
+
+  // Get notifications from CRM
+  app.get("/api/crm/notifications", isAuthenticated, async (req, res) => {
+    try {
+      const { userId, status, type, limit } = req.query;
+      const notifications = await getCRMNotifications({
+        userId: userId as string | undefined,
+        status: status as string | undefined,
+        type: type as string | undefined,
+        limit: limit ? parseInt(limit as string) : undefined,
+      });
+      res.json(notifications);
+    } catch (error) {
+      console.error("Error fetching CRM notifications:", error);
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  // Get notifications for a customer by email or phone
+  app.get("/api/crm/notifications/customer", isAuthenticated, async (req, res) => {
+    try {
+      const { email, phone, limit } = req.query;
+      if (!email && !phone) {
+        return res.status(400).json({ message: "Email or phone required" });
+      }
+
+      const notifications = await getCRMNotificationsForCustomer(
+        email as string | undefined,
+        phone as string | undefined,
+        limit ? parseInt(limit as string) : 50
+      );
+      res.json(notifications);
+    } catch (error) {
+      console.error("Error fetching customer notifications:", error);
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  // Create notification in CRM
+  app.post("/api/crm/notifications", isAuthenticated, async (req, res) => {
+    try {
+      const schema = z.object({
+        userId: z.string(),
+        type: z.string(),
+        title: z.string(),
+        message: z.string(),
+        channel: z.enum(["sms", "email", "push", "both"]),
+        bookingId: z.string().optional(),
+        vehicleId: z.string().optional(),
+      });
+
+      const data = schema.parse(req.body);
+      const notification = await createCRMNotification(data);
+
+      if (!notification) {
+        return res.status(500).json({ message: "Failed to create notification" });
+      }
+
+      res.status(201).json(notification);
+    } catch (error) {
+      console.error("Error creating CRM notification:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create notification" });
+    }
+  });
+
+  // Update notification status in CRM
+  app.patch("/api/crm/notifications/:id/status", isAuthenticated, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const { status } = req.body;
+      if (!["pending", "sent", "failed", "read"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const success = await updateCRMNotificationStatus(id, status);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to update notification status" });
+      }
+
+      res.json({ message: "Notification status updated" });
+    } catch (error) {
+      console.error("Error updating CRM notification status:", error);
+      res.status(500).json({ message: "Failed to update status" });
+    }
+  });
+
+  // =====================
+  // CRM SUBSCRIPTIONS/MEMBERSHIPS (from external CRM database)
+  // =====================
+
+  // Get subscriptions from CRM
+  app.get("/api/crm/subscriptions", isAuthenticated, async (req, res) => {
+    try {
+      const { userId, status, type } = req.query;
+      const subscriptions = await getCRMSubscriptions({
+        userId: userId as string | undefined,
+        status: status as string | undefined,
+        type: type as string | undefined,
+      });
+      res.json(subscriptions);
+    } catch (error) {
+      console.error("Error fetching CRM subscriptions:", error);
+      res.status(500).json({ message: "Failed to fetch subscriptions" });
+    }
+  });
+
+  // Find subscription by license plate
+  app.get("/api/crm/subscriptions/by-plate", isAuthenticated, async (req, res) => {
+    try {
+      const { plate } = req.query;
+      if (!plate || typeof plate !== "string") {
+        return res.status(400).json({ message: "Plate parameter required" });
+      }
+
+      const subscription = await findCRMSubscriptionByPlate(plate);
+      if (!subscription) {
+        return res.status(404).json({ message: "No active subscription found for this plate" });
+      }
+
+      res.json(subscription);
+    } catch (error) {
+      console.error("Error finding subscription by plate:", error);
+      res.status(500).json({ message: "Failed to find subscription" });
+    }
+  });
+
+  // Find subscription by email
+  app.get("/api/crm/subscriptions/by-email", isAuthenticated, async (req, res) => {
+    try {
+      const { email } = req.query;
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ message: "Email parameter required" });
+      }
+
+      const subscription = await findCRMSubscriptionByEmail(email);
+      if (!subscription) {
+        return res.status(404).json({ message: "No active subscription found for this email" });
+      }
+
+      res.json(subscription);
+    } catch (error) {
+      console.error("Error finding subscription by email:", error);
+      res.status(500).json({ message: "Failed to find subscription" });
+    }
+  });
+
+  // Find subscription by phone
+  app.get("/api/crm/subscriptions/by-phone", isAuthenticated, async (req, res) => {
+    try {
+      const { phone } = req.query;
+      if (!phone || typeof phone !== "string") {
+        return res.status(400).json({ message: "Phone parameter required" });
+      }
+
+      const subscription = await findCRMSubscriptionByPhone(phone);
+      if (!subscription) {
+        return res.status(404).json({ message: "No active subscription found for this phone" });
+      }
+
+      res.json(subscription);
+    } catch (error) {
+      console.error("Error finding subscription by phone:", error);
+      res.status(500).json({ message: "Failed to find subscription" });
     }
   });
 

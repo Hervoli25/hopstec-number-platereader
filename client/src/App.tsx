@@ -29,6 +29,16 @@ import ParkingZones from "@/pages/parking-zones";
 import ParkingVIP from "@/pages/parking-vip";
 import ParkingReservations from "@/pages/parking-reservations";
 import BusinessSettings from "@/pages/business-settings";
+import PrivacyPolicy from "@/pages/legal/privacy";
+import TermsOfService from "@/pages/legal/terms";
+import CookiePolicy from "@/pages/legal/cookies";
+import Help from "@/pages/help";
+import TechnicianGuide from "@/pages/help/technician";
+import ManagerGuide from "@/pages/help/manager";
+import AdminGuide from "@/pages/help/admin";
+import CustomerGuide from "@/pages/help/customer";
+import FAQ from "@/pages/help/faq";
+import GettingStarted from "@/pages/help/getting-started";
 
 function LoadingScreen() {
   return (
@@ -53,16 +63,19 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 function AppRouter() {
   const [location] = useLocation();
   const { isAuthenticated, isLoading } = useAuth();
-  
+
   // Public routes accessible to everyone
   const publicPaths = ["/login", "/register", "/about", "/landing"];
-  const isPublicPath = publicPaths.includes(location) || location.startsWith("/customer/job/");
-  
+  const isPublicPath = publicPaths.includes(location) ||
+                       location.startsWith("/customer/job/") ||
+                       location.startsWith("/legal/") ||
+                       location.startsWith("/help");
+
   // Landing page is public
   if (location === "/landing") {
     return <LandingPage />;
   }
-  
+
   if (isPublicPath) {
     return (
       <Switch>
@@ -70,6 +83,16 @@ function AppRouter() {
         <Route path="/register" component={Register} />
         <Route path="/customer/job/:token" component={CustomerJob} />
         <Route path="/about" component={About} />
+        <Route path="/legal/privacy" component={PrivacyPolicy} />
+        <Route path="/legal/terms" component={TermsOfService} />
+        <Route path="/legal/cookies" component={CookiePolicy} />
+        <Route path="/help" component={Help} />
+        <Route path="/help/technician" component={TechnicianGuide} />
+        <Route path="/help/manager" component={ManagerGuide} />
+        <Route path="/help/admin" component={AdminGuide} />
+        <Route path="/help/customer" component={CustomerGuide} />
+        <Route path="/help/faq" component={FAQ} />
+        <Route path="/help/getting-started" component={GettingStarted} />
         <Route component={NotFound} />
       </Switch>
     );
