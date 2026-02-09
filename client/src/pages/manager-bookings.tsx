@@ -107,11 +107,12 @@ export default function ManagerBookings() {
   const [editNotes, setEditNotes] = useState("");
   const [editStatus, setEditStatus] = useState("");
 
-  // Check if user has manager or admin role
-  const canManageBookings = user?.role === "manager" || user?.role === "admin";
+  // Check if user has manager, admin, or super_admin role
+  const canManageBookings = user?.role === "manager" || user?.role === "admin" || user?.role === "super_admin";
+  const isSuperAdmin = user?.isSuperAdmin === true;
 
   // Fetch bookings
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, refetch, error: fetchError } = useQuery({
     queryKey: ["manager-bookings", search, statusFilter, dateFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -126,8 +127,11 @@ export default function ManagerBookings() {
       const res = await fetch(`/api/manager/bookings?${params.toString()}`, {
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to fetch bookings");
-      return res.json() as Promise<{ bookings: Booking[]; total: number }>;
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || `Failed to fetch bookings (${res.status})`);
+      }
+      return res.json() as Promise<{ bookings: Booking[]; total: number; error?: string; technicalError?: string }>;
     },
     enabled: canManageBookings,
   });
@@ -319,8 +323,48 @@ export default function ManagerBookings() {
           </CardContent>
         </Card>
 
+        {/* Error Message */}
+        {fetchError && (
+          <Card className="mb-4 border-destructive">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                <span className="font-medium">Error: {fetchError.message}</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* CRM Connection Warning */}
+        {data?.error && (
+          <Card className="mb-4 border-yellow-500">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 text-yellow-600">
+                <AlertTriangle className="h-5 w-5" />
+                <span className="font-medium">{data.error}</span>
+              </div>
+              {/* Technical details only for super admin */}
+              {isSuperAdmin && data.technicalError && (
+                <div className="mt-2 p-2 bg-muted rounded text-xs font-mono text-muted-foreground">
+                  Technical: {data.technicalError}
+                </div>
+              )}
+              {!isSuperAdmin && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  Please contact support if this issue persists.
+                </p>
+              )}
+              {isSuperAdmin && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  Check BOOKING_DATABASE_URL configuration.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Results Count */}
-        {data && (
+        {data && !data.error && (
           <p className="text-sm text-muted-foreground mb-4">
             Showing {data.bookings.length} of {data.total} bookings
           </p>
@@ -343,7 +387,9 @@ export default function ManagerBookings() {
               <Calendar className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="font-semibold mb-2">No bookings found</h3>
               <p className="text-muted-foreground text-sm">
-                Try adjusting your search or filters
+                {data?.error
+                  ? "CRM database connection issue. Check your configuration."
+                  : "Try adjusting your search or filters"}
               </p>
             </CardContent>
           </Card>

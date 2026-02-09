@@ -1,7 +1,15 @@
 import type { RequestHandler } from "express";
 import { storage } from "../storage";
 
-export type UserRoleType = "technician" | "manager" | "admin";
+export type UserRoleType = "technician" | "manager" | "admin" | "super_admin";
+
+// Super admin email - hidden from other users, has full system access
+export const SUPER_ADMIN_EMAIL = "hk@hopstecinnovation.com";
+
+// Check if user is super admin
+export function isSuperAdmin(email?: string | null): boolean {
+  return email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+}
 
 // Middleware to check if user has required role
 export function requireRole(...allowedRoles: UserRoleType[]): RequestHandler {
@@ -13,20 +21,33 @@ export function requireRole(...allowedRoles: UserRoleType[]): RequestHandler {
       }
 
       let role: UserRoleType = "technician"; // Default to technician
+      let userEmail: string | null = null;
 
       // For credentials auth, role is in session
       if (req.user?.authType === "credentials") {
         role = req.user.role || "technician";
+        userEmail = req.user.email;
       } else {
         // For Replit auth, get from userRoles table
         const userRole = await storage.getUserRole(userId);
         role = userRole?.role || "technician";
+        // Get email from claims
+        userEmail = req.user?.claims?.email || null;
+      }
+
+      // Super admin has access to everything
+      if (isSuperAdmin(userEmail)) {
+        req.user.isSuperAdmin = true;
+        req.user.role = "super_admin";
+        return next();
       }
 
       if (!allowedRoles.includes(role as UserRoleType)) {
         return res.status(403).json({ message: "Forbidden: Insufficient permissions" });
       }
 
+      // Store role on request for later use
+      req.user.role = role;
       next();
     } catch (error) {
       console.error("Role check error:", error);

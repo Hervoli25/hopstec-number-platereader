@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { authStorage } from "./storage";
 import { isAuthenticated } from "./replitAuth";
 import { storage } from "../../storage";
+import { isSuperAdmin, SUPER_ADMIN_EMAIL } from "../../lib/roles";
 
 // Register auth-specific routes
 export function registerAuthRoutes(app: Express): void {
@@ -21,12 +22,16 @@ export function registerAuthRoutes(app: Express): void {
         if (!user) {
           return res.status(404).json({ message: "User not found" });
         }
+
+        // Check if super admin
+        const isSuper = isSuperAdmin(user.email);
         return res.json({
           id: user.id,
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          role: user.role || "technician",
+          role: isSuper ? "super_admin" : (user.role || "technician"),
+          isSuperAdmin: isSuper,
           profileImageUrl: user.profileImageUrl,
           authType: "credentials",
         });
@@ -41,12 +46,16 @@ export function registerAuthRoutes(app: Express): void {
       // Get role from userRoles table for Replit users
       const userRole = await storage.getUserRole(userId);
 
+      // Check if super admin
+      const isSuper = isSuperAdmin(user.email);
+
       res.json({
         id: user.id,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
-        role: userRole?.role || "technician",
+        role: isSuper ? "super_admin" : (userRole?.role || "technician"),
+        isSuperAdmin: isSuper,
         profileImageUrl: user.profileImageUrl,
         authType: "replit",
       });

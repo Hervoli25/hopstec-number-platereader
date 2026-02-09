@@ -96,7 +96,6 @@ export async function getUpcomingBookings(limit: number = 20): Promise<CRMBookin
     const result = await pool.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -123,7 +122,7 @@ export async function getUpcomingBookings(limit: number = 20): Promise<CRMBookin
 
     return result.rows.map(row => ({
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -154,7 +153,6 @@ export async function getTodayBookings(): Promise<CRMBooking[]> {
     const result = await pool.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -180,7 +178,7 @@ export async function getTodayBookings(): Promise<CRMBooking[]> {
 
     return result.rows.map(row => ({
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -214,7 +212,6 @@ export async function findBookingByPlate(licensePlate: string): Promise<CRMBooki
     const result = await pool.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -245,7 +242,7 @@ export async function findBookingByPlate(licensePlate: string): Promise<CRMBooki
     const row = result.rows[0];
     return {
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -800,7 +797,6 @@ export async function getBookingWithMembership(bookingId: string): Promise<CRMBo
     const bookingResult = await pool.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -827,7 +823,7 @@ export async function getBookingWithMembership(bookingId: string): Promise<CRMBo
     const row = bookingResult.rows[0];
     const booking: CRMBooking = {
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -897,15 +893,26 @@ export interface CRMBookingExtended extends CRMBooking {
 }
 
 // Get all bookings with filters (for manager view)
-export async function getManagerBookings(filters?: BookingFilters): Promise<{ bookings: CRMBookingExtended[]; total: number }> {
+export async function getManagerBookings(filters?: BookingFilters): Promise<{ bookings: CRMBookingExtended[]; total: number; error?: string; technicalError?: string }> {
   const pool = getBookingPool();
-  if (!pool) return { bookings: [], total: 0 };
+  if (!pool) {
+    console.log("Manager Bookings: CRM database not connected (BOOKING_DATABASE_URL not set)");
+    return {
+      bookings: [],
+      total: 0,
+      error: "Booking system temporarily unavailable",
+      technicalError: "CRM database not connected (BOOKING_DATABASE_URL not set)"
+    };
+  }
+
+  console.log("Manager Bookings: Searching with filters:", JSON.stringify(filters));
 
   try {
+    // Note: bookingReference column may not exist in all CRM databases
+    // We don't select it from DB - generate from ID in application code instead
     let query = `
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -947,8 +954,9 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
 
     if (filters?.customerSearch) {
       const searchTerm = `%${filters.customerSearch}%`;
+      // Search by generated reference (from ID), name, email, phone, or plate
       query += ` AND (
-        b."bookingReference" ILIKE $${paramIndex} OR
+        UPPER(SUBSTRING(b.id::text, 1, 8)) ILIKE $${paramIndex} OR
         u.name ILIKE $${paramIndex} OR
         u.email ILIKE $${paramIndex} OR
         u.phone ILIKE $${paramIndex} OR
@@ -991,7 +999,7 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
 
       return {
         id: row.id,
-        bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+        bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
         status: row.status,
         bookingDate: new Date(row.bookingDate),
         timeSlot: row.timeSlot,
@@ -1012,10 +1020,16 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
       };
     });
 
+    console.log(`Manager Bookings: Found ${bookings.length} bookings out of ${total} total`);
     return { bookings, total };
   } catch (error) {
     console.error("Error fetching manager bookings:", error);
-    return { bookings: [], total: 0 };
+    return {
+      bookings: [],
+      total: 0,
+      error: "Unable to fetch bookings. Please try again later.",
+      technicalError: String(error)
+    };
   }
 }
 
@@ -1028,7 +1042,6 @@ export async function getBookingById(bookingId: string): Promise<CRMBookingExten
     const result = await pool.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -1067,7 +1080,7 @@ export async function getBookingById(bookingId: string): Promise<CRMBookingExten
 
     return {
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,

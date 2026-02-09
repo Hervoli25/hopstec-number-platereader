@@ -53594,54 +53594,13 @@ var isAuthenticated = async (req, res, next) => {
 
 // server/replit_integrations/auth/routes.ts
 init_storage();
-function registerAuthRoutes(app2) {
-  app2.get("/api/auth/user", isAuthenticated, async (req, res) => {
-    try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "User ID not found" });
-      }
-      if (req.user?.authType === "credentials") {
-        const user2 = await storage.getUserById(userId);
-        if (!user2) {
-          return res.status(404).json({ message: "User not found" });
-        }
-        return res.json({
-          id: user2.id,
-          email: user2.email,
-          firstName: user2.firstName,
-          lastName: user2.lastName,
-          role: user2.role || "technician",
-          profileImageUrl: user2.profileImageUrl,
-          authType: "credentials"
-        });
-      }
-      const user = await authStorage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      const userRole = await storage.getUserRole(userId);
-      res.json({
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: userRole?.role || "technician",
-        profileImageUrl: user.profileImageUrl,
-        authType: "replit"
-      });
-    } catch (error) {
-      console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
-    }
-  });
-}
-
-// server/routes.ts
-init_plate_utils();
 
 // server/lib/roles.ts
 init_storage();
+var SUPER_ADMIN_EMAIL = "hk@hopstecinnovation.com";
+function isSuperAdmin(email) {
+  return email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+}
 function requireRole(...allowedRoles) {
   return async (req, res, next) => {
     try {
@@ -53650,15 +53609,24 @@ function requireRole(...allowedRoles) {
         return res.status(401).json({ message: "Unauthorized" });
       }
       let role = "technician";
+      let userEmail = null;
       if (req.user?.authType === "credentials") {
         role = req.user.role || "technician";
+        userEmail = req.user.email;
       } else {
         const userRole = await storage.getUserRole(userId);
         role = userRole?.role || "technician";
+        userEmail = req.user?.claims?.email || null;
+      }
+      if (isSuperAdmin(userEmail)) {
+        req.user.isSuperAdmin = true;
+        req.user.role = "super_admin";
+        return next();
       }
       if (!allowedRoles.includes(role)) {
         return res.status(403).json({ message: "Forbidden: Insufficient permissions" });
       }
+      req.user.role = role;
       next();
     } catch (error) {
       console.error("Role check error:", error);
@@ -53672,6 +53640,57 @@ async function ensureUserRole(userId) {
     await storage.upsertUserRole({ userId, role: "technician" });
   }
 }
+
+// server/replit_integrations/auth/routes.ts
+function registerAuthRoutes(app2) {
+  app2.get("/api/auth/user", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "User ID not found" });
+      }
+      if (req.user?.authType === "credentials") {
+        const user2 = await storage.getUserById(userId);
+        if (!user2) {
+          return res.status(404).json({ message: "User not found" });
+        }
+        const isSuper2 = isSuperAdmin(user2.email);
+        return res.json({
+          id: user2.id,
+          email: user2.email,
+          firstName: user2.firstName,
+          lastName: user2.lastName,
+          role: isSuper2 ? "super_admin" : user2.role || "technician",
+          isSuperAdmin: isSuper2,
+          profileImageUrl: user2.profileImageUrl,
+          authType: "credentials"
+        });
+      }
+      const user = await authStorage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      const userRole = await storage.getUserRole(userId);
+      const isSuper = isSuperAdmin(user.email);
+      res.json({
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: isSuper ? "super_admin" : userRole?.role || "technician",
+        isSuperAdmin: isSuper,
+        profileImageUrl: user.profileImageUrl,
+        authType: "replit"
+      });
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+}
+
+// server/routes.ts
+init_plate_utils();
 
 // server/lib/photo-storage.ts
 import fs from "fs";
@@ -54399,12 +54418,21 @@ async function getUpcomingBookingsWithMemberships(limit = 20) {
 }
 async function getManagerBookings(filters) {
   const pool2 = getBookingPool();
-  if (!pool2) return { bookings: [], total: 0 };
+  if (!pool2) {
+    console.log("Manager Bookings: CRM database not connected (BOOKING_DATABASE_URL not set)");
+    return {
+      bookings: [],
+      total: 0,
+      error: "Booking system temporarily unavailable",
+      technicalError: "CRM database not connected (BOOKING_DATABASE_URL not set)"
+    };
+  }
+  console.log("Manager Bookings: Searching with filters:", JSON.stringify(filters));
   try {
     let query = `
       SELECT
         b.id,
-        b."bookingReference",
+        COALESCE(b."bookingReference", CONCAT('BKG-', UPPER(SUBSTRING(b.id::text, 1, 8)))) as "bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -54443,7 +54471,7 @@ async function getManagerBookings(filters) {
     if (filters?.customerSearch) {
       const searchTerm = `%${filters.customerSearch}%`;
       query += ` AND (
-        b."bookingReference" ILIKE $${paramIndex} OR
+        UPPER(SUBSTRING(b.id::text, 1, 8)) ILIKE $${paramIndex} OR
         u.name ILIKE $${paramIndex} OR
         u.email ILIKE $${paramIndex} OR
         u.phone ILIKE $${paramIndex} OR
@@ -54494,10 +54522,16 @@ async function getManagerBookings(filters) {
         lastModifiedAt: row.updatedAt ? new Date(row.updatedAt) : void 0
       };
     });
+    console.log(`Manager Bookings: Found ${bookings.length} bookings out of ${total} total`);
     return { bookings, total };
   } catch (error) {
     console.error("Error fetching manager bookings:", error);
-    return { bookings: [], total: 0 };
+    return {
+      bookings: [],
+      total: 0,
+      error: "Unable to fetch bookings. Please try again later.",
+      technicalError: String(error)
+    };
   }
 }
 async function getBookingById(bookingId) {
@@ -56031,6 +56065,7 @@ async function registerRoutes(httpServer2, app2) {
   app2.get("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
     try {
       const { status, fromDate, toDate, search, limit, offset } = req.query;
+      console.log("Manager Bookings API: Request received with query:", req.query);
       const filters = {};
       if (status && typeof status === "string") filters.status = status;
       if (fromDate && typeof fromDate === "string") filters.fromDate = new Date(fromDate);
@@ -56039,10 +56074,28 @@ async function registerRoutes(httpServer2, app2) {
       if (limit) filters.limit = parseInt(limit);
       if (offset) filters.offset = parseInt(offset);
       const result = await getManagerBookings(filters);
-      res.json(result);
+      if (result.error) {
+        console.warn("Manager Bookings API: Error -", result.technicalError || result.error);
+      }
+      const isSuperAdminUser = req.user?.isSuperAdmin === true;
+      const response = {
+        bookings: result.bookings,
+        total: result.total
+      };
+      if (result.error) {
+        response.error = result.error;
+        if (isSuperAdminUser && result.technicalError) {
+          response.technicalError = result.technicalError;
+        }
+      }
+      res.json(response);
     } catch (error) {
       console.error("Error fetching manager bookings:", error);
-      res.status(500).json({ message: "Failed to fetch bookings" });
+      const isSuperAdminUser = req.user?.isSuperAdmin === true;
+      res.status(500).json({
+        message: "Failed to fetch bookings",
+        technicalError: isSuperAdminUser ? String(error) : void 0
+      });
     }
   });
   app2.get("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {

@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useLocation, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -7,15 +8,44 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppFooter } from "@/components/app-footer";
 import { useAuth } from "@/hooks/use-auth";
 import { useSSE } from "@/hooks/use-sse";
-import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
-  TrendingUp, Calendar, Target, ArrowRight, Zap, Settings
+  TrendingUp, Calendar, Target, ArrowRight, Zap, Settings,
+  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
@@ -30,12 +60,23 @@ interface QueueStats {
 
 interface CRMBooking {
   id: string;
+  bookingReference: string;
   status: string;
   bookingDate: string;
   timeSlot: string;
   licensePlate: string;
+  vehicleMake: string;
+  vehicleModel: string;
+  vehicleColor: string;
   serviceName: string;
+  serviceDescription: string;
   customerName: string | null;
+  customerEmail: string;
+  customerPhone: string | null;
+  totalAmount: number;
+  notes: string | null;
+  isWithinOneHour?: boolean;
+  canCustomerModify?: boolean;
 }
 
 interface AnalyticsSummary {
@@ -67,6 +108,7 @@ const STATUS_LABELS: Record<WashStatus, string> = {
 export default function ManagerDashboard() {
   const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
+  const isSuperAdmin = user?.isSuperAdmin === true;
 
   // Enable SSE for real-time updates
   useSSE();
@@ -86,20 +128,149 @@ export default function ManagerDashboard() {
 
   const upcomingBookings = crmBookings?.filter(b => b.status === "CONFIRMED").slice(0, 5) || [];
 
+  // Booking Management Dialog State
+  const { toast } = useToast();
+  const qClient = useQueryClient();
+  const [actionDialogOpen, setActionDialogOpen] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState<CRMBooking | null>(null);
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+
+  // Edit form state
+  const [editDate, setEditDate] = useState("");
+  const [editTimeSlot, setEditTimeSlot] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editStatus, setEditStatus] = useState("");
+
+  // Search for booking
+  const { data: searchResults, isLoading: isSearching, refetch: searchBookings, error: searchError } = useQuery<{ bookings: CRMBooking[]; error?: string; technicalError?: string }>({
+    queryKey: ["search-bookings", searchQuery],
+    queryFn: async () => {
+      if (!searchQuery.trim()) return { bookings: [] };
+      const res = await fetch(`/api/manager/bookings?search=${encodeURIComponent(searchQuery)}&limit=10`, {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || `Search failed (${res.status})`);
+      }
+      return res.json();
+    },
+    enabled: false,
+  });
+
+  // Update booking mutation
+  const updateMutation = useMutation({
+    mutationFn: async (updates: { id: string; data: any }) => {
+      const res = await fetch(`/api/manager/bookings/${updates.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(updates.data),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to update booking");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Booking updated successfully" });
+      qClient.invalidateQueries({ queryKey: ["/api/crm/bookings"] });
+      qClient.invalidateQueries({ queryKey: ["search-bookings"] });
+      setEditDialogOpen(false);
+      setSelectedBooking(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Cancel booking mutation
+  const cancelMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/manager/bookings/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to cancel booking");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Booking cancelled successfully" });
+      qClient.invalidateQueries({ queryKey: ["/api/crm/bookings"] });
+      qClient.invalidateQueries({ queryKey: ["search-bookings"] });
+      setCancelDialogOpen(false);
+      setSelectedBooking(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to cancel", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleBookingClick = (booking: CRMBooking) => {
+    setSelectedBooking(booking);
+    setActionDialogOpen(true);
+  };
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      searchBookings();
+    }
+  };
+
+  const handleSelectSearchResult = (booking: CRMBooking) => {
+    setSelectedBooking(booking);
+    setSearchDialogOpen(false);
+    setActionDialogOpen(true);
+  };
+
+  const openEditDialog = (booking: CRMBooking) => {
+    setEditDate(booking.bookingDate.split("T")[0]);
+    setEditTimeSlot(booking.timeSlot);
+    setEditNotes(booking.notes || "");
+    setEditStatus(booking.status);
+    setActionDialogOpen(false);
+    setEditDialogOpen(true);
+  };
+
+  const handleSaveEdit = () => {
+    if (!selectedBooking) return;
+    const updates: any = {};
+    if (editDate !== selectedBooking.bookingDate.split("T")[0]) updates.bookingDate = editDate;
+    if (editTimeSlot !== selectedBooking.timeSlot) updates.timeSlot = editTimeSlot;
+    if (editNotes !== (selectedBooking.notes || "")) updates.notes = editNotes;
+    if (editStatus !== selectedBooking.status) updates.status = editStatus;
+
+    if (Object.keys(updates).length === 0) {
+      toast({ title: "No changes to save" });
+      return;
+    }
+    updateMutation.mutate({ id: selectedBooking.id, data: updates });
+  };
+
   const initials = user ?
     `${user.firstName?.charAt(0) || ""}${user.lastName?.charAt(0) || "U"}`.toUpperCase()
     : "M";
 
   const navItems = [
     { href: "/manager", label: "Live Queue", icon: Activity },
+    { href: "/manager/bookings", label: "Bookings", icon: CalendarDays },
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
     { href: "/manager/settings", label: "Settings", icon: Settings },
   ];
 
   const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/queue/stats"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/crm/bookings"] });
+    qClient.invalidateQueries({ queryKey: ["/api/queue/stats"] });
+    qClient.invalidateQueries({ queryKey: ["/api/crm/bookings"] });
     refetch();
   };
 
@@ -326,10 +497,13 @@ export default function ManagerDashboard() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setLocation("/my-jobs")}
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSearchDialogOpen(true);
+                  }}
                 >
-                  View All
-                  <ArrowRight className="w-4 h-4 ml-1" />
+                  <Search className="w-4 h-4 mr-1" />
+                  Search
                 </Button>
               </div>
 
@@ -341,13 +515,19 @@ export default function ManagerDashboard() {
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className="flex items-center justify-between p-3 rounded-lg bg-blue-500/5 border border-blue-500/10"
+                      className="flex items-center justify-between p-3 rounded-lg bg-blue-500/5 border border-blue-500/10 cursor-pointer hover:bg-blue-500/10 transition-colors"
+                      onClick={() => handleBookingClick(booking)}
                     >
                       <div>
                         <p className="font-mono font-semibold text-sm">{booking.licensePlate}</p>
                         <p className="text-xs text-muted-foreground">
                           {booking.serviceName}
                         </p>
+                        {booking.bookingReference && (
+                          <p className="text-xs text-primary font-mono">
+                            #{booking.bookingReference}
+                          </p>
+                        )}
                       </div>
                       <div className="text-right">
                         <Badge variant="secondary" className="text-xs">
@@ -364,6 +544,15 @@ export default function ManagerDashboard() {
                 <div className="text-center py-8 text-muted-foreground">
                   <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">No upcoming bookings</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => setSearchDialogOpen(true)}
+                  >
+                    <Search className="w-4 h-4 mr-2" />
+                    Search Bookings
+                  </Button>
                 </div>
               )}
             </Card>
@@ -406,7 +595,7 @@ export default function ManagerDashboard() {
           {/* Quick Actions */}
           <Card className="p-6">
             <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <Button
                 variant="outline"
                 className="h-auto py-4 flex flex-col gap-2"
@@ -422,6 +611,14 @@ export default function ManagerDashboard() {
               >
                 <ParkingSquare className="w-6 h-6" />
                 <span className="text-xs">Parking</span>
+              </Button>
+              <Button
+                variant="outline"
+                className="h-auto py-4 flex flex-col gap-2 border-primary/50"
+                onClick={() => setSearchDialogOpen(true)}
+              >
+                <CalendarDays className="w-6 h-6 text-primary" />
+                <span className="text-xs">Bookings</span>
               </Button>
               <Button
                 variant="outline"
@@ -443,6 +640,357 @@ export default function ManagerDashboard() {
           </Card>
         </motion.div>
       </main>
+
+      {/* Search Booking Dialog */}
+      <Dialog open={searchDialogOpen} onOpenChange={setSearchDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Search Booking</DialogTitle>
+            <DialogDescription>
+              Find a booking by reference, name, email, phone, or plate number
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleSearchSubmit} className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Enter BKG-XXXXXXXX, name, email, phone, or plate..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+                autoFocus
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={!searchQuery.trim() || isSearching}>
+              {isSearching ? "Searching..." : "Search"}
+            </Button>
+          </form>
+
+          {/* Search Error */}
+          {searchError && (
+            <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <span className="text-sm font-medium">{searchError.message}</span>
+              </div>
+            </div>
+          )}
+
+          {/* CRM Connection Error */}
+          {searchResults?.error && (
+            <div className="mt-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+              <div className="flex items-center gap-2 text-yellow-600">
+                <AlertTriangle className="h-4 w-4" />
+                <span className="text-sm font-medium">{searchResults.error}</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Ensure BOOKING_DATABASE_URL is configured.
+              </p>
+              {isSuperAdmin && searchResults.technicalError && (
+                <div className="mt-2 p-2 bg-muted rounded text-xs font-mono text-muted-foreground">
+                  Technical: {searchResults.technicalError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {searchResults?.bookings && searchResults.bookings.length > 0 && (
+            <div className="mt-4 space-y-2 max-h-60 overflow-y-auto">
+              <p className="text-sm text-muted-foreground">Results:</p>
+              {searchResults.bookings.map((booking) => (
+                <div
+                  key={booking.id}
+                  className="p-3 rounded-lg bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                  onClick={() => handleSelectSearchResult(booking)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-mono text-sm font-semibold text-primary">
+                        #{booking.bookingReference}
+                      </p>
+                      <p className="text-sm">{booking.customerName || booking.customerEmail}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{booking.licensePlate}</p>
+                    </div>
+                    <Badge variant="secondary" className="text-xs">
+                      {booking.status}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {searchResults?.bookings && searchResults.bookings.length === 0 && searchQuery && (
+            <p className="text-center text-sm text-muted-foreground py-4">
+              No bookings found matching "{searchQuery}"
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Action Selection Dialog */}
+      <Dialog open={actionDialogOpen} onOpenChange={setActionDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Manage Booking</DialogTitle>
+            <DialogDescription>
+              {selectedBooking && (
+                <span className="font-mono text-primary">
+                  #{selectedBooking.bookingReference || selectedBooking.id.slice(0, 8).toUpperCase()}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBooking && (
+            <div className="space-y-4">
+              {/* Booking Summary */}
+              <div className="p-3 rounded-lg bg-muted/50 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Car className="h-4 w-4 text-primary" />
+                  <span className="font-mono font-semibold">{selectedBooking.licensePlate}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <User className="h-4 w-4" />
+                  <span>{selectedBooking.customerName || "N/A"}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Calendar className="h-4 w-4" />
+                  <span>
+                    {format(new Date(selectedBooking.bookingDate), "EEE, MMM d")} at {selectedBooking.timeSlot}
+                  </span>
+                </div>
+                <div className="text-sm">
+                  <Badge variant="secondary">{selectedBooking.serviceName}</Badge>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => {
+                    setActionDialogOpen(false);
+                    setViewDialogOpen(true);
+                  }}
+                >
+                  <Eye className="h-4 w-4 mr-2" />
+                  View Full Details
+                </Button>
+
+                {selectedBooking.status !== "COMPLETED" && selectedBooking.status !== "CANCELLED" && (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={() => openEditDialog(selectedBooking)}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit / Reschedule
+                    </Button>
+
+                    <Button
+                      variant="destructive"
+                      className="w-full justify-start"
+                      onClick={() => {
+                        setActionDialogOpen(false);
+                        setCancelDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Cancel Booking
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Booking Details</DialogTitle>
+            <DialogDescription>
+              Reference: #{selectedBooking?.bookingReference || selectedBooking?.id.slice(0, 8).toUpperCase()}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBooking && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Badge variant={selectedBooking.status === "CONFIRMED" ? "default" : "secondary"}>
+                  {selectedBooking.status}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <Label className="text-muted-foreground">Customer</Label>
+                  <p className="font-medium">{selectedBooking.customerName || "N/A"}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Email</Label>
+                  <p className="font-medium">{selectedBooking.customerEmail}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Phone</Label>
+                  <p className="font-medium">{selectedBooking.customerPhone || "N/A"}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">License Plate</Label>
+                  <p className="font-mono font-medium">{selectedBooking.licensePlate}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Vehicle</Label>
+                  <p className="font-medium">
+                    {selectedBooking.vehicleMake} {selectedBooking.vehicleModel}
+                    {selectedBooking.vehicleColor && ` (${selectedBooking.vehicleColor})`}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Service</Label>
+                  <p className="font-medium">{selectedBooking.serviceName}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Date</Label>
+                  <p className="font-medium">
+                    {format(new Date(selectedBooking.bookingDate), "EEEE, MMMM d, yyyy")}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Time</Label>
+                  <p className="font-medium">{selectedBooking.timeSlot}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Amount</Label>
+                  <p className="font-medium">
+                    ${((selectedBooking.totalAmount || 0) / 100).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+
+              {selectedBooking.notes && (
+                <div>
+                  <Label className="text-muted-foreground">Notes</Label>
+                  <p className="text-sm mt-1 p-2 bg-muted rounded">{selectedBooking.notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
+              Close
+            </Button>
+            {selectedBooking?.status !== "COMPLETED" && selectedBooking?.status !== "CANCELLED" && (
+              <Button onClick={() => {
+                setViewDialogOpen(false);
+                openEditDialog(selectedBooking!);
+              }}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Booking</DialogTitle>
+            <DialogDescription>
+              Modify booking #{selectedBooking?.bookingReference || selectedBooking?.id.slice(0, 8).toUpperCase()}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Date</Label>
+              <Input
+                type="date"
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Time Slot</Label>
+              <Input
+                type="time"
+                value={editTimeSlot}
+                onChange={(e) => setEditTimeSlot(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={editStatus} onValueChange={setEditStatus}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CONFIRMED">Confirmed</SelectItem>
+                  <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                  <SelectItem value="READY_FOR_PICKUP">Ready for Pickup</SelectItem>
+                  <SelectItem value="COMPLETED">Completed</SelectItem>
+                  <SelectItem value="NO_SHOW">No Show</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                placeholder="Add notes about this booking..."
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Confirmation Dialog */}
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Cancel Booking?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to cancel booking #{selectedBooking?.bookingReference}?
+              This action cannot be undone. The customer will be notified of the cancellation.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep Booking</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => selectedBooking && cancelMutation.mutate(selectedBooking.id)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {cancelMutation.isPending ? "Cancelling..." : "Yes, Cancel Booking"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AppFooter />
     </div>

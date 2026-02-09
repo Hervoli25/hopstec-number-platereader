@@ -3,7 +3,8 @@ import type { User } from "@shared/models/auth";
 
 // Extended user type that includes role from the API response
 export type AuthUser = User & {
-  role: "technician" | "manager" | "admin";
+  role: "technician" | "manager" | "admin" | "super_admin";
+  isSuperAdmin?: boolean;
   authType?: "credentials" | "replit";
 };
 

@@ -1412,6 +1412,8 @@ export async function registerRoutes(
     try {
       const { status, fromDate, toDate, search, limit, offset } = req.query;
 
+      console.log("Manager Bookings API: Request received with query:", req.query);
+
       const filters: any = {};
       if (status && typeof status === "string") filters.status = status;
       if (fromDate && typeof fromDate === "string") filters.fromDate = new Date(fromDate);
@@ -1421,10 +1423,35 @@ export async function registerRoutes(
       if (offset) filters.offset = parseInt(offset as string);
 
       const result = await getManagerBookings(filters);
-      res.json(result);
+
+      // If there's an error (like DB not connected), log it
+      if (result.error) {
+        console.warn("Manager Bookings API: Error -", result.technicalError || result.error);
+      }
+
+      // Only include technical error for super admin
+      const isSuperAdminUser = (req as any).user?.isSuperAdmin === true;
+      const response: any = {
+        bookings: result.bookings,
+        total: result.total,
+      };
+
+      if (result.error) {
+        response.error = result.error;
+        // Only super admin sees technical details
+        if (isSuperAdminUser && result.technicalError) {
+          response.technicalError = result.technicalError;
+        }
+      }
+
+      res.json(response);
     } catch (error) {
       console.error("Error fetching manager bookings:", error);
-      res.status(500).json({ message: "Failed to fetch bookings" });
+      const isSuperAdminUser = (req as any).user?.isSuperAdmin === true;
+      res.status(500).json({
+        message: "Failed to fetch bookings",
+        technicalError: isSuperAdminUser ? String(error) : undefined
+      });
     }
   });
 
