@@ -61,6 +61,9 @@ interface SystemStats {
   admins: number;
 }
 
+// Super admin email - protected from modification
+const SUPER_ADMIN_EMAIL = "hk@hopstecinnovation.com";
+
 const ROLE_CONFIG = {
   technician: { label: "Technician", icon: Wrench, color: "bg-blue-500" },
   manager: { label: "Manager", icon: Shield, color: "bg-purple-500" },
@@ -354,6 +357,7 @@ export default function AdminUsers() {
                 {filteredUsers.map((user) => {
                   const roleConfig = ROLE_CONFIG[user.role];
                   const RoleIcon = roleConfig.icon;
+                  const isSuperAdmin = user.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
                   return (
                     <motion.div
                       key={user.id}
@@ -369,6 +373,11 @@ export default function AdminUsers() {
                         <div>
                           <p className="font-medium">
                             {user.firstName} {user.lastName}
+                            {isSuperAdmin && (
+                              <Badge variant="default" className="ml-2 text-xs bg-gradient-to-r from-amber-500 to-orange-500">
+                                Super Admin
+                              </Badge>
+                            )}
                             {!user.isActive && (
                               <Badge variant="secondary" className="ml-2 text-xs">Inactive</Badge>
                             )}
@@ -385,58 +394,66 @@ export default function AdminUsers() {
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <Select
-                          value={user.role}
-                          onValueChange={(role) => updateRoleMutation.mutate({ userId: user.id, role })}
-                        >
-                          <SelectTrigger className="w-32" data-testid={`select-role-${user.id}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="technician">Technician</SelectItem>
-                            <SelectItem value="manager">Manager</SelectItem>
-                            <SelectItem value="admin">Admin</SelectItem>
-                          </SelectContent>
-                        </Select>
-
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant={user.isActive ? "outline" : "default"}
-                              size="sm"
-                              data-testid={`button-toggle-active-${user.id}`}
+                        {!isSuperAdmin ? (
+                          <>
+                            <Select
+                              value={user.role}
+                              onValueChange={(role) => updateRoleMutation.mutate({ userId: user.id, role })}
                             >
-                              {user.isActive ? (
-                                <><X className="mr-1 h-4 w-4" /> Disable</>
-                              ) : (
-                                <><Check className="mr-1 h-4 w-4" /> Enable</>
-                              )}
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                {user.isActive ? "Disable User" : "Enable User"}
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                {user.isActive
-                                  ? `This will prevent ${user.firstName} from logging in. They will be logged out immediately.`
-                                  : `This will allow ${user.firstName} to log in again.`}
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => toggleActiveMutation.mutate({
-                                  userId: user.id,
-                                  isActive: !user.isActive
-                                })}
-                              >
-                                {user.isActive ? "Disable" : "Enable"}
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                              <SelectTrigger className="w-32" data-testid={`select-role-${user.id}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="technician">Technician</SelectItem>
+                                <SelectItem value="manager">Manager</SelectItem>
+                                <SelectItem value="admin">Admin</SelectItem>
+                              </SelectContent>
+                            </Select>
+
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant={user.isActive ? "outline" : "default"}
+                                  size="sm"
+                                  data-testid={`button-toggle-active-${user.id}`}
+                                >
+                                  {user.isActive ? (
+                                    <><X className="mr-1 h-4 w-4" /> Disable</>
+                                  ) : (
+                                    <><Check className="mr-1 h-4 w-4" /> Enable</>
+                                  )}
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>
+                                    {user.isActive ? "Disable User" : "Enable User"}
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    {user.isActive
+                                      ? `This will prevent ${user.firstName} from logging in. They will be logged out immediately.`
+                                      : `This will allow ${user.firstName} to log in again.`}
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => toggleActiveMutation.mutate({
+                                      userId: user.id,
+                                      isActive: !user.isActive
+                                    })}
+                                  >
+                                    {user.isActive ? "Disable" : "Enable"}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </>
+                        ) : (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                            Protected Account
+                          </Badge>
+                        )}
                       </div>
                     </motion.div>
                   );

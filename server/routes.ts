@@ -5,7 +5,7 @@ import path from "path";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { normalizePlate, displayPlate } from "./lib/plate-utils";
-import { requireRole, ensureUserRole } from "./lib/roles";
+import { requireRole, ensureUserRole, isSuperAdmin } from "./lib/roles";
 import { savePhoto } from "./lib/photo-storage";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
@@ -1669,9 +1669,20 @@ export async function registerRoutes(
     try {
       const userId = req.params.userId as string;
       const { role } = req.body;
-      
+
       if (!["technician", "manager", "admin"].includes(role)) {
         return res.status(400).json({ message: "Invalid role" });
+      }
+
+      // Get the user first to check if they're the super admin
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Protect super admin from role changes
+      if (isSuperAdmin(targetUser.email)) {
+        return res.status(403).json({ message: "Cannot modify super admin account" });
       }
 
       const user = await storage.updateUser(userId, { role });
@@ -1691,9 +1702,20 @@ export async function registerRoutes(
     try {
       const userId = req.params.userId as string;
       const { isActive } = req.body;
-      
+
       if (typeof isActive !== "boolean") {
         return res.status(400).json({ message: "Invalid status" });
+      }
+
+      // Get the user first to check if they're the super admin
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Protect super admin from being disabled
+      if (isSuperAdmin(targetUser.email)) {
+        return res.status(403).json({ message: "Cannot disable super admin account" });
       }
 
       const user = await storage.updateUser(userId, { isActive });
