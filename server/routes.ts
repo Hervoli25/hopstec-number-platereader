@@ -24,7 +24,14 @@ import {
   findCRMSubscriptionByEmail,
   findCRMSubscriptionByPhone,
   getBookingWithMembership,
-  getUpcomingBookingsWithMemberships
+  getUpcomingBookingsWithMemberships,
+  getManagerBookings,
+  getBookingById,
+  updateBooking,
+  cancelBooking,
+  isTimeSlotAvailable,
+  getCRMServices,
+  getAvailableTimeSlots
 } from "./lib/booking-db";
 import {
   calculateParkingFee,
@@ -1393,6 +1400,191 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error finding subscription by phone:", error);
       res.status(500).json({ message: "Failed to find subscription" });
+    }
+  });
+
+  // =====================
+  // MANAGER BOOKING MANAGEMENT (Admin/Manager only)
+  // =====================
+
+  // Get all bookings with filters
+  app.get("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { status, fromDate, toDate, search, limit, offset } = req.query;
+
+      const filters: any = {};
+      if (status && typeof status === "string") filters.status = status;
+      if (fromDate && typeof fromDate === "string") filters.fromDate = new Date(fromDate);
+      if (toDate && typeof toDate === "string") filters.toDate = new Date(toDate);
+      if (search && typeof search === "string") filters.customerSearch = search;
+      if (limit) filters.limit = parseInt(limit as string);
+      if (offset) filters.offset = parseInt(offset as string);
+
+      const result = await getManagerBookings(filters);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching manager bookings:", error);
+      res.status(500).json({ message: "Failed to fetch bookings" });
+    }
+  });
+
+  // Get single booking details
+  app.get("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const booking = await getBookingById(id);
+
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+
+      res.json(booking);
+    } catch (error) {
+      console.error("Error fetching booking details:", error);
+      res.status(500).json({ message: "Failed to fetch booking" });
+    }
+  });
+
+  // Update booking (reschedule, change service, update notes)
+  app.patch("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const userId = (req as any).user?.claims?.sub;
+
+      const updateSchema = z.object({
+        bookingDate: z.string().optional(),
+        timeSlot: z.string().optional(),
+        serviceId: z.string().optional(),
+        notes: z.string().optional(),
+        status: z.enum(["CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "READY_FOR_PICKUP"]).optional(),
+      });
+
+      const result = updateSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid update data", errors: result.error.errors });
+      }
+
+      const updates = result.data;
+
+      // If rescheduling, check time slot availability
+      if (updates.bookingDate || updates.timeSlot) {
+        const booking = await getBookingById(id);
+        if (!booking) {
+          return res.status(404).json({ message: "Booking not found" });
+        }
+
+        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : booking.bookingDate;
+        const newTimeSlot = updates.timeSlot || booking.timeSlot;
+
+        const isAvailable = await isTimeSlotAvailable(newDate, newTimeSlot, id);
+        if (!isAvailable) {
+          return res.status(409).json({ message: "Time slot is not available" });
+        }
+      }
+
+      const updateData: any = {};
+      if (updates.bookingDate) updateData.bookingDate = new Date(updates.bookingDate);
+      if (updates.timeSlot) updateData.timeSlot = updates.timeSlot;
+      if (updates.serviceId) updateData.serviceId = updates.serviceId;
+      if (updates.notes !== undefined) updateData.notes = updates.notes;
+      if (updates.status) updateData.status = updates.status;
+
+      const success = await updateBooking(id, updateData);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to update booking" });
+      }
+
+      // Log the action
+      await storage.logEvent({
+        type: "booking_modified",
+        userId,
+        payloadJson: {
+          bookingId: id,
+          updates: updateData,
+          modifiedBy: userId,
+          modifiedAt: new Date().toISOString(),
+        },
+      });
+
+      // Fetch updated booking
+      const updatedBooking = await getBookingById(id);
+      res.json({ message: "Booking updated successfully", booking: updatedBooking });
+    } catch (error) {
+      console.error("Error updating booking:", error);
+      res.status(500).json({ message: "Failed to update booking" });
+    }
+  });
+
+  // Cancel booking
+  app.delete("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const userId = (req as any).user?.claims?.sub;
+
+      const booking = await getBookingById(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+
+      if (booking.status === "CANCELLED") {
+        return res.status(400).json({ message: "Booking is already cancelled" });
+      }
+
+      if (booking.status === "COMPLETED") {
+        return res.status(400).json({ message: "Cannot cancel a completed booking" });
+      }
+
+      const success = await cancelBooking(id);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to cancel booking" });
+      }
+
+      // Log the action
+      await storage.logEvent({
+        type: "booking_cancelled",
+        userId,
+        payloadJson: {
+          bookingId: id,
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          bookingDate: booking.bookingDate,
+          timeSlot: booking.timeSlot,
+          cancelledBy: userId,
+          cancelledAt: new Date().toISOString(),
+        },
+      });
+
+      res.json({ message: "Booking cancelled successfully" });
+    } catch (error) {
+      console.error("Error cancelling booking:", error);
+      res.status(500).json({ message: "Failed to cancel booking" });
+    }
+  });
+
+  // Get available services
+  app.get("/api/manager/services", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const services = await getCRMServices();
+      res.json(services);
+    } catch (error) {
+      console.error("Error fetching services:", error);
+      res.status(500).json({ message: "Failed to fetch services" });
+    }
+  });
+
+  // Get available time slots for a date
+  app.get("/api/manager/timeslots", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { date } = req.query;
+      if (!date || typeof date !== "string") {
+        return res.status(400).json({ message: "Date parameter required" });
+      }
+
+      const slots = await getAvailableTimeSlots(new Date(date));
+      res.json(slots);
+    } catch (error) {
+      console.error("Error fetching time slots:", error);
+      res.status(500).json({ message: "Failed to fetch time slots" });
     }
   });
 

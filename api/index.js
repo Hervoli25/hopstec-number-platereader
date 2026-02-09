@@ -53735,6 +53735,7 @@ async function getUpcomingBookings(limit = 20) {
     const result = await pool2.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -53760,6 +53761,7 @@ async function getUpcomingBookings(limit = 20) {
     `, [limit]);
     return result.rows.map((row) => ({
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -53787,6 +53789,7 @@ async function getTodayBookings() {
     const result = await pool2.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -53811,6 +53814,7 @@ async function getTodayBookings() {
     `);
     return result.rows.map((row) => ({
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -53839,6 +53843,7 @@ async function findBookingByPlate(licensePlate) {
     const result = await pool2.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -53867,6 +53872,7 @@ async function findBookingByPlate(licensePlate) {
     const row = result.rows[0];
     return {
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -54327,6 +54333,7 @@ async function getBookingWithMembership(bookingId) {
     const bookingResult = await pool2.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -54351,6 +54358,7 @@ async function getBookingWithMembership(bookingId) {
     const row = bookingResult.rows[0];
     const booking = {
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -54388,6 +54396,300 @@ async function getUpcomingBookingsWithMemberships(limit = 20) {
     })
   );
   return enrichedBookings;
+}
+async function getManagerBookings(filters) {
+  const pool2 = getBookingPool();
+  if (!pool2) return { bookings: [], total: 0 };
+  try {
+    let query = `
+      SELECT
+        b.id,
+        b."bookingReference",
+        b.status,
+        b."bookingDate",
+        b."timeSlot",
+        b.notes,
+        b."totalAmount",
+        b."updatedAt",
+        v."licensePlate",
+        v.make as "vehicleMake",
+        v.model as "vehicleModel",
+        v.color as "vehicleColor",
+        s.name as "serviceName",
+        s.description as "serviceDescription",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone"
+      FROM "Booking" b
+      JOIN "Vehicle" v ON b."vehicleId" = v.id
+      JOIN "Service" s ON b."serviceId" = s.id
+      JOIN "User" u ON b."userId" = u.id
+      WHERE 1=1
+    `;
+    const params = [];
+    let paramIndex = 1;
+    if (filters?.status) {
+      query += ` AND b.status = $${paramIndex++}`;
+      params.push(filters.status);
+    }
+    if (filters?.fromDate) {
+      query += ` AND b."bookingDate" >= $${paramIndex++}`;
+      params.push(filters.fromDate);
+    }
+    if (filters?.toDate) {
+      query += ` AND b."bookingDate" <= $${paramIndex++}`;
+      params.push(filters.toDate);
+    }
+    if (filters?.customerSearch) {
+      const searchTerm = `%${filters.customerSearch}%`;
+      query += ` AND (
+        b."bookingReference" ILIKE $${paramIndex} OR
+        u.name ILIKE $${paramIndex} OR
+        u.email ILIKE $${paramIndex} OR
+        u.phone ILIKE $${paramIndex} OR
+        v."licensePlate" ILIKE $${paramIndex}
+      )`;
+      params.push(searchTerm);
+      paramIndex++;
+    }
+    const countQuery = query.replace(/SELECT[\s\S]*?FROM/, "SELECT COUNT(*) as total FROM");
+    const countResult = await pool2.query(countQuery, params);
+    const total = parseInt(countResult.rows[0]?.total || "0", 10);
+    query += ` ORDER BY b."bookingDate" ASC, b."timeSlot" ASC`;
+    if (filters?.limit) {
+      query += ` LIMIT $${paramIndex++}`;
+      params.push(filters.limit);
+    }
+    if (filters?.offset) {
+      query += ` OFFSET $${paramIndex++}`;
+      params.push(filters.offset);
+    }
+    const result = await pool2.query(query, params);
+    const now = /* @__PURE__ */ new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1e3);
+    const bookings = result.rows.map((row) => {
+      const bookingDateTime = new Date(row.bookingDate);
+      const [hours, minutes] = (row.timeSlot || "00:00").split(":").map(Number);
+      bookingDateTime.setHours(hours || 0, minutes || 0, 0, 0);
+      const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
+      return {
+        id: row.id,
+        bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+        status: row.status,
+        bookingDate: new Date(row.bookingDate),
+        timeSlot: row.timeSlot,
+        licensePlate: row.licensePlate,
+        vehicleMake: row.vehicleMake,
+        vehicleModel: row.vehicleModel,
+        vehicleColor: row.vehicleColor,
+        serviceName: row.serviceName,
+        serviceDescription: row.serviceDescription,
+        customerName: row.customerName,
+        customerEmail: row.customerEmail,
+        customerPhone: row.customerPhone,
+        totalAmount: row.totalAmount,
+        notes: row.notes,
+        isWithinOneHour,
+        canCustomerModify: !isWithinOneHour && row.status === "CONFIRMED",
+        lastModifiedAt: row.updatedAt ? new Date(row.updatedAt) : void 0
+      };
+    });
+    return { bookings, total };
+  } catch (error) {
+    console.error("Error fetching manager bookings:", error);
+    return { bookings: [], total: 0 };
+  }
+}
+async function getBookingById(bookingId) {
+  const pool2 = getBookingPool();
+  if (!pool2) return null;
+  try {
+    const result = await pool2.query(`
+      SELECT
+        b.id,
+        b."bookingReference",
+        b.status,
+        b."bookingDate",
+        b."timeSlot",
+        b.notes,
+        b."totalAmount",
+        b."updatedAt",
+        b."createdAt",
+        v."licensePlate",
+        v.make as "vehicleMake",
+        v.model as "vehicleModel",
+        v.color as "vehicleColor",
+        s.id as "serviceId",
+        s.name as "serviceName",
+        s.description as "serviceDescription",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone"
+      FROM "Booking" b
+      JOIN "Vehicle" v ON b."vehicleId" = v.id
+      JOIN "Service" s ON b."serviceId" = s.id
+      JOIN "User" u ON b."userId" = u.id
+      WHERE b.id = $1
+    `, [bookingId]);
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    const now = /* @__PURE__ */ new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1e3);
+    const bookingDateTime = new Date(row.bookingDate);
+    const [hours, minutes] = (row.timeSlot || "00:00").split(":").map(Number);
+    bookingDateTime.setHours(hours || 0, minutes || 0, 0, 0);
+    const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
+    return {
+      id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      status: row.status,
+      bookingDate: new Date(row.bookingDate),
+      timeSlot: row.timeSlot,
+      licensePlate: row.licensePlate,
+      vehicleMake: row.vehicleMake,
+      vehicleModel: row.vehicleModel,
+      vehicleColor: row.vehicleColor,
+      serviceName: row.serviceName,
+      serviceDescription: row.serviceDescription,
+      customerName: row.customerName,
+      customerEmail: row.customerEmail,
+      customerPhone: row.customerPhone,
+      totalAmount: row.totalAmount,
+      notes: row.notes,
+      isWithinOneHour,
+      canCustomerModify: !isWithinOneHour && row.status === "CONFIRMED",
+      lastModifiedAt: row.updatedAt ? new Date(row.updatedAt) : void 0
+    };
+  } catch (error) {
+    console.error("Error fetching booking by ID:", error);
+    return null;
+  }
+}
+async function updateBooking(bookingId, updates) {
+  const pool2 = getBookingPool();
+  if (!pool2) return false;
+  try {
+    const setClauses = ['"updatedAt" = CURRENT_TIMESTAMP'];
+    const params = [];
+    let paramIndex = 1;
+    if (updates.bookingDate) {
+      setClauses.push(`"bookingDate" = $${paramIndex++}`);
+      params.push(updates.bookingDate);
+    }
+    if (updates.timeSlot) {
+      setClauses.push(`"timeSlot" = $${paramIndex++}`);
+      params.push(updates.timeSlot);
+    }
+    if (updates.serviceId) {
+      setClauses.push(`"serviceId" = $${paramIndex++}`);
+      params.push(updates.serviceId);
+    }
+    if (updates.notes !== void 0) {
+      setClauses.push(`notes = $${paramIndex++}`);
+      params.push(updates.notes);
+    }
+    if (updates.status) {
+      setClauses.push(`status = $${paramIndex++}`);
+      params.push(updates.status);
+      if (updates.status === "COMPLETED") {
+        setClauses.push(`"completedAt" = CURRENT_TIMESTAMP`);
+      }
+    }
+    params.push(bookingId);
+    await pool2.query(`
+      UPDATE "Booking"
+      SET ${setClauses.join(", ")}
+      WHERE id = $${paramIndex}
+    `, params);
+    return true;
+  } catch (error) {
+    console.error("Error updating booking:", error);
+    return false;
+  }
+}
+async function cancelBooking(bookingId) {
+  const pool2 = getBookingPool();
+  if (!pool2) return false;
+  try {
+    await pool2.query(`
+      UPDATE "Booking"
+      SET status = 'CANCELLED',
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `, [bookingId]);
+    return true;
+  } catch (error) {
+    console.error("Error cancelling booking:", error);
+    return false;
+  }
+}
+async function isTimeSlotAvailable(date2, timeSlot, excludeBookingId) {
+  const pool2 = getBookingPool();
+  if (!pool2) return false;
+  try {
+    let query = `
+      SELECT COUNT(*) as count
+      FROM "Booking"
+      WHERE DATE("bookingDate") = DATE($1)
+        AND "timeSlot" = $2
+        AND status NOT IN ('CANCELLED', 'NO_SHOW', 'COMPLETED')
+    `;
+    const params = [date2, timeSlot];
+    if (excludeBookingId) {
+      query += ` AND id != $3`;
+      params.push(excludeBookingId);
+    }
+    const result = await pool2.query(query, params);
+    const count = parseInt(result.rows[0]?.count || "0", 10);
+    return count === 0;
+  } catch (error) {
+    console.error("Error checking time slot availability:", error);
+    return false;
+  }
+}
+async function getCRMServices() {
+  const pool2 = getBookingPool();
+  if (!pool2) return [];
+  try {
+    const result = await pool2.query(`
+      SELECT id, name, description, price, "durationMinutes" as duration
+      FROM "Service"
+      WHERE "isActive" = true
+      ORDER BY name ASC
+    `);
+    return result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      price: row.price,
+      duration: row.duration
+    }));
+  } catch (error) {
+    console.error("Error fetching CRM services:", error);
+    return [];
+  }
+}
+async function getAvailableTimeSlots(date2) {
+  const pool2 = getBookingPool();
+  if (!pool2) return [];
+  try {
+    const result = await pool2.query(`
+      SELECT "timeSlot"
+      FROM "Booking"
+      WHERE DATE("bookingDate") = DATE($1)
+        AND status NOT IN ('CANCELLED', 'NO_SHOW', 'COMPLETED')
+    `, [date2]);
+    const bookedSlots = new Set(result.rows.map((r) => r.timeSlot));
+    const allSlots = [];
+    for (let hour = 8; hour < 18; hour++) {
+      allSlots.push(`${hour.toString().padStart(2, "0")}:00`);
+      allSlots.push(`${hour.toString().padStart(2, "0")}:30`);
+    }
+    return allSlots.filter((slot) => !bookedSlots.has(slot));
+  } catch (error) {
+    console.error("Error fetching available time slots:", error);
+    return [];
+  }
 }
 
 // server/lib/parking-utils.ts
@@ -55724,6 +56026,150 @@ async function registerRoutes(httpServer2, app2) {
     } catch (error) {
       console.error("Error finding subscription by phone:", error);
       res.status(500).json({ message: "Failed to find subscription" });
+    }
+  });
+  app2.get("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { status, fromDate, toDate, search, limit, offset } = req.query;
+      const filters = {};
+      if (status && typeof status === "string") filters.status = status;
+      if (fromDate && typeof fromDate === "string") filters.fromDate = new Date(fromDate);
+      if (toDate && typeof toDate === "string") filters.toDate = new Date(toDate);
+      if (search && typeof search === "string") filters.customerSearch = search;
+      if (limit) filters.limit = parseInt(limit);
+      if (offset) filters.offset = parseInt(offset);
+      const result = await getManagerBookings(filters);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching manager bookings:", error);
+      res.status(500).json({ message: "Failed to fetch bookings" });
+    }
+  });
+  app2.get("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const id = req.params.id;
+      const booking = await getBookingById(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+      res.json(booking);
+    } catch (error) {
+      console.error("Error fetching booking details:", error);
+      res.status(500).json({ message: "Failed to fetch booking" });
+    }
+  });
+  app2.patch("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const id = req.params.id;
+      const userId = req.user?.claims?.sub;
+      const updateSchema = z.object({
+        bookingDate: z.string().optional(),
+        timeSlot: z.string().optional(),
+        serviceId: z.string().optional(),
+        notes: z.string().optional(),
+        status: z.enum(["CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "READY_FOR_PICKUP"]).optional()
+      });
+      const result = updateSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid update data", errors: result.error.errors });
+      }
+      const updates = result.data;
+      if (updates.bookingDate || updates.timeSlot) {
+        const booking = await getBookingById(id);
+        if (!booking) {
+          return res.status(404).json({ message: "Booking not found" });
+        }
+        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : booking.bookingDate;
+        const newTimeSlot = updates.timeSlot || booking.timeSlot;
+        const isAvailable = await isTimeSlotAvailable(newDate, newTimeSlot, id);
+        if (!isAvailable) {
+          return res.status(409).json({ message: "Time slot is not available" });
+        }
+      }
+      const updateData = {};
+      if (updates.bookingDate) updateData.bookingDate = new Date(updates.bookingDate);
+      if (updates.timeSlot) updateData.timeSlot = updates.timeSlot;
+      if (updates.serviceId) updateData.serviceId = updates.serviceId;
+      if (updates.notes !== void 0) updateData.notes = updates.notes;
+      if (updates.status) updateData.status = updates.status;
+      const success = await updateBooking(id, updateData);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to update booking" });
+      }
+      await storage.logEvent({
+        type: "booking_modified",
+        userId,
+        payloadJson: {
+          bookingId: id,
+          updates: updateData,
+          modifiedBy: userId,
+          modifiedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      });
+      const updatedBooking = await getBookingById(id);
+      res.json({ message: "Booking updated successfully", booking: updatedBooking });
+    } catch (error) {
+      console.error("Error updating booking:", error);
+      res.status(500).json({ message: "Failed to update booking" });
+    }
+  });
+  app2.delete("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const id = req.params.id;
+      const userId = req.user?.claims?.sub;
+      const booking = await getBookingById(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+      if (booking.status === "CANCELLED") {
+        return res.status(400).json({ message: "Booking is already cancelled" });
+      }
+      if (booking.status === "COMPLETED") {
+        return res.status(400).json({ message: "Cannot cancel a completed booking" });
+      }
+      const success = await cancelBooking(id);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to cancel booking" });
+      }
+      await storage.logEvent({
+        type: "booking_cancelled",
+        userId,
+        payloadJson: {
+          bookingId: id,
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          bookingDate: booking.bookingDate,
+          timeSlot: booking.timeSlot,
+          cancelledBy: userId,
+          cancelledAt: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      });
+      res.json({ message: "Booking cancelled successfully" });
+    } catch (error) {
+      console.error("Error cancelling booking:", error);
+      res.status(500).json({ message: "Failed to cancel booking" });
+    }
+  });
+  app2.get("/api/manager/services", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const services = await getCRMServices();
+      res.json(services);
+    } catch (error) {
+      console.error("Error fetching services:", error);
+      res.status(500).json({ message: "Failed to fetch services" });
+    }
+  });
+  app2.get("/api/manager/timeslots", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { date: date2 } = req.query;
+      if (!date2 || typeof date2 !== "string") {
+        return res.status(400).json({ message: "Date parameter required" });
+      }
+      const slots = await getAvailableTimeSlots(new Date(date2));
+      res.json(slots);
+    } catch (error) {
+      console.error("Error fetching time slots:", error);
+      res.status(500).json({ message: "Failed to fetch time slots" });
     }
   });
   app2.get("/api/admin/users", isAuthenticated, requireRole("admin"), async (req, res) => {

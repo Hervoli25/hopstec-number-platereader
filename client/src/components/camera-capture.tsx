@@ -49,16 +49,33 @@ export function CameraCapture({ onCapture, onCancel }: CameraCaptureProps) {
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
-    
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
+
+    // Resize image to max 1280px width/height to reduce file size
+    const maxDimension = 1280;
+    let width = video.videoWidth;
+    let height = video.videoHeight;
+
+    if (width > maxDimension || height > maxDimension) {
+      if (width > height) {
+        height = Math.round((height * maxDimension) / width);
+        width = maxDimension;
+      } else {
+        width = Math.round((width * maxDimension) / height);
+        height = maxDimension;
+      }
+    }
+
+    canvas.width = width;
+    canvas.height = height;
+
     const ctx = canvas.getContext("2d");
     if (ctx) {
-      ctx.drawImage(video, 0, 0);
-      const imageData = canvas.toDataURL("image/jpeg", 0.9);
+      ctx.drawImage(video, 0, 0, width, height);
+      // Use 0.7 quality for better compression while maintaining visual quality
+      const imageData = canvas.toDataURL("image/jpeg", 0.7);
       setCapturedImage(imageData);
       stopCamera();
     }

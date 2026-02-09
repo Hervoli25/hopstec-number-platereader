@@ -70,6 +70,7 @@ export interface CRMSubscription {
 // Types for booking data
 export interface CRMBooking {
   id: string;
+  bookingReference: string; // The booking reference/confirmation code from CRM
   status: "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW" | "READY_FOR_PICKUP";
   bookingDate: Date;
   timeSlot: string;
@@ -95,6 +96,7 @@ export async function getUpcomingBookings(limit: number = 20): Promise<CRMBookin
     const result = await pool.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -121,6 +123,7 @@ export async function getUpcomingBookings(limit: number = 20): Promise<CRMBookin
 
     return result.rows.map(row => ({
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -151,6 +154,7 @@ export async function getTodayBookings(): Promise<CRMBooking[]> {
     const result = await pool.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -176,6 +180,7 @@ export async function getTodayBookings(): Promise<CRMBooking[]> {
 
     return result.rows.map(row => ({
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -209,6 +214,7 @@ export async function findBookingByPlate(licensePlate: string): Promise<CRMBooki
     const result = await pool.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -239,6 +245,7 @@ export async function findBookingByPlate(licensePlate: string): Promise<CRMBooki
     const row = result.rows[0];
     return {
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -793,6 +800,7 @@ export async function getBookingWithMembership(bookingId: string): Promise<CRMBo
     const bookingResult = await pool.query(`
       SELECT
         b.id,
+        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -819,6 +827,7 @@ export async function getBookingWithMembership(bookingId: string): Promise<CRMBo
     const row = bookingResult.rows[0];
     const booking: CRMBooking = {
       id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -864,4 +873,396 @@ export async function getUpcomingBookingsWithMemberships(limit = 20): Promise<(C
   );
 
   return enrichedBookings;
+}
+
+// ==========================================
+// Manager Booking Management Functions
+// ==========================================
+
+export interface BookingFilters {
+  status?: string;
+  fromDate?: Date;
+  toDate?: Date;
+  customerSearch?: string; // Search by name, email, phone, or plate
+  limit?: number;
+  offset?: number;
+}
+
+// Extended booking with modification tracking
+export interface CRMBookingExtended extends CRMBooking {
+  isWithinOneHour: boolean;
+  canCustomerModify: boolean;
+  lastModifiedBy?: string;
+  lastModifiedAt?: Date;
+}
+
+// Get all bookings with filters (for manager view)
+export async function getManagerBookings(filters?: BookingFilters): Promise<{ bookings: CRMBookingExtended[]; total: number }> {
+  const pool = getBookingPool();
+  if (!pool) return { bookings: [], total: 0 };
+
+  try {
+    let query = `
+      SELECT
+        b.id,
+        b."bookingReference",
+        b.status,
+        b."bookingDate",
+        b."timeSlot",
+        b.notes,
+        b."totalAmount",
+        b."updatedAt",
+        v."licensePlate",
+        v.make as "vehicleMake",
+        v.model as "vehicleModel",
+        v.color as "vehicleColor",
+        s.name as "serviceName",
+        s.description as "serviceDescription",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone"
+      FROM "Booking" b
+      JOIN "Vehicle" v ON b."vehicleId" = v.id
+      JOIN "Service" s ON b."serviceId" = s.id
+      JOIN "User" u ON b."userId" = u.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (filters?.status) {
+      query += ` AND b.status = $${paramIndex++}`;
+      params.push(filters.status);
+    }
+
+    if (filters?.fromDate) {
+      query += ` AND b."bookingDate" >= $${paramIndex++}`;
+      params.push(filters.fromDate);
+    }
+
+    if (filters?.toDate) {
+      query += ` AND b."bookingDate" <= $${paramIndex++}`;
+      params.push(filters.toDate);
+    }
+
+    if (filters?.customerSearch) {
+      const searchTerm = `%${filters.customerSearch}%`;
+      query += ` AND (
+        b."bookingReference" ILIKE $${paramIndex} OR
+        u.name ILIKE $${paramIndex} OR
+        u.email ILIKE $${paramIndex} OR
+        u.phone ILIKE $${paramIndex} OR
+        v."licensePlate" ILIKE $${paramIndex}
+      )`;
+      params.push(searchTerm);
+      paramIndex++;
+    }
+
+    // Count total for pagination
+    const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
+    const countResult = await pool.query(countQuery, params);
+    const total = parseInt(countResult.rows[0]?.total || '0', 10);
+
+    // Add ordering and pagination
+    query += ` ORDER BY b."bookingDate" ASC, b."timeSlot" ASC`;
+
+    if (filters?.limit) {
+      query += ` LIMIT $${paramIndex++}`;
+      params.push(filters.limit);
+    }
+
+    if (filters?.offset) {
+      query += ` OFFSET $${paramIndex++}`;
+      params.push(filters.offset);
+    }
+
+    const result = await pool.query(query, params);
+
+    const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+
+    const bookings: CRMBookingExtended[] = result.rows.map(row => {
+      // Parse booking date and time
+      const bookingDateTime = new Date(row.bookingDate);
+      const [hours, minutes] = (row.timeSlot || "00:00").split(":").map(Number);
+      bookingDateTime.setHours(hours || 0, minutes || 0, 0, 0);
+
+      const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
+
+      return {
+        id: row.id,
+        bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+        status: row.status,
+        bookingDate: new Date(row.bookingDate),
+        timeSlot: row.timeSlot,
+        licensePlate: row.licensePlate,
+        vehicleMake: row.vehicleMake,
+        vehicleModel: row.vehicleModel,
+        vehicleColor: row.vehicleColor,
+        serviceName: row.serviceName,
+        serviceDescription: row.serviceDescription,
+        customerName: row.customerName,
+        customerEmail: row.customerEmail,
+        customerPhone: row.customerPhone,
+        totalAmount: row.totalAmount,
+        notes: row.notes,
+        isWithinOneHour,
+        canCustomerModify: !isWithinOneHour && row.status === 'CONFIRMED',
+        lastModifiedAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
+      };
+    });
+
+    return { bookings, total };
+  } catch (error) {
+    console.error("Error fetching manager bookings:", error);
+    return { bookings: [], total: 0 };
+  }
+}
+
+// Get single booking details
+export async function getBookingById(bookingId: string): Promise<CRMBookingExtended | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        b.id,
+        b."bookingReference",
+        b.status,
+        b."bookingDate",
+        b."timeSlot",
+        b.notes,
+        b."totalAmount",
+        b."updatedAt",
+        b."createdAt",
+        v."licensePlate",
+        v.make as "vehicleMake",
+        v.model as "vehicleModel",
+        v.color as "vehicleColor",
+        s.id as "serviceId",
+        s.name as "serviceName",
+        s.description as "serviceDescription",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone"
+      FROM "Booking" b
+      JOIN "Vehicle" v ON b."vehicleId" = v.id
+      JOIN "Service" s ON b."serviceId" = s.id
+      JOIN "User" u ON b."userId" = u.id
+      WHERE b.id = $1
+    `, [bookingId]);
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+
+    const bookingDateTime = new Date(row.bookingDate);
+    const [hours, minutes] = (row.timeSlot || "00:00").split(":").map(Number);
+    bookingDateTime.setHours(hours || 0, minutes || 0, 0, 0);
+
+    const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
+
+    return {
+      id: row.id,
+      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      status: row.status,
+      bookingDate: new Date(row.bookingDate),
+      timeSlot: row.timeSlot,
+      licensePlate: row.licensePlate,
+      vehicleMake: row.vehicleMake,
+      vehicleModel: row.vehicleModel,
+      vehicleColor: row.vehicleColor,
+      serviceName: row.serviceName,
+      serviceDescription: row.serviceDescription,
+      customerName: row.customerName,
+      customerEmail: row.customerEmail,
+      customerPhone: row.customerPhone,
+      totalAmount: row.totalAmount,
+      notes: row.notes,
+      isWithinOneHour,
+      canCustomerModify: !isWithinOneHour && row.status === 'CONFIRMED',
+      lastModifiedAt: row.updatedAt ? new Date(row.updatedAt) : undefined,
+    };
+  } catch (error) {
+    console.error("Error fetching booking by ID:", error);
+    return null;
+  }
+}
+
+// Update booking (reschedule, change service, update notes)
+export async function updateBooking(
+  bookingId: string,
+  updates: {
+    bookingDate?: Date;
+    timeSlot?: string;
+    serviceId?: string;
+    notes?: string;
+    status?: string;
+  }
+): Promise<boolean> {
+  const pool = getBookingPool();
+  if (!pool) return false;
+
+  try {
+    const setClauses: string[] = ['"updatedAt" = CURRENT_TIMESTAMP'];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.bookingDate) {
+      setClauses.push(`"bookingDate" = $${paramIndex++}`);
+      params.push(updates.bookingDate);
+    }
+
+    if (updates.timeSlot) {
+      setClauses.push(`"timeSlot" = $${paramIndex++}`);
+      params.push(updates.timeSlot);
+    }
+
+    if (updates.serviceId) {
+      setClauses.push(`"serviceId" = $${paramIndex++}`);
+      params.push(updates.serviceId);
+    }
+
+    if (updates.notes !== undefined) {
+      setClauses.push(`notes = $${paramIndex++}`);
+      params.push(updates.notes);
+    }
+
+    if (updates.status) {
+      setClauses.push(`status = $${paramIndex++}`);
+      params.push(updates.status);
+
+      if (updates.status === 'COMPLETED') {
+        setClauses.push(`"completedAt" = CURRENT_TIMESTAMP`);
+      }
+    }
+
+    params.push(bookingId);
+
+    await pool.query(`
+      UPDATE "Booking"
+      SET ${setClauses.join(', ')}
+      WHERE id = $${paramIndex}
+    `, params);
+
+    return true;
+  } catch (error) {
+    console.error("Error updating booking:", error);
+    return false;
+  }
+}
+
+// Cancel booking
+export async function cancelBooking(bookingId: string): Promise<boolean> {
+  const pool = getBookingPool();
+  if (!pool) return false;
+
+  try {
+    await pool.query(`
+      UPDATE "Booking"
+      SET status = 'CANCELLED',
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `, [bookingId]);
+
+    return true;
+  } catch (error) {
+    console.error("Error cancelling booking:", error);
+    return false;
+  }
+}
+
+// Check if time slot is available (for rescheduling)
+export async function isTimeSlotAvailable(
+  date: Date,
+  timeSlot: string,
+  excludeBookingId?: string
+): Promise<boolean> {
+  const pool = getBookingPool();
+  if (!pool) return false;
+
+  try {
+    let query = `
+      SELECT COUNT(*) as count
+      FROM "Booking"
+      WHERE DATE("bookingDate") = DATE($1)
+        AND "timeSlot" = $2
+        AND status NOT IN ('CANCELLED', 'NO_SHOW', 'COMPLETED')
+    `;
+    const params: any[] = [date, timeSlot];
+
+    if (excludeBookingId) {
+      query += ` AND id != $3`;
+      params.push(excludeBookingId);
+    }
+
+    const result = await pool.query(query, params);
+    const count = parseInt(result.rows[0]?.count || '0', 10);
+
+    // Assuming max 1 booking per slot (adjust based on business rules)
+    return count === 0;
+  } catch (error) {
+    console.error("Error checking time slot availability:", error);
+    return false;
+  }
+}
+
+// Get available services from CRM
+export async function getCRMServices(): Promise<{ id: string; name: string; description: string; price: number; duration: number }[]> {
+  const pool = getBookingPool();
+  if (!pool) return [];
+
+  try {
+    const result = await pool.query(`
+      SELECT id, name, description, price, "durationMinutes" as duration
+      FROM "Service"
+      WHERE "isActive" = true
+      ORDER BY name ASC
+    `);
+
+    return result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      price: row.price,
+      duration: row.duration,
+    }));
+  } catch (error) {
+    console.error("Error fetching CRM services:", error);
+    return [];
+  }
+}
+
+// Get available time slots for a date
+export async function getAvailableTimeSlots(date: Date): Promise<string[]> {
+  const pool = getBookingPool();
+  if (!pool) return [];
+
+  try {
+    // Get all booked slots for the date
+    const result = await pool.query(`
+      SELECT "timeSlot"
+      FROM "Booking"
+      WHERE DATE("bookingDate") = DATE($1)
+        AND status NOT IN ('CANCELLED', 'NO_SHOW', 'COMPLETED')
+    `, [date]);
+
+    const bookedSlots = new Set(result.rows.map(r => r.timeSlot));
+
+    // Generate all possible time slots (8 AM to 6 PM in 30-min intervals)
+    const allSlots: string[] = [];
+    for (let hour = 8; hour < 18; hour++) {
+      allSlots.push(`${hour.toString().padStart(2, '0')}:00`);
+      allSlots.push(`${hour.toString().padStart(2, '0')}:30`);
+    }
+
+    // Filter out booked slots
+    return allSlots.filter(slot => !bookedSlots.has(slot));
+  } catch (error) {
+    console.error("Error fetching available time slots:", error);
+    return [];
+  }
 }
