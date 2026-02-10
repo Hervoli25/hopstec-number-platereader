@@ -1106,7 +1106,22 @@ export async function registerRoutes(
         type: type as string,
         limit: limit ? parseInt(limit as string) : 100,
       });
-      res.json(events);
+
+      // Enrich events with user display names
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+      const enriched = events.map(event => {
+        const user = event.userId ? userMap.get(event.userId) : null;
+        return {
+          ...event,
+          userDisplayName: user
+            ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
+            : null,
+        };
+      });
+
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching events:", error);
       res.status(500).json({ message: "Failed to fetch events" });

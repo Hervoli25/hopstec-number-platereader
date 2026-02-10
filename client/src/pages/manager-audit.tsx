@@ -51,7 +51,9 @@ export default function ManagerAudit() {
   const [searchPlate, setSearchPlate] = useState("");
   const [eventType, setEventType] = useState<string>("all");
 
-  const { data: events, isLoading } = useQuery<EventLog[]>({
+  type EnrichedEvent = EventLog & { userDisplayName?: string | null };
+
+  const { data: events, isLoading } = useQuery<EnrichedEvent[]>({
     queryKey: ["/api/events", searchPlate, eventType],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -192,8 +194,10 @@ export default function ManagerAudit() {
                       <div className="flex items-center gap-2 flex-wrap">
                         {event.plateDisplay ? (
                           <Badge variant="outline" className="font-mono">{event.plateDisplay}</Badge>
+                        ) : event.userDisplayName ? (
+                          <Badge variant="outline" className="text-xs">{event.userDisplayName}</Badge>
                         ) : event.userId ? (
-                          <Badge variant="outline" className="text-xs font-mono">user:{event.userId.slice(0, 8)}</Badge>
+                          <Badge variant="outline" className="text-xs font-mono">{event.userId.slice(0, 8)}</Badge>
                         ) : null}
                         <span className="text-sm font-medium capitalize">
                           {event.type.replace(/_/g, " ")}
