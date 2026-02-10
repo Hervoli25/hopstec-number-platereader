@@ -10,10 +10,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AppFooter } from "@/components/app-footer";
 import { useAuth } from "@/hooks/use-auth";
-import { 
-  BarChart3, ClipboardList, LogOut, 
-  Activity, Search, Filter, Car, ParkingSquare, Camera
+import {
+  BarChart3, ClipboardList, LogOut,
+  Activity, Search, Filter, Car, ParkingSquare, Camera,
+  CalendarDays, Settings, Timer, Clock, UserX, BellRing,
 } from "lucide-react";
 import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
 import type { EventLog } from "@shared/schema";
@@ -25,6 +27,10 @@ const EVENT_ICONS: Record<string, typeof Car> = {
   "wash_photo": Camera,
   "parking_entry": ParkingSquare,
   "parking_exit": ParkingSquare,
+  "clock_in": Clock,
+  "clock_out": Clock,
+  "force_clock_out": UserX,
+  "staff_alert": BellRing,
 };
 
 const EVENT_COLORS: Record<string, string> = {
@@ -33,6 +39,10 @@ const EVENT_COLORS: Record<string, string> = {
   "wash_photo": "bg-purple-500",
   "parking_entry": "bg-green-500",
   "parking_exit": "bg-orange-500",
+  "clock_in": "bg-emerald-500",
+  "clock_out": "bg-slate-500",
+  "force_clock_out": "bg-red-500",
+  "staff_alert": "bg-amber-500",
 };
 
 export default function ManagerAudit() {
@@ -42,7 +52,15 @@ export default function ManagerAudit() {
   const [eventType, setEventType] = useState<string>("all");
 
   const { data: events, isLoading } = useQuery<EventLog[]>({
-    queryKey: ["/api/events", { plate: searchPlate, type: eventType !== "all" ? eventType : undefined }],
+    queryKey: ["/api/events", searchPlate, eventType],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchPlate) params.set("plate", searchPlate);
+      if (eventType !== "all") params.set("type", eventType);
+      const res = await fetch(`/api/events?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load audit log");
+      return res.json();
+    },
   });
 
   const initials = user ? 
@@ -51,8 +69,11 @@ export default function ManagerAudit() {
 
   const navItems = [
     { href: "/manager", label: "Live Queue", icon: Activity },
+    { href: "/manager/bookings", label: "Bookings", icon: CalendarDays },
+    { href: "/manager/roster", label: "Roster", icon: Timer },
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
+    { href: "/manager/settings", label: "Settings", icon: Settings },
   ];
 
   return (
@@ -133,6 +154,10 @@ export default function ManagerAudit() {
                   <SelectItem value="wash_status_update">Status Update</SelectItem>
                   <SelectItem value="parking_entry">Parking Entry</SelectItem>
                   <SelectItem value="parking_exit">Parking Exit</SelectItem>
+                  <SelectItem value="clock_in">Clock In</SelectItem>
+                  <SelectItem value="clock_out">Clock Out</SelectItem>
+                  <SelectItem value="force_clock_out">Force Clock-Out</SelectItem>
+                  <SelectItem value="staff_alert">Staff Alert</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -165,10 +190,12 @@ export default function ManagerAudit() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="font-mono">
-                          {event.plateDisplay || "N/A"}
-                        </Badge>
-                        <span className="text-sm text-muted-foreground">
+                        {event.plateDisplay ? (
+                          <Badge variant="outline" className="font-mono">{event.plateDisplay}</Badge>
+                        ) : event.userId ? (
+                          <Badge variant="outline" className="text-xs font-mono">user:{event.userId.slice(0, 8)}</Badge>
+                        ) : null}
+                        <span className="text-sm font-medium capitalize">
                           {event.type.replace(/_/g, " ")}
                         </span>
                       </div>
@@ -191,6 +218,8 @@ export default function ManagerAudit() {
           </Card>
         </motion.div>
       </main>
+
+      <AppFooter />
     </div>
   );
 }

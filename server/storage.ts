@@ -342,9 +342,9 @@ export class DatabaseStorage implements IStorage {
     return job;
   }
 
-  async getWashJobs(filters?: { status?: string; technicianId?: string }): Promise<WashJob[]> {
+  async getWashJobs(filters?: { status?: string; technicianId?: string; fromDate?: Date }): Promise<WashJob[]> {
     let query = db.select().from(washJobs);
-    
+
     const conditions = [];
     if (filters?.status) {
       conditions.push(eq(washJobs.status, filters.status as any));
@@ -352,11 +352,14 @@ export class DatabaseStorage implements IStorage {
     if (filters?.technicianId) {
       conditions.push(eq(washJobs.technicianId, filters.technicianId));
     }
-    
+    if (filters?.fromDate) {
+      conditions.push(gte(washJobs.createdAt, filters.fromDate));
+    }
+
     if (conditions.length > 0) {
       query = query.where(and(...conditions)) as any;
     }
-    
+
     return query.orderBy(desc(washJobs.createdAt));
   }
 

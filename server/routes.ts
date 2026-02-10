@@ -1127,15 +1127,19 @@ export async function registerRoutes(
   // Live queue stats
   app.get("/api/queue/stats", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
     try {
-      const activeJobs = await storage.getWashJobs({ status: undefined });
+      // Only show today's jobs in the live queue
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const todayJobs = await storage.getWashJobs({ fromDate: todayStart });
       const openParking = await storage.getParkingSessions({ open: true });
       const analytics = await storage.getAnalyticsSummary();
-      
+
       res.json({
-        activeWashes: activeJobs.filter(j => j.status !== "complete").length,
+        activeWashes: todayJobs.filter(j => j.status !== "complete").length,
         parkedVehicles: openParking.length,
         todayWashes: analytics.todayWashes,
-        activeJobs: activeJobs.filter(j => j.status !== "complete"),
+        activeJobs: todayJobs.filter(j => j.status !== "complete"),
       });
     } catch (error) {
       console.error("Error fetching queue stats:", error);
