@@ -45,7 +45,7 @@ import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
   TrendingUp, Calendar, Target, ArrowRight, Zap, Settings,
-  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle
+  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
@@ -263,6 +263,7 @@ export default function ManagerDashboard() {
   const navItems = [
     { href: "/manager", label: "Live Queue", icon: Activity },
     { href: "/manager/bookings", label: "Bookings", icon: CalendarDays },
+    { href: "/manager/roster", label: "Roster", icon: Timer },
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
     { href: "/manager/settings", label: "Settings", icon: Settings },
@@ -309,6 +310,7 @@ export default function ManagerDashboard() {
               return (
                 <Link key={item.href} href={item.href}>
                   <button
+                    type="button"
                     className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                       isActive
                         ? "border-primary text-primary"

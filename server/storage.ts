@@ -5,7 +5,7 @@ import {
   customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules,
   parkingSettings, parkingZones, frequentParkers, parkingReservations,
   businessSettings, servicePackages, customerMemberships, parkingValidations,
-  customerNotifications, notificationTemplates,
+  customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -19,6 +19,8 @@ import {
   type ParkingValidation, type InsertParkingValidation,
   type CustomerNotification, type InsertCustomerNotification,
   type NotificationTemplate, type InsertNotificationTemplate,
+  type TechnicianTimeLog, type InsertTechnicianTimeLog,
+  type StaffAlert, type InsertStaffAlert,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -1121,6 +1123,130 @@ export class DatabaseStorage implements IStorage {
         gte(customerMemberships.expiryDate, new Date())
       ));
     return membership;
+  }
+
+  // ==========================================
+  // Technician Time Logs
+  // ==========================================
+
+  async clockIn(technicianId: string, notes?: string): Promise<TechnicianTimeLog> {
+    const [log] = await db.insert(technicianTimeLogs).values({
+      technicianId,
+      clockInAt: new Date(),
+      notes: notes || null,
+      breakLogs: [],
+    }).returning();
+    return log;
+  }
+
+  async clockOut(logId: string): Promise<TechnicianTimeLog | undefined> {
+    const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+    if (!existing || existing.clockOutAt) return undefined;
+
+    const clockOut = new Date();
+    const totalMs = clockOut.getTime() - existing.clockInAt.getTime();
+    // Subtract completed break times
+    const breakMinutes = (existing.breakLogs || []).reduce((acc: number, b: any) => {
+      return acc + (b.durationMinutes || 0);
+    }, 0);
+    const totalMinutes = Math.floor(totalMs / 60000) - breakMinutes;
+
+    const [updated] = await db.update(technicianTimeLogs)
+      .set({ clockOutAt: clockOut, totalMinutes: Math.max(0, totalMinutes), updatedAt: new Date() })
+      .where(eq(technicianTimeLogs.id, logId))
+      .returning();
+    return updated;
+  }
+
+  async getActiveTimeLog(technicianId: string): Promise<TechnicianTimeLog | undefined> {
+    const [log] = await db.select().from(technicianTimeLogs)
+      .where(and(eq(technicianTimeLogs.technicianId, technicianId), isNull(technicianTimeLogs.clockOutAt)))
+      .orderBy(desc(technicianTimeLogs.clockInAt))
+      .limit(1);
+    return log;
+  }
+
+  async getTimeLogs(filters?: { technicianId?: string; fromDate?: Date; toDate?: Date; limit?: number }): Promise<TechnicianTimeLog[]> {
+    const conditions: any[] = [];
+    if (filters?.technicianId) conditions.push(eq(technicianTimeLogs.technicianId, filters.technicianId));
+    if (filters?.fromDate) conditions.push(gte(technicianTimeLogs.clockInAt, filters.fromDate));
+    if (filters?.toDate) conditions.push(lte(technicianTimeLogs.clockInAt, filters.toDate));
+
+    let query = db.select().from(technicianTimeLogs);
+    if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+    query = query.orderBy(desc(technicianTimeLogs.clockInAt)) as any;
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    return query;
+  }
+
+  async addBreakLog(logId: string, breakEntry: { type: "lunch" | "short" | "absent"; notes?: string }): Promise<TechnicianTimeLog | undefined> {
+    const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+    if (!existing) return undefined;
+
+    const updatedBreaks = [...(existing.breakLogs || []), { ...breakEntry, startAt: new Date().toISOString() }];
+    const [updated] = await db.update(technicianTimeLogs)
+      .set({ breakLogs: updatedBreaks, updatedAt: new Date() })
+      .where(eq(technicianTimeLogs.id, logId))
+      .returning();
+    return updated;
+  }
+
+  async endBreakLog(logId: string): Promise<TechnicianTimeLog | undefined> {
+    const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+    if (!existing) return undefined;
+
+    const breaks = [...(existing.breakLogs || [])];
+    const lastBreak = breaks[breaks.length - 1];
+    if (!lastBreak || lastBreak.endAt) return existing; // No active break
+
+    const endAt = new Date().toISOString();
+    const durationMinutes = Math.floor((new Date(endAt).getTime() - new Date(lastBreak.startAt).getTime()) / 60000);
+    breaks[breaks.length - 1] = { ...lastBreak, endAt, durationMinutes };
+
+    const [updated] = await db.update(technicianTimeLogs)
+      .set({ breakLogs: breaks, updatedAt: new Date() })
+      .where(eq(technicianTimeLogs.id, logId))
+      .returning();
+    return updated;
+  }
+
+  // ==========================================
+  // Staff Alerts (running late, absent, etc.)
+  // ==========================================
+
+  async createStaffAlert(data: {
+    technicianId: string;
+    type: "running_late" | "absent" | "emergency" | "other";
+    message?: string;
+    estimatedArrival?: string;
+  }): Promise<StaffAlert> {
+    const [alert] = await db.insert(staffAlerts).values({
+      technicianId: data.technicianId,
+      type: data.type,
+      message: data.message || null,
+      estimatedArrival: data.estimatedArrival || null,
+      acknowledged: false,
+    }).returning();
+    return alert;
+  }
+
+  async getStaffAlerts(filters?: { unacknowledgedOnly?: boolean; technicianId?: string }): Promise<StaffAlert[]> {
+    const conditions: any[] = [];
+    if (filters?.unacknowledgedOnly) conditions.push(eq(staffAlerts.acknowledged, false));
+    if (filters?.technicianId) conditions.push(eq(staffAlerts.technicianId, filters.technicianId));
+
+    let query: any = db.select().from(staffAlerts);
+    if (conditions.length > 0) query = query.where(and(...conditions));
+    query = query.orderBy(desc(staffAlerts.createdAt));
+    return await query;
+  }
+
+  async acknowledgeStaffAlert(alertId: string, acknowledgedBy: string): Promise<StaffAlert | undefined> {
+    const [updated] = await db.update(staffAlerts)
+      .set({ acknowledged: true, acknowledgedBy, acknowledgedAt: new Date() })
+      .where(eq(staffAlerts.id, alertId))
+      .returning();
+    return updated;
   }
 
   async findMembershipByEmail(email: string): Promise<CustomerMembership | undefined> {

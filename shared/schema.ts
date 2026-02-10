@@ -349,6 +349,38 @@ export const notificationTemplates = pgTable("notification_templates", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Technician Time Logs (clock in/out, breaks, absences)
+export const technicianTimeLogs = pgTable("technician_time_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  technicianId: varchar("technician_id").notNull(),
+  clockInAt: timestamp("clock_in_at").notNull(),
+  clockOutAt: timestamp("clock_out_at"),
+  totalMinutes: integer("total_minutes"), // calculated on clock-out
+  breakLogs: jsonb("break_logs").$type<Array<{
+    type: "lunch" | "short" | "absent";
+    startAt: string;
+    endAt?: string;
+    durationMinutes?: number;
+    notes?: string;
+  }>>().default([]),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Staff Alerts (running late, absent, etc. sent by technicians to management)
+export const staffAlerts = pgTable("staff_alerts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  technicianId: varchar("technician_id").notNull(),
+  type: varchar("type").notNull().$type<"running_late" | "absent" | "emergency" | "other">(),
+  message: text("message"),
+  estimatedArrival: varchar("estimated_arrival"), // e.g. "10:30"
+  acknowledged: boolean("acknowledged").default(false),
+  acknowledgedBy: varchar("acknowledged_by"),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -371,6 +403,8 @@ export const insertCustomerMembershipSchema = createInsertSchema(customerMembers
 export const insertParkingValidationSchema = createInsertSchema(parkingValidations).omit({ id: true, createdAt: true });
 export const insertCustomerNotificationSchema = createInsertSchema(customerNotifications).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLogs).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -435,6 +469,12 @@ export type InsertCustomerNotification = z.infer<typeof insertCustomerNotificati
 
 export type NotificationTemplate = typeof notificationTemplates.$inferSelect;
 export type InsertNotificationTemplate = z.infer<typeof insertNotificationTemplateSchema>;
+
+export type TechnicianTimeLog = typeof technicianTimeLogs.$inferSelect;
+export type InsertTechnicianTimeLog = z.infer<typeof insertTechnicianTimeLogSchema>;
+
+export type StaffAlert = typeof staffAlerts.$inferSelect;
+export type InsertStaffAlert = z.infer<typeof insertStaffAlertSchema>;
 
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"] as const;

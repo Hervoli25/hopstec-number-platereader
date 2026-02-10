@@ -51,6 +51,8 @@ import {
   RefreshCw,
   Filter,
   X,
+  Bell,
+  Send,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -100,12 +102,21 @@ export default function ManagerBookings() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
 
   // Edit form state
   const [editDate, setEditDate] = useState("");
   const [editTimeSlot, setEditTimeSlot] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editStatus, setEditStatus] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
+
+  // Notification state
+  const [notifyType, setNotifyType] = useState<"BOOKING_CANCELLED" | "BOOKING_MODIFIED" | "BOOKING_RESCHEDULED">("BOOKING_MODIFIED");
+  const [notifySubject, setNotifySubject] = useState("");
+  const [notifyBody, setNotifyBody] = useState("");
+  const [notifyReason, setNotifyReason] = useState("");
 
   // Check if user has manager, admin, or super_admin role
   const canManageBookings = user?.role === "manager" || user?.role === "admin" || user?.role === "super_admin";
@@ -171,7 +182,9 @@ export default function ManagerBookings() {
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/manager/bookings/${id}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({ reason: cancelReason || undefined }),
       });
       if (!res.ok) {
         const error = await res.json();
@@ -180,9 +193,10 @@ export default function ManagerBookings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Booking cancelled successfully" });
+      toast({ title: "Booking cancelled", description: "Customer notification queued." });
       queryClient.invalidateQueries({ queryKey: ["manager-bookings"] });
       setCancelDialogOpen(false);
+      setCancelReason("");
       setSelectedBooking(null);
     },
     onError: (error: Error) => {
@@ -194,12 +208,66 @@ export default function ManagerBookings() {
     },
   });
 
+  // Send notification mutation
+  const sendNotificationMutation = useMutation({
+    mutationFn: async ({ bookingId, type, body, reason }: { bookingId: string; type: string; body: string; reason?: string }) => {
+      const res = await fetch("/api/manager/notifications/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ bookingId, type, body, reason }),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to send notification");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Notification queued", description: "Customer will be notified shortly." });
+      setNotifyDialogOpen(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to send notification", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Preview notification template for a booking
+  const previewNotification = async (booking: Booking, type: "BOOKING_CANCELLED" | "BOOKING_MODIFIED" | "BOOKING_RESCHEDULED", reason?: string) => {
+    try {
+      const res = await fetch("/api/manager/notifications/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ bookingId: booking.id, type, reason }),
+      });
+      if (res.ok) {
+        const { subject, body } = await res.json();
+        setNotifySubject(subject);
+        setNotifyBody(body);
+      }
+    } catch {
+      // fallback — leave fields empty for manual entry
+    }
+  };
+
+  const openNotifyDialog = async (booking: Booking, type: "BOOKING_CANCELLED" | "BOOKING_MODIFIED" | "BOOKING_RESCHEDULED") => {
+    setSelectedBooking(booking);
+    setNotifyType(type);
+    setNotifyReason("");
+    setNotifySubject("");
+    setNotifyBody("");
+    setNotifyDialogOpen(true);
+    await previewNotification(booking, type);
+  };
+
   const openEditDialog = (booking: Booking) => {
     setSelectedBooking(booking);
     setEditDate(booking.bookingDate.split("T")[0]);
     setEditTimeSlot(booking.timeSlot);
     setEditNotes(booking.notes || "");
     setEditStatus(booking.status);
+    setEditReason("");
     setEditDialogOpen(true);
   };
 
@@ -225,6 +293,7 @@ export default function ManagerBookings() {
       return;
     }
 
+    if (editReason) updates.reason = editReason;
     updateMutation.mutate({ id: selectedBooking.id, data: updates });
   };
 
@@ -580,7 +649,18 @@ export default function ManagerBookings() {
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setViewDialogOpen(false);
+                if (selectedBooking) openNotifyDialog(selectedBooking, "BOOKING_MODIFIED");
+              }}
+            >
+              <Bell className="h-4 w-4 mr-1" />
+              Notify Customer
+            </Button>
             <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
               Close
             </Button>
@@ -642,9 +722,19 @@ export default function ManagerBookings() {
                 rows={3}
               />
             </div>
+
+            <div className="space-y-2">
+              <Label>Reason for Change <span className="text-muted-foreground text-xs">(optional — included in customer notification)</span></Label>
+              <Textarea
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                placeholder="e.g. Staff availability, equipment maintenance..."
+                rows={2}
+              />
+            </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2">
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
               Cancel
             </Button>
@@ -652,7 +742,7 @@ export default function ManagerBookings() {
               onClick={handleSaveEdit}
               disabled={updateMutation.isPending}
             >
-              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+              {updateMutation.isPending ? "Saving..." : "Save & Notify Customer"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -665,20 +755,123 @@ export default function ManagerBookings() {
             <AlertDialogTitle>Cancel Booking?</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to cancel booking #{selectedBooking?.bookingReference}?
-              This action cannot be undone. The customer will be notified of the cancellation.
+              This action cannot be undone. The customer will be notified automatically.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="px-1 pb-2">
+            <Label className="text-sm">Reason for cancellation <span className="text-muted-foreground text-xs">(optional)</span></Label>
+            <Textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="e.g. Unexpected closure, technician unavailable..."
+              rows={2}
+              className="mt-1"
+            />
+          </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep Booking</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setCancelReason("")}>Keep Booking</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => selectedBooking && cancelMutation.mutate(selectedBooking.id)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {cancelMutation.isPending ? "Cancelling..." : "Yes, Cancel Booking"}
+              {cancelMutation.isPending ? "Cancelling..." : "Yes, Cancel & Notify Customer"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Send Notification Dialog */}
+      <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-primary" />
+              Send Customer Notification
+            </DialogTitle>
+            <DialogDescription>
+              Notify {selectedBooking?.customerName || selectedBooking?.customerEmail} about their booking #{selectedBooking?.bookingReference}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Notification Type</Label>
+              <Select
+                value={notifyType}
+                onValueChange={async (val: typeof notifyType) => {
+                  setNotifyType(val);
+                  if (selectedBooking) await previewNotification(selectedBooking, val, notifyReason);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BOOKING_MODIFIED">Booking Modified</SelectItem>
+                  <SelectItem value="BOOKING_RESCHEDULED">Booking Rescheduled</SelectItem>
+                  <SelectItem value="BOOKING_CANCELLED">Booking Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Reason <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input
+                value={notifyReason}
+                onChange={(e) => setNotifyReason(e.target.value)}
+                placeholder="Reason for the change..."
+                onBlur={async () => {
+                  if (selectedBooking) await previewNotification(selectedBooking, notifyType, notifyReason);
+                }}
+              />
+            </div>
+
+            {notifySubject && (
+              <div className="space-y-2">
+                <Label>Subject</Label>
+                <Input value={notifySubject} onChange={(e) => setNotifySubject(e.target.value)} />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Message</Label>
+              <Textarea
+                value={notifyBody}
+                onChange={(e) => setNotifyBody(e.target.value)}
+                placeholder="Loading template..."
+                rows={10}
+                className="font-mono text-xs"
+              />
+            </div>
+
+            <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
+              <strong>Sending to:</strong> {selectedBooking?.customerEmail}
+              {selectedBooking?.customerPhone && ` · ${selectedBooking.customerPhone}`}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNotifyDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!selectedBooking) return;
+                sendNotificationMutation.mutate({
+                  bookingId: selectedBooking.id,
+                  type: notifyType,
+                  body: notifyBody,
+                  reason: notifyReason || undefined,
+                });
+              }}
+              disabled={sendNotificationMutation.isPending || !notifyBody}
+            >
+              <Send className="h-4 w-4 mr-2" />
+              {sendNotificationMutation.isPending ? "Sending..." : "Queue Notification"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AppFooter />
     </div>

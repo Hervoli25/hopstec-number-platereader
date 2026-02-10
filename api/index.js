@@ -67,14 +67,14 @@ var require_ms = __commonJS({
       if (str.length > 100) {
         return;
       }
-      var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+      var match2 = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
         str
       );
-      if (!match) {
+      if (!match2) {
         return;
       }
-      var n = parseFloat(match[1]);
-      var type = (match[2] || "ms").toLowerCase();
+      var n = parseFloat(match2[1]);
+      var type = (match2[2] || "ms").toLowerCase();
       switch (type) {
         case "years":
         case "year":
@@ -205,19 +205,19 @@ var require_common = __commonJS({
             args.unshift("%O");
           }
           let index2 = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match2, format2) => {
+            if (match2 === "%%") {
               return "%";
             }
             index2++;
-            const formatter = createDebug.formatters[format];
+            const formatter = createDebug.formatters[format2];
             if (typeof formatter === "function") {
               const val = args[index2];
-              match = formatter.call(self2, val);
+              match2 = formatter.call(self2, val);
               args.splice(index2, 1);
               index2--;
             }
-            return match;
+            return match2;
           });
           createDebug.formatArgs.call(self2, args);
           const logFn = self2.log || createDebug.log;
@@ -452,12 +452,12 @@ var require_browser = __commonJS({
       args.splice(1, 0, c, "color: inherit");
       let index2 = 0;
       let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
+      args[0].replace(/%[a-zA-Z%]/g, (match2) => {
+        if (match2 === "%%") {
           return;
         }
         index2++;
-        if (match === "%c") {
+        if (match2 === "%c") {
           lastC = index2;
         }
       });
@@ -493,8 +493,8 @@ var require_browser = __commonJS({
       }
     }
     module.exports = require_common()(exports);
-    var { formatters } = module.exports;
-    formatters.j = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.j = function(v) {
       try {
         return JSON.stringify(v);
       } catch (error) {
@@ -666,12 +666,12 @@ var require_node = __commonJS({
       }
     }
     module.exports = require_common()(exports);
-    var { formatters } = module.exports;
-    formatters.o = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.o = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts).split("\n").map((str) => str.trim()).join(" ");
     };
-    formatters.O = function(v) {
+    formatters2.O = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts);
     };
@@ -706,7 +706,7 @@ var require_depd = __commonJS({
       }
       return false;
     }
-    function convertDataDescriptorToAccessor(obj, prop, message) {
+    function convertDataDescriptorToAccessor(obj, prop, message2) {
       var descriptor = Object.getOwnPropertyDescriptor(obj, prop);
       var value = descriptor.value;
       descriptor.get = function getter() {
@@ -746,8 +746,8 @@ var require_depd = __commonJS({
       var stack = getStack();
       var site = callSiteLocation(stack[1]);
       var file = site[0];
-      function deprecate(message) {
-        log.call(deprecate, message);
+      function deprecate(message2) {
+        log.call(deprecate, message2);
       }
       deprecate._file = file;
       deprecate._ignored = isignored(namespace);
@@ -776,7 +776,7 @@ var require_depd = __commonJS({
       var str = process.env.TRACE_DEPRECATION || "";
       return containsNamespace(str, namespace);
     }
-    function log(message, site) {
+    function log(message2, site) {
       var haslisteners = eehaslisteners(process, "deprecation");
       if (!haslisteners && this._ignored) {
         return;
@@ -815,7 +815,7 @@ var require_depd = __commonJS({
         return;
       }
       this._warned[key] = true;
-      var msg = message;
+      var msg = message2;
       if (!msg) {
         msg = callSite === depSite || !callSite.name ? defaultMessage(depSite) : defaultMessage(callSite);
       }
@@ -824,8 +824,8 @@ var require_depd = __commonJS({
         process.emit("deprecation", err);
         return;
       }
-      var format = process.stderr.isTTY ? formatColor : formatPlain;
-      var output = format.call(this, msg, caller, stack.slice(i));
+      var format2 = process.stderr.isTTY ? formatColor : formatPlain;
+      var output = format2.call(this, msg, caller, stack.slice(i));
       process.stderr.write(output + "\n", "utf8");
     }
     function callSiteLocation(callSite) {
@@ -901,7 +901,7 @@ var require_depd = __commonJS({
     function prepareObjectStackTrace(obj, stack) {
       return stack;
     }
-    function wrapfunction(fn, message) {
+    function wrapfunction(fn, message2) {
       if (typeof fn !== "function") {
         throw new TypeError("argument fn must be a function");
       }
@@ -916,10 +916,10 @@ var require_depd = __commonJS({
         "message",
         "site",
         '"use strict"\nreturn function (' + args + ") {log.call(deprecate, message, site)\nreturn fn.apply(this, arguments)\n}"
-      )(fn, log, this, message, site);
+      )(fn, log, this, message2, site);
       return deprecatedfn;
     }
-    function wrapproperty(obj, prop, message) {
+    function wrapproperty(obj, prop, message2) {
       if (!obj || typeof obj !== "object" && typeof obj !== "function") {
         throw new TypeError("argument obj must be object");
       }
@@ -935,25 +935,25 @@ var require_depd = __commonJS({
       var site = callSiteLocation(stack[1]);
       site.name = prop;
       if ("value" in descriptor) {
-        descriptor = convertDataDescriptorToAccessor(obj, prop, message);
+        descriptor = convertDataDescriptorToAccessor(obj, prop, message2);
       }
       var get = descriptor.get;
       var set = descriptor.set;
       if (typeof get === "function") {
         descriptor.get = function getter() {
-          log.call(deprecate, message, site);
+          log.call(deprecate, message2, site);
           return get.apply(this, arguments);
         };
       }
       if (typeof set === "function") {
         descriptor.set = function setter() {
-          log.call(deprecate, message, site);
+          log.call(deprecate, message2, site);
           return set.apply(this, arguments);
         };
       }
       Object.defineProperty(obj, prop, descriptor);
     }
-    function DeprecationError(namespace, message, stack) {
+    function DeprecationError(namespace, message2, stack) {
       var error = new Error();
       var stackString;
       Object.defineProperty(error, "constructor", {
@@ -962,7 +962,7 @@ var require_depd = __commonJS({
       Object.defineProperty(error, "message", {
         configurable: true,
         enumerable: false,
-        value: message,
+        value: message2,
         writable: true
       });
       Object.defineProperty(error, "name", {
@@ -1117,9 +1117,9 @@ var require_statuses = __commonJS({
     function createMessageToStatusCodeMap(codes2) {
       var map = {};
       Object.keys(codes2).forEach(function forEachCode(code) {
-        var message = codes2[code];
+        var message2 = codes2[code];
         var status2 = Number(code);
-        map[message.toLowerCase()] = status2;
+        map[message2.toLowerCase()] = status2;
       });
       return map;
     }
@@ -1128,10 +1128,10 @@ var require_statuses = __commonJS({
         return Number(code);
       });
     }
-    function getStatusCode(message) {
-      var msg = message.toLowerCase();
+    function getStatusCode(message2) {
+      var msg = message2.toLowerCase();
       if (!Object.prototype.hasOwnProperty.call(status.code, msg)) {
-        throw new Error('invalid status message: "' + message + '"');
+        throw new Error('invalid status message: "' + message2 + '"');
       }
       return status.code[msg];
     }
@@ -1284,8 +1284,8 @@ var require_http_errors = __commonJS({
     }
     function createClientErrorConstructor(HttpError, name, code) {
       var className = toClassName(name);
-      function ClientError2(message) {
-        var msg = message != null ? message : statuses.message[code];
+      function ClientError2(message2) {
+        var msg = message2 != null ? message2 : statuses.message[code];
         var err = new Error(msg);
         Error.captureStackTrace(err, ClientError2);
         setPrototypeOf(err, ClientError2.prototype);
@@ -1323,8 +1323,8 @@ var require_http_errors = __commonJS({
     }
     function createServerErrorConstructor(HttpError, name, code) {
       var className = toClassName(name);
-      function ServerError(message) {
-        var msg = message != null ? message : statuses.message[code];
+      function ServerError(message2) {
+        var msg = message2 != null ? message2 : statuses.message[code];
         var err = new Error(msg);
         Error.captureStackTrace(err, ServerError);
         setPrototypeOf(err, ServerError.prototype);
@@ -1385,7 +1385,7 @@ var require_bytes = __commonJS({
   "node_modules/bytes/index.js"(exports, module) {
     "use strict";
     module.exports = bytes;
-    module.exports.format = format;
+    module.exports.format = format2;
     module.exports.parse = parse;
     var formatThousandsRegExp = /\B(?=(\d{3})+(?!\d))/g;
     var formatDecimalsRegExp = /(?:\.0*|(\.[^0]+)0+)$/;
@@ -1403,11 +1403,11 @@ var require_bytes = __commonJS({
         return parse(value);
       }
       if (typeof value === "number") {
-        return format(value, options);
+        return format2(value, options);
       }
       return null;
     }
-    function format(value, options) {
+    function format2(value, options) {
       if (!Number.isFinite(value)) {
         return null;
       }
@@ -5648,9 +5648,9 @@ var require_content_type = __commonJS({
     var QESC_REGEXP = /\\([\u000b\u0020-\u00ff])/g;
     var QUOTE_REGEXP = /([\\"])/g;
     var TYPE_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-    exports.format = format;
+    exports.format = format2;
     exports.parse = parse;
-    function format(obj) {
+    function format2(obj) {
       if (!obj || typeof obj !== "object") {
         throw new TypeError("argument obj is required");
       }
@@ -5689,16 +5689,16 @@ var require_content_type = __commonJS({
       var obj = new ContentType(type.toLowerCase());
       if (index2 !== -1) {
         var key;
-        var match;
+        var match2;
         var value;
         PARAM_REGEXP.lastIndex = index2;
-        while (match = PARAM_REGEXP.exec(header)) {
-          if (match.index !== index2) {
+        while (match2 = PARAM_REGEXP.exec(header)) {
+          if (match2.index !== index2) {
             throw new TypeError("invalid parameter format");
           }
-          index2 += match[0].length;
-          key = match[1].toLowerCase();
-          value = match[2];
+          index2 += match2[0].length;
+          key = match2[1].toLowerCase();
+          value = match2[2];
           if (value.charCodeAt(0) === 34) {
             value = value.slice(1, -1);
             if (value.indexOf("\\") !== -1) {
@@ -15163,12 +15163,12 @@ var require_mime_types = __commonJS({
       if (!type || typeof type !== "string") {
         return false;
       }
-      var match = EXTRACT_TYPE_REGEXP.exec(type);
-      var mime = match && db2[match[1].toLowerCase()];
+      var match2 = EXTRACT_TYPE_REGEXP.exec(type);
+      var mime = match2 && db2[match2[1].toLowerCase()];
       if (mime && mime.charset) {
         return mime.charset;
       }
-      if (match && TEXT_TYPE_REGEXP.test(match[1])) {
+      if (match2 && TEXT_TYPE_REGEXP.test(match2[1])) {
         return "UTF-8";
       }
       return false;
@@ -15191,8 +15191,8 @@ var require_mime_types = __commonJS({
       if (!type || typeof type !== "string") {
         return false;
       }
-      var match = EXTRACT_TYPE_REGEXP.exec(type);
-      var exts = match && exports.extensions[match[1].toLowerCase()];
+      var match2 = EXTRACT_TYPE_REGEXP.exec(type);
+      var exts = match2 && exports.extensions[match2[1].toLowerCase()];
       if (!exts || !exts.length) {
         return false;
       }
@@ -15254,10 +15254,10 @@ var require_media_typer = __commonJS({
     var SUBTYPE_NAME_REGEXP = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.-]{0,126}$/;
     var TYPE_NAME_REGEXP = /^[A-Za-z0-9][A-Za-z0-9!#$&^_-]{0,126}$/;
     var TYPE_REGEXP = /^ *([A-Za-z0-9][A-Za-z0-9!#$&^_-]{0,126})\/([A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}) *$/;
-    exports.format = format;
+    exports.format = format2;
     exports.parse = parse;
     exports.test = test;
-    function format(obj) {
+    function format2(obj) {
       if (!obj || typeof obj !== "object") {
         throw new TypeError("argument obj is required");
       }
@@ -15295,12 +15295,12 @@ var require_media_typer = __commonJS({
       if (typeof string !== "string") {
         throw new TypeError("argument string is required to be a string");
       }
-      var match = TYPE_REGEXP.exec(string.toLowerCase());
-      if (!match) {
+      var match2 = TYPE_REGEXP.exec(string.toLowerCase());
+      if (!match2) {
         throw new TypeError("invalid media type");
       }
-      var type = match[1];
-      var subtype = match[2];
+      var type = match2[1];
+      var subtype = match2[2];
       var suffix;
       var index2 = subtype.lastIndexOf("+");
       if (index2 !== -1) {
@@ -15684,8 +15684,8 @@ var require_json = __commonJS({
       }
     }
     function firstchar(str) {
-      var match = FIRST_CHAR_REGEXP.exec(str);
-      return match ? match[1] : void 0;
+      var match2 = FIRST_CHAR_REGEXP.exec(str);
+      return match2 ? match2[1] : void 0;
     }
     function normalizeJsonSyntaxError(error, obj) {
       var keys = Object.getOwnPropertyNames(error);
@@ -15988,7 +15988,7 @@ var require_object_inspect = __commonJS({
       if (typeof globalThis !== "undefined" && obj === globalThis || typeof global !== "undefined" && obj === global) {
         return "{ [object globalThis] }";
       }
-      if (!isDate(obj) && !isRegExp(obj)) {
+      if (!isDate2(obj) && !isRegExp(obj)) {
         var ys = arrObjKeys(obj, inspect);
         var isPlainObject = gPO ? gPO(obj) === Object.prototype : obj instanceof Object || obj.constructor === Object;
         var protoTag = obj instanceof Object ? "" : "null prototype";
@@ -16019,7 +16019,7 @@ var require_object_inspect = __commonJS({
     function isArray(obj) {
       return toStr(obj) === "[object Array]" && canTrustToString(obj);
     }
-    function isDate(obj) {
+    function isDate2(obj) {
       return toStr(obj) === "[object Date]" && canTrustToString(obj);
     }
     function isRegExp(obj) {
@@ -17084,8 +17084,8 @@ var require_get_intrinsic = __commonJS({
         throw new $SyntaxError("invalid intrinsic syntax, expected opening `%`");
       }
       var result = [];
-      $replace(string, rePropName, function(match, number, quote, subString) {
-        result[result.length] = quote ? $replace(subString, reEscapeChar, "$1") : number || match;
+      $replace(string, rePropName, function(match2, number, quote, subString) {
+        result[result.length] = quote ? $replace(subString, reEscapeChar, "$1") : number || match2;
       });
       return result;
     };
@@ -17525,7 +17525,7 @@ var require_utils2 = __commonJS({
       }
     };
     var limit = 1024;
-    var encode = function encode2(str, defaultEncoder, charset, kind, format) {
+    var encode = function encode2(str, defaultEncoder, charset, kind, format2) {
       if (str.length === 0) {
         return str;
       }
@@ -17546,7 +17546,7 @@ var require_utils2 = __commonJS({
         var arr = [];
         for (var i = 0; i < segment.length; ++i) {
           var c = segment.charCodeAt(i);
-          if (c === 45 || c === 46 || c === 95 || c === 126 || c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || format === formats.RFC1738 && (c === 40 || c === 41)) {
+          if (c === 45 || c === 46 || c === 95 || c === 126 || c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || format2 === formats.RFC1738 && (c === 40 || c === 41)) {
             arr[arr.length] = segment.charAt(i);
             continue;
           }
@@ -17692,7 +17692,7 @@ var require_stringify = __commonJS({
       return typeof v === "string" || typeof v === "number" || typeof v === "boolean" || typeof v === "symbol" || typeof v === "bigint";
     };
     var sentinel = {};
-    var stringify = function stringify2(object, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder2, filter, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
+    var stringify = function stringify2(object, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder2, filter, sort, allowDots, serializeDate, format2, formatter, encodeValuesOnly, charset, sideChannel) {
       var obj = object;
       var tmpSc = sideChannel;
       var step = 0;
@@ -17725,14 +17725,14 @@ var require_stringify = __commonJS({
       }
       if (obj === null) {
         if (strictNullHandling) {
-          return encoder2 && !encodeValuesOnly ? encoder2(prefix, defaults2.encoder, charset, "key", format) : prefix;
+          return encoder2 && !encodeValuesOnly ? encoder2(prefix, defaults2.encoder, charset, "key", format2) : prefix;
         }
         obj = "";
       }
       if (isNonNullishPrimitive(obj) || utils.isBuffer(obj)) {
         if (encoder2) {
-          var keyValue = encodeValuesOnly ? prefix : encoder2(prefix, defaults2.encoder, charset, "key", format);
-          return [formatter(keyValue) + "=" + formatter(encoder2(obj, defaults2.encoder, charset, "value", format))];
+          var keyValue = encodeValuesOnly ? prefix : encoder2(prefix, defaults2.encoder, charset, "key", format2);
+          return [formatter(keyValue) + "=" + formatter(encoder2(obj, defaults2.encoder, charset, "value", format2))];
         }
         return [formatter(prefix) + "=" + formatter(String(obj))];
       }
@@ -17782,7 +17782,7 @@ var require_stringify = __commonJS({
           sort,
           allowDots,
           serializeDate,
-          format,
+          format2,
           formatter,
           encodeValuesOnly,
           charset,
@@ -17808,14 +17808,14 @@ var require_stringify = __commonJS({
       if (typeof opts.charset !== "undefined" && opts.charset !== "utf-8" && opts.charset !== "iso-8859-1") {
         throw new TypeError("The charset option must be either utf-8, iso-8859-1, or undefined");
       }
-      var format = formats["default"];
+      var format2 = formats["default"];
       if (typeof opts.format !== "undefined") {
         if (!has.call(formats.formatters, opts.format)) {
           throw new TypeError("Unknown format option provided.");
         }
-        format = opts.format;
+        format2 = opts.format;
       }
-      var formatter = formats.formatters[format];
+      var formatter = formats.formatters[format2];
       var filter = defaults2.filter;
       if (typeof opts.filter === "function" || isArray(opts.filter)) {
         filter = opts.filter;
@@ -17846,7 +17846,7 @@ var require_stringify = __commonJS({
         encoder: typeof opts.encoder === "function" ? opts.encoder : defaults2.encoder,
         encodeValuesOnly: typeof opts.encodeValuesOnly === "boolean" ? opts.encodeValuesOnly : defaults2.encodeValuesOnly,
         filter,
-        format,
+        format: format2,
         formatter,
         serializeDate: typeof opts.serializeDate === "function" ? opts.serializeDate : defaults2.serializeDate,
         skipNulls: typeof opts.skipNulls === "boolean" ? opts.skipNulls : defaults2.skipNulls,
@@ -18411,19 +18411,19 @@ var require_common2 = __commonJS({
             args.unshift("%O");
           }
           let index2 = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match2, format2) => {
+            if (match2 === "%%") {
               return "%";
             }
             index2++;
-            const formatter = createDebug.formatters[format];
+            const formatter = createDebug.formatters[format2];
             if (typeof formatter === "function") {
               const val = args[index2];
-              match = formatter.call(self2, val);
+              match2 = formatter.call(self2, val);
               args.splice(index2, 1);
               index2--;
             }
-            return match;
+            return match2;
           });
           createDebug.formatArgs.call(self2, args);
           const logFn = self2.log || createDebug.log;
@@ -18658,12 +18658,12 @@ var require_browser2 = __commonJS({
       args.splice(1, 0, c, "color: inherit");
       let index2 = 0;
       let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
+      args[0].replace(/%[a-zA-Z%]/g, (match2) => {
+        if (match2 === "%%") {
           return;
         }
         index2++;
-        if (match === "%c") {
+        if (match2 === "%c") {
           lastC = index2;
         }
       });
@@ -18699,8 +18699,8 @@ var require_browser2 = __commonJS({
       }
     }
     module.exports = require_common2()(exports);
-    var { formatters } = module.exports;
-    formatters.j = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.j = function(v) {
       try {
         return JSON.stringify(v);
       } catch (error) {
@@ -18872,12 +18872,12 @@ var require_node2 = __commonJS({
       }
     }
     module.exports = require_common2()(exports);
-    var { formatters } = module.exports;
-    formatters.o = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.o = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts).split("\n").map((str) => str.trim()).join(" ");
     };
-    formatters.O = function(v) {
+    formatters2.O = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts);
     };
@@ -18917,15 +18917,15 @@ var require_escape_html = __commonJS({
     module.exports = escapeHtml;
     function escapeHtml(string) {
       var str = "" + string;
-      var match = matchHtmlRegExp.exec(str);
-      if (!match) {
+      var match2 = matchHtmlRegExp.exec(str);
+      if (!match2) {
         return str;
       }
       var escape2;
       var html = "";
       var index2 = 0;
       var lastIndex = 0;
-      for (index2 = match.index; index2 < str.length; index2++) {
+      for (index2 = match2.index; index2 < str.length; index2++) {
         switch (str.charCodeAt(index2)) {
           case 34:
             escape2 = "&quot;";
@@ -19051,8 +19051,8 @@ var require_finalhandler = __commonJS({
     var parseUrl = require_parseurl();
     var statuses = require_statuses();
     var isFinished = onFinished.isFinished;
-    function createHtmlDocument(message) {
-      var body = escapeHtml(message).replaceAll("\n", "<br>").replaceAll("  ", " &nbsp;");
+    function createHtmlDocument(message2) {
+      var body = escapeHtml(message2).replaceAll("\n", "<br>").replaceAll("  ", " &nbsp;");
       return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>' + body + "</pre>\n</body>\n</html>\n";
     }
     module.exports = finalhandler;
@@ -19133,9 +19133,9 @@ var require_finalhandler = __commonJS({
       }
       return status;
     }
-    function send(req, res, status, headers2, message) {
+    function send(req, res, status, headers2, message2) {
       function write() {
-        var body = createHtmlDocument(message);
+        var body = createHtmlDocument(message2);
         res.statusCode = status;
         if (req.httpVersionMajor < 2) {
           res.statusMessage = statuses.message[status];
@@ -19215,19 +19215,19 @@ var require_common3 = __commonJS({
             args.unshift("%O");
           }
           let index2 = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match2, format2) => {
+            if (match2 === "%%") {
               return "%";
             }
             index2++;
-            const formatter = createDebug.formatters[format];
+            const formatter = createDebug.formatters[format2];
             if (typeof formatter === "function") {
               const val = args[index2];
-              match = formatter.call(self2, val);
+              match2 = formatter.call(self2, val);
               args.splice(index2, 1);
               index2--;
             }
-            return match;
+            return match2;
           });
           createDebug.formatArgs.call(self2, args);
           const logFn = self2.log || createDebug.log;
@@ -19462,12 +19462,12 @@ var require_browser3 = __commonJS({
       args.splice(1, 0, c, "color: inherit");
       let index2 = 0;
       let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
+      args[0].replace(/%[a-zA-Z%]/g, (match2) => {
+        if (match2 === "%%") {
           return;
         }
         index2++;
-        if (match === "%c") {
+        if (match2 === "%c") {
           lastC = index2;
         }
       });
@@ -19503,8 +19503,8 @@ var require_browser3 = __commonJS({
       }
     }
     module.exports = require_common3()(exports);
-    var { formatters } = module.exports;
-    formatters.j = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.j = function(v) {
       try {
         return JSON.stringify(v);
       } catch (error) {
@@ -19676,12 +19676,12 @@ var require_node3 = __commonJS({
       }
     }
     module.exports = require_common3()(exports);
-    var { formatters } = module.exports;
-    formatters.o = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.o = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts).split("\n").map((str) => str.trim()).join(" ");
     };
-    formatters.O = function(v) {
+    formatters2.O = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts);
     };
@@ -20026,7 +20026,7 @@ var require_ipaddr = __commonJS({
         longValue: new RegExp("^" + ipv4Part + "$", "i")
       };
       ipaddr.IPv4.parser = function(string) {
-        var match, parseIntAuto, part, shift, value;
+        var match2, parseIntAuto, part, shift, value;
         parseIntAuto = function(string2) {
           if (string2[0] === "0" && string2[1] !== "x") {
             return parseInt(string2, 8);
@@ -20034,10 +20034,10 @@ var require_ipaddr = __commonJS({
             return parseInt(string2);
           }
         };
-        if (match = string.match(ipv4Regexes.fourOctet)) {
+        if (match2 = string.match(ipv4Regexes.fourOctet)) {
           return (function() {
             var k, len, ref, results;
-            ref = match.slice(1, 6);
+            ref = match2.slice(1, 6);
             results = [];
             for (k = 0, len = ref.length; k < len; k++) {
               part = ref[k];
@@ -20045,8 +20045,8 @@ var require_ipaddr = __commonJS({
             }
             return results;
           })();
-        } else if (match = string.match(ipv4Regexes.longValue)) {
-          value = parseIntAuto(match[1]);
+        } else if (match2 = string.match(ipv4Regexes.longValue)) {
+          value = parseIntAuto(match2[1]);
           if (value > 4294967295 || value < 0) {
             throw new Error("ipaddr: address outside defined range");
           }
@@ -20093,15 +20093,15 @@ var require_ipaddr = __commonJS({
           return this.toNormalizedString().replace(/((^|:)(0(:|$))+)/, "::");
         };
         IPv6.prototype.toRFC5952String = function() {
-          var bestMatchIndex, bestMatchLength, match, regex, string;
+          var bestMatchIndex, bestMatchLength, match2, regex, string;
           regex = /((^|:)(0(:|$)){2,})/g;
           string = this.toNormalizedString();
           bestMatchIndex = 0;
           bestMatchLength = -1;
-          while (match = regex.exec(string)) {
-            if (match[0].length > bestMatchLength) {
-              bestMatchIndex = match.index;
-              bestMatchLength = match[0].length;
+          while (match2 = regex.exec(string)) {
+            if (match2[0].length > bestMatchLength) {
+              bestMatchIndex = match2.index;
+              bestMatchLength = match2[0].length;
             }
           }
           if (bestMatchLength < 0) {
@@ -20294,14 +20294,14 @@ var require_ipaddr = __commonJS({
         };
       };
       ipaddr.IPv6.parser = function(string) {
-        var addr, k, len, match, octet, octets, zoneId;
+        var addr, k, len, match2, octet, octets, zoneId;
         if (ipv6Regexes["native"].test(string)) {
           return expandIPv6(string, 8);
-        } else if (match = string.match(ipv6Regexes["transitional"])) {
-          zoneId = match[6] || "";
-          addr = expandIPv6(match[1].slice(0, -1) + zoneId, 6);
+        } else if (match2 = string.match(ipv6Regexes["transitional"])) {
+          zoneId = match2[6] || "";
+          addr = expandIPv6(match2[1].slice(0, -1) + zoneId, 6);
           if (addr.parts) {
-            octets = [parseInt(match[2]), parseInt(match[3]), parseInt(match[4]), parseInt(match[5])];
+            octets = [parseInt(match2[2]), parseInt(match2[3]), parseInt(match2[4]), parseInt(match2[5])];
             for (k = 0, len = octets.length; k < len; k++) {
               octet = octets[k];
               if (!(0 <= octet && octet <= 255)) {
@@ -20369,11 +20369,11 @@ var require_ipaddr = __commonJS({
         return new this(addr.parts, addr.zoneId);
       };
       ipaddr.IPv4.parseCIDR = function(string) {
-        var maskLength, match, parsed;
-        if (match = string.match(/^(.+)\/(\d+)$/)) {
-          maskLength = parseInt(match[2]);
+        var maskLength, match2, parsed;
+        if (match2 = string.match(/^(.+)\/(\d+)$/)) {
+          maskLength = parseInt(match2[2]);
           if (maskLength >= 0 && maskLength <= 32) {
-            parsed = [this.parse(match[1]), maskLength];
+            parsed = [this.parse(match2[1]), maskLength];
             Object.defineProperty(parsed, "toString", {
               value: function() {
                 return this.join("/");
@@ -20439,11 +20439,11 @@ var require_ipaddr = __commonJS({
         }
       };
       ipaddr.IPv6.parseCIDR = function(string) {
-        var maskLength, match, parsed;
-        if (match = string.match(/^(.+)\/(\d+)$/)) {
-          maskLength = parseInt(match[2]);
+        var maskLength, match2, parsed;
+        if (match2 = string.match(/^(.+)\/(\d+)$/)) {
+          maskLength = parseInt(match2[2]);
           if (maskLength >= 0 && maskLength <= 128) {
-            parsed = [this.parse(match[1]), maskLength];
+            parsed = [this.parse(match2[1]), maskLength];
             Object.defineProperty(parsed, "toString", {
               value: function() {
                 return this.join("/");
@@ -20883,7 +20883,7 @@ var require_dist = __commonJS({
     exports.PathError = exports.TokenData = void 0;
     exports.parse = parse;
     exports.compile = compile;
-    exports.match = match;
+    exports.match = match2;
     exports.pathToRegexp = pathToRegexp;
     exports.stringify = stringify;
     var DEFAULT_DELIMITER = "/";
@@ -20917,8 +20917,8 @@ var require_dist = __commonJS({
     };
     exports.TokenData = TokenData;
     var PathError = class extends TypeError {
-      constructor(message, originalPath) {
-        let text2 = message;
+      constructor(message2, originalPath) {
+        let text2 = message2;
         if (originalPath)
           text2 += `: ${originalPath}`;
         text2 += `; visit https://git.new/pathToRegexpError for info`;
@@ -21080,7 +21080,7 @@ var require_dist = __commonJS({
         return [encodeValue(value)];
       };
     }
-    function match(path3, options = {}) {
+    function match2(path3, options = {}) {
       const { decode = decodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
       const { regexp, keys } = pathToRegexp(path3, options);
       const decoders = keys.map((key) => {
@@ -21090,7 +21090,7 @@ var require_dist = __commonJS({
           return decode;
         return (value) => value.split(delimiter).map(decode);
       });
-      return function match2(input) {
+      return function match3(input) {
         const m = regexp.exec(input);
         if (!m)
           return false;
@@ -21278,19 +21278,19 @@ var require_common4 = __commonJS({
             args.unshift("%O");
           }
           let index2 = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match2, format2) => {
+            if (match2 === "%%") {
               return "%";
             }
             index2++;
-            const formatter = createDebug.formatters[format];
+            const formatter = createDebug.formatters[format2];
             if (typeof formatter === "function") {
               const val = args[index2];
-              match = formatter.call(self2, val);
+              match2 = formatter.call(self2, val);
               args.splice(index2, 1);
               index2--;
             }
-            return match;
+            return match2;
           });
           createDebug.formatArgs.call(self2, args);
           const logFn = self2.log || createDebug.log;
@@ -21525,12 +21525,12 @@ var require_browser4 = __commonJS({
       args.splice(1, 0, c, "color: inherit");
       let index2 = 0;
       let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
+      args[0].replace(/%[a-zA-Z%]/g, (match2) => {
+        if (match2 === "%%") {
           return;
         }
         index2++;
-        if (match === "%c") {
+        if (match2 === "%c") {
           lastC = index2;
         }
       });
@@ -21566,8 +21566,8 @@ var require_browser4 = __commonJS({
       }
     }
     module.exports = require_common4()(exports);
-    var { formatters } = module.exports;
-    formatters.j = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.j = function(v) {
       try {
         return JSON.stringify(v);
       } catch (error) {
@@ -21739,12 +21739,12 @@ var require_node4 = __commonJS({
       }
     }
     module.exports = require_common4()(exports);
-    var { formatters } = module.exports;
-    formatters.o = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.o = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts).split("\n").map((str) => str.trim()).join(" ");
     };
-    formatters.O = function(v) {
+    formatters2.O = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts);
     };
@@ -21797,22 +21797,22 @@ var require_layer = __commonJS({
             });
           }
           return function regexpMatcher(p) {
-            const match = _path.exec(p);
-            if (!match) {
+            const match2 = _path.exec(p);
+            if (!match2) {
               return false;
             }
             const params = {};
-            for (let i = 1; i < match.length; i++) {
+            for (let i = 1; i < match2.length; i++) {
               const key = keys[i - 1];
               const prop = key.name;
-              const val = decodeParam(match[i]);
+              const val = decodeParam(match2[i]);
               if (val !== void 0) {
                 params[prop] = val;
               }
             }
             return {
               params,
-              path: match[0]
+              path: match2[0]
             };
           };
         }
@@ -21863,8 +21863,8 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match(path3) {
-      let match2;
+    Layer.prototype.match = function match2(path3) {
+      let match3;
       if (path3 != null) {
         if (this.slash) {
           this.params = {};
@@ -21872,19 +21872,19 @@ var require_layer = __commonJS({
           return true;
         }
         let i = 0;
-        while (!match2 && i < this.matchers.length) {
-          match2 = this.matchers[i](path3);
+        while (!match3 && i < this.matchers.length) {
+          match3 = this.matchers[i](path3);
           i++;
         }
       }
-      if (!match2) {
+      if (!match3) {
         this.params = void 0;
         this.path = void 0;
         return false;
       }
-      this.params = match2.params;
-      this.path = match2.path;
-      this.keys = Object.keys(match2.params);
+      this.params = match3.params;
+      this.path = match3.path;
+      this.keys = Object.keys(match3.params);
       return true;
     };
     function decodeParam(val) {
@@ -21976,12 +21976,12 @@ var require_route = __commonJS({
           return setImmediate(next, err);
         }
         let layer;
-        let match;
-        while (match !== true && idx < stack.length) {
+        let match2;
+        while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match = !layer.method || layer.method === method;
+          match2 = !layer.method || layer.method === method;
         }
-        if (match !== true) {
+        if (match2 !== true) {
           return done(err);
         }
         if (err) {
@@ -22138,23 +22138,23 @@ var require_router = __commonJS({
           return done(layerError);
         }
         let layer;
-        let match;
+        let match2;
         let route;
-        while (match !== true && idx < stack.length) {
+        while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match = matchLayer(layer, path3);
+          match2 = matchLayer(layer, path3);
           route = layer.route;
-          if (typeof match !== "boolean") {
-            layerError = layerError || match;
+          if (typeof match2 !== "boolean") {
+            layerError = layerError || match2;
           }
-          if (match !== true) {
+          if (match2 !== true) {
             continue;
           }
           if (!route) {
             continue;
           }
           if (layerError) {
-            match = false;
+            match2 = false;
             continue;
           }
           const method = req.method;
@@ -22163,10 +22163,10 @@ var require_router = __commonJS({
             methods2.push.apply(methods2, route._methods());
           }
           if (!hasMethod && method !== "HEAD") {
-            match = false;
+            match2 = false;
           }
         }
-        if (match !== true) {
+        if (match2 !== true) {
           return done(layerError);
         }
         if (route) {
@@ -22710,12 +22710,12 @@ var require_charset = __commonJS({
       return accepts;
     }
     function parseCharset(str, i) {
-      var match = simpleCharsetRegExp.exec(str);
-      if (!match) return null;
-      var charset = match[1];
+      var match2 = simpleCharsetRegExp.exec(str);
+      if (!match2) return null;
+      var charset = match2[1];
       var q = 1;
-      if (match[2]) {
-        var params = match[2].split(";");
+      if (match2[2]) {
+        var params = match2[2].split(";");
         for (var j = 0; j < params.length; j++) {
           var p = params[j].trim().split("=");
           if (p[0] === "q") {
@@ -22808,12 +22808,12 @@ var require_encoding = __commonJS({
       return accepts;
     }
     function parseEncoding(str, i) {
-      var match = simpleEncodingRegExp.exec(str);
-      if (!match) return null;
-      var encoding = match[1];
+      var match2 = simpleEncodingRegExp.exec(str);
+      if (!match2) return null;
+      var encoding = match2[1];
       var q = 1;
-      if (match[2]) {
-        var params = match[2].split(";");
+      if (match2[2]) {
+        var params = match2[2].split(";");
         for (var j = 0; j < params.length; j++) {
           var p = params[j].trim().split("=");
           if (p[0] === "q") {
@@ -22910,15 +22910,15 @@ var require_language = __commonJS({
       return accepts;
     }
     function parseLanguage(str, i) {
-      var match = simpleLanguageRegExp.exec(str);
-      if (!match) return null;
-      var prefix = match[1];
-      var suffix = match[2];
+      var match2 = simpleLanguageRegExp.exec(str);
+      if (!match2) return null;
+      var prefix = match2[1];
+      var suffix = match2[2];
       var full = prefix;
       if (suffix) full += "-" + suffix;
       var q = 1;
-      if (match[3]) {
-        var params = match[3].split(";");
+      if (match2[3]) {
+        var params = match2[3].split(";");
         for (var j = 0; j < params.length; j++) {
           var p = params[j].split("=");
           if (p[0] === "q") q = parseFloat(p[1]);
@@ -23005,14 +23005,14 @@ var require_mediaType = __commonJS({
       return accepts;
     }
     function parseMediaType(str, i) {
-      var match = simpleMediaTypeRegExp.exec(str);
-      if (!match) return null;
+      var match2 = simpleMediaTypeRegExp.exec(str);
+      if (!match2) return null;
       var params = /* @__PURE__ */ Object.create(null);
       var q = 1;
-      var subtype = match[2];
-      var type = match[1];
-      if (match[3]) {
-        var kvps = splitParameters(match[3]).map(splitKeyValuePair);
+      var subtype = match2[2];
+      var type = match2[1];
+      if (match2[3]) {
+        var kvps = splitParameters(match2[3]).map(splitKeyValuePair);
         for (var j = 0; j < kvps.length; j++) {
           var pair = kvps[j];
           var key = pair[0].toLowerCase();
@@ -23311,8 +23311,8 @@ var require_fresh = __commonJS({
         }
         var matches = parseTokenList(noneMatch);
         for (var i = 0; i < matches.length; i++) {
-          var match = matches[i];
-          if (match === etag || match === "W/" + etag || "W/" + match === etag) {
+          var match2 = matches[i];
+          if (match2 === etag || match2 === "W/" + etag || "W/" + match2 === etag) {
             return true;
           }
         }
@@ -23608,7 +23608,7 @@ var require_content_disposition = __commonJS({
       var opts = options || {};
       var type = opts.type || "attachment";
       var params = createparams(filename, opts.fallback);
-      return format(new ContentDisposition(type, params));
+      return format2(new ContentDisposition(type, params));
     }
     function createparams(filename, fallback) {
       if (filename === void 0) {
@@ -23639,7 +23639,7 @@ var require_content_disposition = __commonJS({
       }
       return params;
     }
-    function format(obj) {
+    function format2(obj) {
       var parameters = obj.parameters;
       var type = obj.type;
       if (!type || typeof type !== "string" || !TOKEN_REGEXP.test(type)) {
@@ -23658,12 +23658,12 @@ var require_content_disposition = __commonJS({
       return string;
     }
     function decodefield(str) {
-      var match = EXT_VALUE_REGEXP.exec(str);
-      if (!match) {
+      var match2 = EXT_VALUE_REGEXP.exec(str);
+      if (!match2) {
         throw new TypeError("invalid extended field value");
       }
-      var charset = match[1].toLowerCase();
-      var encoded = match[2];
+      var charset = match2[1].toLowerCase();
+      var encoded = match2[2];
       var value;
       var binary = encoded.replace(HEX_ESCAPE_REPLACE_REGEXP, pdecode);
       switch (charset) {
@@ -23686,24 +23686,24 @@ var require_content_disposition = __commonJS({
       if (!string || typeof string !== "string") {
         throw new TypeError("argument string is required");
       }
-      var match = DISPOSITION_TYPE_REGEXP.exec(string);
-      if (!match) {
+      var match2 = DISPOSITION_TYPE_REGEXP.exec(string);
+      if (!match2) {
         throw new TypeError("invalid type format");
       }
-      var index2 = match[0].length;
-      var type = match[1].toLowerCase();
+      var index2 = match2[0].length;
+      var type = match2[1].toLowerCase();
       var key;
       var names = [];
       var params = {};
       var value;
-      index2 = PARAM_REGEXP.lastIndex = match[0].slice(-1) === ";" ? index2 - 1 : index2;
-      while (match = PARAM_REGEXP.exec(string)) {
-        if (match.index !== index2) {
+      index2 = PARAM_REGEXP.lastIndex = match2[0].slice(-1) === ";" ? index2 - 1 : index2;
+      while (match2 = PARAM_REGEXP.exec(string)) {
+        if (match2.index !== index2) {
           throw new TypeError("invalid parameter format");
         }
-        index2 += match[0].length;
-        key = match[1].toLowerCase();
-        value = match[2];
+        index2 += match2[0].length;
+        key = match2[1].toLowerCase();
+        value = match2[2];
         if (names.indexOf(key) !== -1) {
           throw new TypeError("invalid duplicate parameter");
         }
@@ -23865,7 +23865,7 @@ var require_cookie = __commonJS({
       }
       if (opt.expires) {
         var expires = opt.expires;
-        if (!isDate(expires) || isNaN(expires.valueOf())) {
+        if (!isDate2(expires) || isNaN(expires.valueOf())) {
           throw new TypeError("option expires is invalid");
         }
         str += "; Expires=" + expires.toUTCString();
@@ -23919,7 +23919,7 @@ var require_cookie = __commonJS({
     function decode(str) {
       return str.indexOf("%") !== -1 ? decodeURIComponent(str) : str;
     }
-    function isDate(val) {
+    function isDate2(val) {
       return __toString.call(val) === "[object Date]";
     }
     function tryDecode(str, decode2) {
@@ -23980,19 +23980,19 @@ var require_common5 = __commonJS({
             args.unshift("%O");
           }
           let index2 = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match2, format2) => {
+            if (match2 === "%%") {
               return "%";
             }
             index2++;
-            const formatter = createDebug.formatters[format];
+            const formatter = createDebug.formatters[format2];
             if (typeof formatter === "function") {
               const val = args[index2];
-              match = formatter.call(self2, val);
+              match2 = formatter.call(self2, val);
               args.splice(index2, 1);
               index2--;
             }
-            return match;
+            return match2;
           });
           createDebug.formatArgs.call(self2, args);
           const logFn = self2.log || createDebug.log;
@@ -24227,12 +24227,12 @@ var require_browser5 = __commonJS({
       args.splice(1, 0, c, "color: inherit");
       let index2 = 0;
       let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
+      args[0].replace(/%[a-zA-Z%]/g, (match2) => {
+        if (match2 === "%%") {
           return;
         }
         index2++;
-        if (match === "%c") {
+        if (match2 === "%c") {
           lastC = index2;
         }
       });
@@ -24268,8 +24268,8 @@ var require_browser5 = __commonJS({
       }
     }
     module.exports = require_common5()(exports);
-    var { formatters } = module.exports;
-    formatters.j = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.j = function(v) {
       try {
         return JSON.stringify(v);
       } catch (error) {
@@ -24441,12 +24441,12 @@ var require_node5 = __commonJS({
       }
     }
     module.exports = require_common5()(exports);
-    var { formatters } = module.exports;
-    formatters.o = function(v) {
+    var { formatters: formatters2 } = module.exports;
+    formatters2.o = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts).split("\n").map((str) => str.trim()).join(" ");
     };
-    formatters.O = function(v) {
+    formatters2.O = function(v) {
       this.inspectOpts.colors = this.useColors;
       return util2.inspect(v, this.inspectOpts);
     };
@@ -24545,11 +24545,11 @@ var require_send = __commonJS({
     SendStream.prototype.isPreconditionFailure = function isPreconditionFailure() {
       var req = this.req;
       var res = this.res;
-      var match = req.headers["if-match"];
-      if (match) {
+      var match2 = req.headers["if-match"];
+      if (match2) {
         var etag2 = res.getHeader("ETag");
-        return !etag2 || match !== "*" && parseTokenList(match).every(function(match2) {
-          return match2 !== etag2 && match2 !== "W/" + etag2 && "W/" + match2 !== etag2;
+        return !etag2 || match2 !== "*" && parseTokenList(match2).every(function(match3) {
+          return match3 !== etag2 && match3 !== "W/" + etag2 && "W/" + match3 !== etag2;
         });
       }
       var unmodifiedSince = parseHttpDate(req.headers["if-unmodified-since"]);
@@ -26976,8 +26976,8 @@ var init_errors = __esm({
     init_entity();
     DrizzleError = class extends Error {
       static [entityKind] = "DrizzleError";
-      constructor({ message, cause }) {
-        super(message);
+      constructor({ message: message2, cause }) {
+        super(message2);
         this.name = "DrizzleError";
         this.cause = cause;
       }
@@ -27150,8 +27150,8 @@ var init_logger = __esm({
     init_entity();
     ConsoleLogWriter = class {
       static [entityKind] = "ConsoleLogWriter";
-      write(message) {
-        console.log(message);
+      write(message2) {
+        console.log(message2);
       }
     };
     DefaultLogger = class {
@@ -30281,19 +30281,19 @@ var require_pg_types = __commonJS({
     function noParse(val) {
       return String(val);
     }
-    function getTypeParser(oid, format) {
-      format = format || "text";
-      if (!typeParsers[format]) {
+    function getTypeParser(oid, format2) {
+      format2 = format2 || "text";
+      if (!typeParsers[format2]) {
         return noParse;
       }
-      return typeParsers[format][oid] || noParse;
+      return typeParsers[format2][oid] || noParse;
     }
-    function setTypeParser(oid, format, parseFn) {
-      if (typeof format == "function") {
-        parseFn = format;
-        format = "text";
+    function setTypeParser(oid, format2, parseFn) {
+      if (typeof format2 == "function") {
+        parseFn = format2;
+        format2 = "text";
       }
-      typeParsers[format][oid] = parseFn;
+      typeParsers[format2][oid] = parseFn;
     }
     textParsers.init(function(oid, converter) {
       typeParsers.text[oid] = converter;
@@ -30372,7 +30372,7 @@ var require_utils4 = __commonJS({
     "use strict";
     var defaults2 = require_defaults();
     var util2 = __require("util");
-    var { isDate } = util2.types || util2;
+    var { isDate: isDate2 } = util2.types || util2;
     function escapeElement(elementRepresentation) {
       const escaped = elementRepresentation.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       return '"' + escaped + '"';
@@ -30420,7 +30420,7 @@ var require_utils4 = __commonJS({
           }
           return buf2.slice(val.byteOffset, val.byteOffset + val.byteLength);
         }
-        if (isDate(val)) {
+        if (isDate2(val)) {
           if (defaults2.parseInputDatesAsUTC) {
             return dateToStringUTC(val);
           } else {
@@ -30916,8 +30916,8 @@ var require_type_overrides = __commonJS({
       this.text = {};
       this.binary = {};
     }
-    TypeOverrides2.prototype.getOverrides = function(format) {
-      switch (format) {
+    TypeOverrides2.prototype.getOverrides = function(format2) {
+      switch (format2) {
         case "text":
           return this.text;
         case "binary":
@@ -30926,16 +30926,16 @@ var require_type_overrides = __commonJS({
           return {};
       }
     };
-    TypeOverrides2.prototype.setTypeParser = function(oid, format, parseFn) {
-      if (typeof format === "function") {
-        parseFn = format;
-        format = "text";
+    TypeOverrides2.prototype.setTypeParser = function(oid, format2, parseFn) {
+      if (typeof format2 === "function") {
+        parseFn = format2;
+        format2 = "text";
       }
-      this.getOverrides(format)[oid] = parseFn;
+      this.getOverrides(format2)[oid] = parseFn;
     };
-    TypeOverrides2.prototype.getTypeParser = function(oid, format) {
-      format = format || "text";
-      return this.getOverrides(format)[oid] || this._types.getTypeParser(oid, format);
+    TypeOverrides2.prototype.getTypeParser = function(oid, format2) {
+      format2 = format2 || "text";
+      return this.getOverrides(format2)[oid] || this._types.getTypeParser(oid, format2);
     };
     module.exports = TypeOverrides2;
   }
@@ -31271,19 +31271,19 @@ var require_result = __commonJS({
       }
       // adds a command complete message
       addCommandComplete(msg) {
-        let match;
+        let match2;
         if (msg.text) {
-          match = matchRegexp.exec(msg.text);
+          match2 = matchRegexp.exec(msg.text);
         } else {
-          match = matchRegexp.exec(msg.command);
+          match2 = matchRegexp.exec(msg.command);
         }
-        if (match) {
-          this.command = match[1];
-          if (match[3]) {
-            this.oid = parseInt(match[2], 10);
-            this.rowCount = parseInt(match[3], 10);
-          } else if (match[2]) {
-            this.rowCount = parseInt(match[2], 10);
+        if (match2) {
+          this.command = match2[1];
+          if (match2[3]) {
+            this.oid = parseInt(match2[2], 10);
+            this.rowCount = parseInt(match2[3], 10);
+          } else if (match2[2]) {
+            this.rowCount = parseInt(match2[2], 10);
           }
         }
       }
@@ -31574,8 +31574,8 @@ var require_messages = __commonJS({
       length: 4
     };
     var DatabaseError2 = class extends Error {
-      constructor(message, length, name) {
-        super(message);
+      constructor(message2, length, name) {
+        super(message2);
         this.length = length;
         this.name = name;
       }
@@ -31599,14 +31599,14 @@ var require_messages = __commonJS({
     };
     exports.CopyResponse = CopyResponse;
     var Field = class {
-      constructor(name, tableID, columnID, dataTypeID, dataTypeSize, dataTypeModifier, format) {
+      constructor(name, tableID, columnID, dataTypeID, dataTypeSize, dataTypeModifier, format2) {
         this.name = name;
         this.tableID = tableID;
         this.columnID = columnID;
         this.dataTypeID = dataTypeID;
         this.dataTypeSize = dataTypeSize;
         this.dataTypeModifier = dataTypeModifier;
-        this.format = format;
+        this.format = format2;
       }
     };
     exports.Field = Field;
@@ -31690,9 +31690,9 @@ var require_messages = __commonJS({
     };
     exports.DataRowMessage = DataRowMessage;
     var NoticeMessage = class {
-      constructor(length, message) {
+      constructor(length, message2) {
         this.length = length;
-        this.message = message;
+        this.message = message2;
         this.name = "notice";
       }
     };
@@ -31954,8 +31954,8 @@ var require_serializer = __commonJS({
         /* code.copyFromChunk */
       );
     };
-    var copyFail = (message) => {
-      return cstringMessage(102, message);
+    var copyFail = (message2) => {
+      return cstringMessage(102, message2);
     };
     var codeOnlyBuffer = (code) => Buffer.from([code, 0, 0, 0, 4]);
     var flushBuffer = codeOnlyBuffer(
@@ -32090,8 +32090,8 @@ var require_parser = __commonJS({
           const length = this.buffer.readUInt32BE(offset + CODE_LENGTH);
           const fullMessageLength = CODE_LENGTH + length;
           if (fullMessageLength + offset <= bufferFullLength) {
-            const message = this.handlePacket(offset + HEADER_LENGTH, code, length, this.buffer);
-            callback(message);
+            const message2 = this.handlePacket(offset + HEADER_LENGTH, code, length, this.buffer);
+            callback(message2);
             offset += fullMessageLength;
           } else {
             break;
@@ -32207,11 +32207,11 @@ var require_parser = __commonJS({
         this.reader.setBuffer(offset, bytes);
         const isBinary = this.reader.byte() !== 0;
         const columnCount = this.reader.int16();
-        const message = new messages_1.CopyResponse(length, messageName, isBinary, columnCount);
+        const message2 = new messages_1.CopyResponse(length, messageName, isBinary, columnCount);
         for (let i = 0; i < columnCount; i++) {
-          message.columnTypes[i] = this.reader.int16();
+          message2.columnTypes[i] = this.reader.int16();
         }
-        return message;
+        return message2;
       }
       parseNotificationMessage(offset, length, bytes) {
         this.reader.setBuffer(offset, bytes);
@@ -32223,11 +32223,11 @@ var require_parser = __commonJS({
       parseRowDescriptionMessage(offset, length, bytes) {
         this.reader.setBuffer(offset, bytes);
         const fieldCount = this.reader.int16();
-        const message = new messages_1.RowDescriptionMessage(length, fieldCount);
+        const message2 = new messages_1.RowDescriptionMessage(length, fieldCount);
         for (let i = 0; i < fieldCount; i++) {
-          message.fields[i] = this.parseField();
+          message2.fields[i] = this.parseField();
         }
-        return message;
+        return message2;
       }
       parseField() {
         const name = this.reader.cstring();
@@ -32242,11 +32242,11 @@ var require_parser = __commonJS({
       parseParameterDescriptionMessage(offset, length, bytes) {
         this.reader.setBuffer(offset, bytes);
         const parameterCount = this.reader.int16();
-        const message = new messages_1.ParameterDescriptionMessage(length, parameterCount);
+        const message2 = new messages_1.ParameterDescriptionMessage(length, parameterCount);
         for (let i = 0; i < parameterCount; i++) {
-          message.dataTypeIDs[i] = this.reader.int32();
+          message2.dataTypeIDs[i] = this.reader.int32();
         }
-        return message;
+        return message2;
       }
       parseDataRowMessage(offset, length, bytes) {
         this.reader.setBuffer(offset, bytes);
@@ -32273,7 +32273,7 @@ var require_parser = __commonJS({
       parseAuthenticationResponse(offset, length, bytes) {
         this.reader.setBuffer(offset, bytes);
         const code = this.reader.int32();
-        const message = {
+        const message2 = {
           name: "authenticationOk",
           length
         };
@@ -32281,42 +32281,42 @@ var require_parser = __commonJS({
           case 0:
             break;
           case 3:
-            if (message.length === 8) {
-              message.name = "authenticationCleartextPassword";
+            if (message2.length === 8) {
+              message2.name = "authenticationCleartextPassword";
             }
             break;
           case 5:
-            if (message.length === 12) {
-              message.name = "authenticationMD5Password";
+            if (message2.length === 12) {
+              message2.name = "authenticationMD5Password";
               const salt = this.reader.bytes(4);
               return new messages_1.AuthenticationMD5Password(length, salt);
             }
             break;
           case 10:
             {
-              message.name = "authenticationSASL";
-              message.mechanisms = [];
+              message2.name = "authenticationSASL";
+              message2.mechanisms = [];
               let mechanism;
               do {
                 mechanism = this.reader.cstring();
                 if (mechanism) {
-                  message.mechanisms.push(mechanism);
+                  message2.mechanisms.push(mechanism);
                 }
               } while (mechanism);
             }
             break;
           case 11:
-            message.name = "authenticationSASLContinue";
-            message.data = this.reader.string(length - 8);
+            message2.name = "authenticationSASLContinue";
+            message2.data = this.reader.string(length - 8);
             break;
           case 12:
-            message.name = "authenticationSASLFinal";
-            message.data = this.reader.string(length - 8);
+            message2.name = "authenticationSASLFinal";
+            message2.data = this.reader.string(length - 8);
             break;
           default:
             throw new Error("Unknown authenticationOk message type " + code);
         }
-        return message;
+        return message2;
       }
       parseErrorMessage(offset, length, bytes, name) {
         this.reader.setBuffer(offset, bytes);
@@ -32327,24 +32327,24 @@ var require_parser = __commonJS({
           fieldType = this.reader.string(1);
         }
         const messageValue = fields.M;
-        const message = name === "notice" ? new messages_1.NoticeMessage(length, messageValue) : new messages_1.DatabaseError(messageValue, length, name);
-        message.severity = fields.S;
-        message.code = fields.C;
-        message.detail = fields.D;
-        message.hint = fields.H;
-        message.position = fields.P;
-        message.internalPosition = fields.p;
-        message.internalQuery = fields.q;
-        message.where = fields.W;
-        message.schema = fields.s;
-        message.table = fields.t;
-        message.column = fields.c;
-        message.dataType = fields.d;
-        message.constraint = fields.n;
-        message.file = fields.F;
-        message.line = fields.L;
-        message.routine = fields.R;
-        return message;
+        const message2 = name === "notice" ? new messages_1.NoticeMessage(length, messageValue) : new messages_1.DatabaseError(messageValue, length, name);
+        message2.severity = fields.S;
+        message2.code = fields.C;
+        message2.detail = fields.D;
+        message2.hint = fields.H;
+        message2.position = fields.P;
+        message2.internalPosition = fields.p;
+        message2.internalQuery = fields.q;
+        message2.where = fields.W;
+        message2.schema = fields.s;
+        message2.table = fields.t;
+        message2.column = fields.c;
+        message2.dataType = fields.d;
+        message2.constraint = fields.n;
+        message2.file = fields.F;
+        message2.line = fields.L;
+        message2.routine = fields.R;
+        return message2;
       }
     };
     exports.Parser = Parser;
@@ -33316,11 +33316,11 @@ var require_client = __commonJS({
           client.queryQueue.splice(client.queryQueue.indexOf(query), 1);
         }
       }
-      setTypeParser(oid, format, parseFn) {
-        return this._types.setTypeParser(oid, format, parseFn);
+      setTypeParser(oid, format2, parseFn) {
+        return this._types.setTypeParser(oid, format2, parseFn);
       }
-      getTypeParser(oid, format) {
-        return this._types.getTypeParser(oid, format);
+      getTypeParser(oid, format2) {
+        return this._types.getTypeParser(oid, format2);
       }
       // escapeIdentifier and escapeLiteral moved to utility functions & exported
       // on PG
@@ -34217,11 +34217,11 @@ var require_client2 = __commonJS({
     };
     Client2.prototype.unref = function() {
     };
-    Client2.prototype.setTypeParser = function(oid, format, parseFn) {
-      return this._types.setTypeParser(oid, format, parseFn);
+    Client2.prototype.setTypeParser = function(oid, format2, parseFn) {
+      return this._types.setTypeParser(oid, format2, parseFn);
     };
-    Client2.prototype.getTypeParser = function(oid, format) {
-      return this._types.getTypeParser(oid, format);
+    Client2.prototype.getTypeParser = function(oid, format2) {
+      return this._types.getTypeParser(oid, format2);
     };
   }
 });
@@ -38292,7 +38292,7 @@ var init_session2 = __esm({
           text: queryString,
           types: {
             // @ts-ignore
-            getTypeParser: (typeId, format) => {
+            getTypeParser: (typeId, format2) => {
               if (typeId === types2.builtins.TIMESTAMPTZ) {
                 return (val) => val;
               }
@@ -38305,7 +38305,7 @@ var init_session2 = __esm({
               if (typeId === types2.builtins.INTERVAL) {
                 return (val) => val;
               }
-              return types2.getTypeParser(typeId, format);
+              return types2.getTypeParser(typeId, format2);
             }
           }
         };
@@ -38315,7 +38315,7 @@ var init_session2 = __esm({
           rowMode: "array",
           types: {
             // @ts-ignore
-            getTypeParser: (typeId, format) => {
+            getTypeParser: (typeId, format2) => {
               if (typeId === types2.builtins.TIMESTAMPTZ) {
                 return (val) => val;
               }
@@ -38328,7 +38328,7 @@ var init_session2 = __esm({
               if (typeId === types2.builtins.INTERVAL) {
                 return (val) => val;
               }
-              return types2.getTypeParser(typeId, format);
+              return types2.getTypeParser(typeId, format2);
             }
           }
         };
@@ -38588,16 +38588,16 @@ function processCreateParams(params) {
     return { errorMap: errorMap2, description };
   const customMap = (iss, ctx) => {
     var _a, _b;
-    const { message } = params;
+    const { message: message2 } = params;
     if (iss.code === "invalid_enum_value") {
-      return { message: message !== null && message !== void 0 ? message : ctx.defaultError };
+      return { message: message2 !== null && message2 !== void 0 ? message2 : ctx.defaultError };
     }
     if (typeof ctx.data === "undefined") {
-      return { message: (_a = message !== null && message !== void 0 ? message : required_error) !== null && _a !== void 0 ? _a : ctx.defaultError };
+      return { message: (_a = message2 !== null && message2 !== void 0 ? message2 : required_error) !== null && _a !== void 0 ? _a : ctx.defaultError };
     }
     if (iss.code !== "invalid_type")
       return { message: ctx.defaultError };
-    return { message: (_b = message !== null && message !== void 0 ? message : invalid_type_error) !== null && _b !== void 0 ? _b : ctx.defaultError };
+    return { message: (_b = message2 !== null && message2 !== void 0 ? message2 : invalid_type_error) !== null && _b !== void 0 ? _b : ctx.defaultError };
   };
   return { errorMap: customMap, description };
 }
@@ -39014,102 +39014,102 @@ var init_lib = __esm({
       return error;
     };
     errorMap = (issue, _ctx) => {
-      let message;
+      let message2;
       switch (issue.code) {
         case ZodIssueCode.invalid_type:
           if (issue.received === ZodParsedType.undefined) {
-            message = "Required";
+            message2 = "Required";
           } else {
-            message = `Expected ${issue.expected}, received ${issue.received}`;
+            message2 = `Expected ${issue.expected}, received ${issue.received}`;
           }
           break;
         case ZodIssueCode.invalid_literal:
-          message = `Invalid literal value, expected ${JSON.stringify(issue.expected, util.jsonStringifyReplacer)}`;
+          message2 = `Invalid literal value, expected ${JSON.stringify(issue.expected, util.jsonStringifyReplacer)}`;
           break;
         case ZodIssueCode.unrecognized_keys:
-          message = `Unrecognized key(s) in object: ${util.joinValues(issue.keys, ", ")}`;
+          message2 = `Unrecognized key(s) in object: ${util.joinValues(issue.keys, ", ")}`;
           break;
         case ZodIssueCode.invalid_union:
-          message = `Invalid input`;
+          message2 = `Invalid input`;
           break;
         case ZodIssueCode.invalid_union_discriminator:
-          message = `Invalid discriminator value. Expected ${util.joinValues(issue.options)}`;
+          message2 = `Invalid discriminator value. Expected ${util.joinValues(issue.options)}`;
           break;
         case ZodIssueCode.invalid_enum_value:
-          message = `Invalid enum value. Expected ${util.joinValues(issue.options)}, received '${issue.received}'`;
+          message2 = `Invalid enum value. Expected ${util.joinValues(issue.options)}, received '${issue.received}'`;
           break;
         case ZodIssueCode.invalid_arguments:
-          message = `Invalid function arguments`;
+          message2 = `Invalid function arguments`;
           break;
         case ZodIssueCode.invalid_return_type:
-          message = `Invalid function return type`;
+          message2 = `Invalid function return type`;
           break;
         case ZodIssueCode.invalid_date:
-          message = `Invalid date`;
+          message2 = `Invalid date`;
           break;
         case ZodIssueCode.invalid_string:
           if (typeof issue.validation === "object") {
             if ("includes" in issue.validation) {
-              message = `Invalid input: must include "${issue.validation.includes}"`;
+              message2 = `Invalid input: must include "${issue.validation.includes}"`;
               if (typeof issue.validation.position === "number") {
-                message = `${message} at one or more positions greater than or equal to ${issue.validation.position}`;
+                message2 = `${message2} at one or more positions greater than or equal to ${issue.validation.position}`;
               }
             } else if ("startsWith" in issue.validation) {
-              message = `Invalid input: must start with "${issue.validation.startsWith}"`;
+              message2 = `Invalid input: must start with "${issue.validation.startsWith}"`;
             } else if ("endsWith" in issue.validation) {
-              message = `Invalid input: must end with "${issue.validation.endsWith}"`;
+              message2 = `Invalid input: must end with "${issue.validation.endsWith}"`;
             } else {
               util.assertNever(issue.validation);
             }
           } else if (issue.validation !== "regex") {
-            message = `Invalid ${issue.validation}`;
+            message2 = `Invalid ${issue.validation}`;
           } else {
-            message = "Invalid";
+            message2 = "Invalid";
           }
           break;
         case ZodIssueCode.too_small:
           if (issue.type === "array")
-            message = `Array must contain ${issue.exact ? "exactly" : issue.inclusive ? `at least` : `more than`} ${issue.minimum} element(s)`;
+            message2 = `Array must contain ${issue.exact ? "exactly" : issue.inclusive ? `at least` : `more than`} ${issue.minimum} element(s)`;
           else if (issue.type === "string")
-            message = `String must contain ${issue.exact ? "exactly" : issue.inclusive ? `at least` : `over`} ${issue.minimum} character(s)`;
+            message2 = `String must contain ${issue.exact ? "exactly" : issue.inclusive ? `at least` : `over`} ${issue.minimum} character(s)`;
           else if (issue.type === "number")
-            message = `Number must be ${issue.exact ? `exactly equal to ` : issue.inclusive ? `greater than or equal to ` : `greater than `}${issue.minimum}`;
+            message2 = `Number must be ${issue.exact ? `exactly equal to ` : issue.inclusive ? `greater than or equal to ` : `greater than `}${issue.minimum}`;
           else if (issue.type === "date")
-            message = `Date must be ${issue.exact ? `exactly equal to ` : issue.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue.minimum))}`;
+            message2 = `Date must be ${issue.exact ? `exactly equal to ` : issue.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue.minimum))}`;
           else
-            message = "Invalid input";
+            message2 = "Invalid input";
           break;
         case ZodIssueCode.too_big:
           if (issue.type === "array")
-            message = `Array must contain ${issue.exact ? `exactly` : issue.inclusive ? `at most` : `less than`} ${issue.maximum} element(s)`;
+            message2 = `Array must contain ${issue.exact ? `exactly` : issue.inclusive ? `at most` : `less than`} ${issue.maximum} element(s)`;
           else if (issue.type === "string")
-            message = `String must contain ${issue.exact ? `exactly` : issue.inclusive ? `at most` : `under`} ${issue.maximum} character(s)`;
+            message2 = `String must contain ${issue.exact ? `exactly` : issue.inclusive ? `at most` : `under`} ${issue.maximum} character(s)`;
           else if (issue.type === "number")
-            message = `Number must be ${issue.exact ? `exactly` : issue.inclusive ? `less than or equal to` : `less than`} ${issue.maximum}`;
+            message2 = `Number must be ${issue.exact ? `exactly` : issue.inclusive ? `less than or equal to` : `less than`} ${issue.maximum}`;
           else if (issue.type === "bigint")
-            message = `BigInt must be ${issue.exact ? `exactly` : issue.inclusive ? `less than or equal to` : `less than`} ${issue.maximum}`;
+            message2 = `BigInt must be ${issue.exact ? `exactly` : issue.inclusive ? `less than or equal to` : `less than`} ${issue.maximum}`;
           else if (issue.type === "date")
-            message = `Date must be ${issue.exact ? `exactly` : issue.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue.maximum))}`;
+            message2 = `Date must be ${issue.exact ? `exactly` : issue.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue.maximum))}`;
           else
-            message = "Invalid input";
+            message2 = "Invalid input";
           break;
         case ZodIssueCode.custom:
-          message = `Invalid input`;
+          message2 = `Invalid input`;
           break;
         case ZodIssueCode.invalid_intersection_types:
-          message = `Intersection results could not be merged`;
+          message2 = `Intersection results could not be merged`;
           break;
         case ZodIssueCode.not_multiple_of:
-          message = `Number must be a multiple of ${issue.multipleOf}`;
+          message2 = `Number must be a multiple of ${issue.multipleOf}`;
           break;
         case ZodIssueCode.not_finite:
-          message = "Number must be finite";
+          message2 = "Number must be finite";
           break;
         default:
-          message = _ctx.defaultError;
+          message2 = _ctx.defaultError;
           util.assertNever(issue);
       }
-      return { message };
+      return { message: message2 };
     };
     overrideErrorMap = errorMap;
     makeIssue = (params) => {
@@ -39202,8 +39202,8 @@ var init_lib = __esm({
     isValid = (x) => x.status === "valid";
     isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
     (function(errorUtil2) {
-      errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
-      errorUtil2.toString = (message) => typeof message === "string" ? message : message === null || message === void 0 ? void 0 : message.message;
+      errorUtil2.errToObj = (message2) => typeof message2 === "string" ? { message: message2 } : message2 || {};
+      errorUtil2.toString = (message2) => typeof message2 === "string" ? message2 : message2 === null || message2 === void 0 ? void 0 : message2.message;
     })(errorUtil || (errorUtil = {}));
     ParseInputLazyPath = class {
       constructor(parent, value, path3, key) {
@@ -39367,14 +39367,14 @@ var init_lib = __esm({
         const result = await (isAsync(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
         return handleResult(ctx, result);
       }
-      refine(check, message) {
+      refine(check, message2) {
         const getIssueProperties = (val) => {
-          if (typeof message === "string" || typeof message === "undefined") {
-            return { message };
-          } else if (typeof message === "function") {
-            return message(val);
+          if (typeof message2 === "string" || typeof message2 === "undefined") {
+            return { message: message2 };
+          } else if (typeof message2 === "function") {
+            return message2(val);
           } else {
-            return message;
+            return message2;
           }
         };
         return this._refinement((val, ctx) => {
@@ -39847,11 +39847,11 @@ var init_lib = __esm({
         }
         return { status: status.value, value: input.data };
       }
-      _regex(regex, validation, message) {
+      _regex(regex, validation, message2) {
         return this.refinement((data) => regex.test(data), {
           validation,
           code: ZodIssueCode.invalid_string,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
       _addCheck(check) {
@@ -39860,37 +39860,37 @@ var init_lib = __esm({
           checks: [...this._def.checks, check]
         });
       }
-      email(message) {
-        return this._addCheck({ kind: "email", ...errorUtil.errToObj(message) });
+      email(message2) {
+        return this._addCheck({ kind: "email", ...errorUtil.errToObj(message2) });
       }
-      url(message) {
-        return this._addCheck({ kind: "url", ...errorUtil.errToObj(message) });
+      url(message2) {
+        return this._addCheck({ kind: "url", ...errorUtil.errToObj(message2) });
       }
-      emoji(message) {
-        return this._addCheck({ kind: "emoji", ...errorUtil.errToObj(message) });
+      emoji(message2) {
+        return this._addCheck({ kind: "emoji", ...errorUtil.errToObj(message2) });
       }
-      uuid(message) {
-        return this._addCheck({ kind: "uuid", ...errorUtil.errToObj(message) });
+      uuid(message2) {
+        return this._addCheck({ kind: "uuid", ...errorUtil.errToObj(message2) });
       }
-      nanoid(message) {
-        return this._addCheck({ kind: "nanoid", ...errorUtil.errToObj(message) });
+      nanoid(message2) {
+        return this._addCheck({ kind: "nanoid", ...errorUtil.errToObj(message2) });
       }
-      cuid(message) {
-        return this._addCheck({ kind: "cuid", ...errorUtil.errToObj(message) });
+      cuid(message2) {
+        return this._addCheck({ kind: "cuid", ...errorUtil.errToObj(message2) });
       }
-      cuid2(message) {
-        return this._addCheck({ kind: "cuid2", ...errorUtil.errToObj(message) });
+      cuid2(message2) {
+        return this._addCheck({ kind: "cuid2", ...errorUtil.errToObj(message2) });
       }
-      ulid(message) {
-        return this._addCheck({ kind: "ulid", ...errorUtil.errToObj(message) });
+      ulid(message2) {
+        return this._addCheck({ kind: "ulid", ...errorUtil.errToObj(message2) });
       }
-      base64(message) {
-        return this._addCheck({ kind: "base64", ...errorUtil.errToObj(message) });
+      base64(message2) {
+        return this._addCheck({ kind: "base64", ...errorUtil.errToObj(message2) });
       }
-      base64url(message) {
+      base64url(message2) {
         return this._addCheck({
           kind: "base64url",
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
       jwt(options) {
@@ -39921,8 +39921,8 @@ var init_lib = __esm({
           ...errorUtil.errToObj(options === null || options === void 0 ? void 0 : options.message)
         });
       }
-      date(message) {
-        return this._addCheck({ kind: "date", message });
+      date(message2) {
+        return this._addCheck({ kind: "date", message: message2 });
       }
       time(options) {
         if (typeof options === "string") {
@@ -39938,14 +39938,14 @@ var init_lib = __esm({
           ...errorUtil.errToObj(options === null || options === void 0 ? void 0 : options.message)
         });
       }
-      duration(message) {
-        return this._addCheck({ kind: "duration", ...errorUtil.errToObj(message) });
+      duration(message2) {
+        return this._addCheck({ kind: "duration", ...errorUtil.errToObj(message2) });
       }
-      regex(regex, message) {
+      regex(regex, message2) {
         return this._addCheck({
           kind: "regex",
           regex,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
       includes(value, options) {
@@ -39956,46 +39956,46 @@ var init_lib = __esm({
           ...errorUtil.errToObj(options === null || options === void 0 ? void 0 : options.message)
         });
       }
-      startsWith(value, message) {
+      startsWith(value, message2) {
         return this._addCheck({
           kind: "startsWith",
           value,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
-      endsWith(value, message) {
+      endsWith(value, message2) {
         return this._addCheck({
           kind: "endsWith",
           value,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
-      min(minLength, message) {
+      min(minLength, message2) {
         return this._addCheck({
           kind: "min",
           value: minLength,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
-      max(maxLength, message) {
+      max(maxLength, message2) {
         return this._addCheck({
           kind: "max",
           value: maxLength,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
-      length(len, message) {
+      length(len, message2) {
         return this._addCheck({
           kind: "length",
           value: len,
-          ...errorUtil.errToObj(message)
+          ...errorUtil.errToObj(message2)
         });
       }
       /**
        * Equivalent to `.min(1)`
        */
-      nonempty(message) {
-        return this.min(1, errorUtil.errToObj(message));
+      nonempty(message2) {
+        return this.min(1, errorUtil.errToObj(message2));
       }
       trim() {
         return new _ZodString({
@@ -40181,19 +40181,19 @@ var init_lib = __esm({
         }
         return { status: status.value, value: input.data };
       }
-      gte(value, message) {
-        return this.setLimit("min", value, true, errorUtil.toString(message));
+      gte(value, message2) {
+        return this.setLimit("min", value, true, errorUtil.toString(message2));
       }
-      gt(value, message) {
-        return this.setLimit("min", value, false, errorUtil.toString(message));
+      gt(value, message2) {
+        return this.setLimit("min", value, false, errorUtil.toString(message2));
       }
-      lte(value, message) {
-        return this.setLimit("max", value, true, errorUtil.toString(message));
+      lte(value, message2) {
+        return this.setLimit("max", value, true, errorUtil.toString(message2));
       }
-      lt(value, message) {
-        return this.setLimit("max", value, false, errorUtil.toString(message));
+      lt(value, message2) {
+        return this.setLimit("max", value, false, errorUtil.toString(message2));
       }
-      setLimit(kind, value, inclusive, message) {
+      setLimit(kind, value, inclusive, message2) {
         return new _ZodNumber({
           ...this._def,
           checks: [
@@ -40202,7 +40202,7 @@ var init_lib = __esm({
               kind,
               value,
               inclusive,
-              message: errorUtil.toString(message)
+              message: errorUtil.toString(message2)
             }
           ]
         });
@@ -40213,68 +40213,68 @@ var init_lib = __esm({
           checks: [...this._def.checks, check]
         });
       }
-      int(message) {
+      int(message2) {
         return this._addCheck({
           kind: "int",
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      positive(message) {
+      positive(message2) {
         return this._addCheck({
           kind: "min",
           value: 0,
           inclusive: false,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      negative(message) {
+      negative(message2) {
         return this._addCheck({
           kind: "max",
           value: 0,
           inclusive: false,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      nonpositive(message) {
+      nonpositive(message2) {
         return this._addCheck({
           kind: "max",
           value: 0,
           inclusive: true,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      nonnegative(message) {
+      nonnegative(message2) {
         return this._addCheck({
           kind: "min",
           value: 0,
           inclusive: true,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      multipleOf(value, message) {
+      multipleOf(value, message2) {
         return this._addCheck({
           kind: "multipleOf",
           value,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      finite(message) {
+      finite(message2) {
         return this._addCheck({
           kind: "finite",
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      safe(message) {
+      safe(message2) {
         return this._addCheck({
           kind: "min",
           inclusive: true,
           value: Number.MIN_SAFE_INTEGER,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         })._addCheck({
           kind: "max",
           inclusive: true,
           value: Number.MAX_SAFE_INTEGER,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
       get minValue() {
@@ -40396,19 +40396,19 @@ var init_lib = __esm({
         });
         return INVALID;
       }
-      gte(value, message) {
-        return this.setLimit("min", value, true, errorUtil.toString(message));
+      gte(value, message2) {
+        return this.setLimit("min", value, true, errorUtil.toString(message2));
       }
-      gt(value, message) {
-        return this.setLimit("min", value, false, errorUtil.toString(message));
+      gt(value, message2) {
+        return this.setLimit("min", value, false, errorUtil.toString(message2));
       }
-      lte(value, message) {
-        return this.setLimit("max", value, true, errorUtil.toString(message));
+      lte(value, message2) {
+        return this.setLimit("max", value, true, errorUtil.toString(message2));
       }
-      lt(value, message) {
-        return this.setLimit("max", value, false, errorUtil.toString(message));
+      lt(value, message2) {
+        return this.setLimit("max", value, false, errorUtil.toString(message2));
       }
-      setLimit(kind, value, inclusive, message) {
+      setLimit(kind, value, inclusive, message2) {
         return new _ZodBigInt({
           ...this._def,
           checks: [
@@ -40417,7 +40417,7 @@ var init_lib = __esm({
               kind,
               value,
               inclusive,
-              message: errorUtil.toString(message)
+              message: errorUtil.toString(message2)
             }
           ]
         });
@@ -40428,43 +40428,43 @@ var init_lib = __esm({
           checks: [...this._def.checks, check]
         });
       }
-      positive(message) {
+      positive(message2) {
         return this._addCheck({
           kind: "min",
           value: BigInt(0),
           inclusive: false,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      negative(message) {
+      negative(message2) {
         return this._addCheck({
           kind: "max",
           value: BigInt(0),
           inclusive: false,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      nonpositive(message) {
+      nonpositive(message2) {
         return this._addCheck({
           kind: "max",
           value: BigInt(0),
           inclusive: true,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      nonnegative(message) {
+      nonnegative(message2) {
         return this._addCheck({
           kind: "min",
           value: BigInt(0),
           inclusive: true,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      multipleOf(value, message) {
+      multipleOf(value, message2) {
         return this._addCheck({
           kind: "multipleOf",
           value,
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
       get minValue() {
@@ -40588,18 +40588,18 @@ var init_lib = __esm({
           checks: [...this._def.checks, check]
         });
       }
-      min(minDate, message) {
+      min(minDate, message2) {
         return this._addCheck({
           kind: "min",
           value: minDate.getTime(),
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
-      max(maxDate, message) {
+      max(maxDate, message2) {
         return this._addCheck({
           kind: "max",
           value: maxDate.getTime(),
-          message: errorUtil.toString(message)
+          message: errorUtil.toString(message2)
         });
       }
       get minDate() {
@@ -40831,26 +40831,26 @@ var init_lib = __esm({
       get element() {
         return this._def.type;
       }
-      min(minLength, message) {
+      min(minLength, message2) {
         return new _ZodArray({
           ...this._def,
-          minLength: { value: minLength, message: errorUtil.toString(message) }
+          minLength: { value: minLength, message: errorUtil.toString(message2) }
         });
       }
-      max(maxLength, message) {
+      max(maxLength, message2) {
         return new _ZodArray({
           ...this._def,
-          maxLength: { value: maxLength, message: errorUtil.toString(message) }
+          maxLength: { value: maxLength, message: errorUtil.toString(message2) }
         });
       }
-      length(len, message) {
+      length(len, message2) {
         return new _ZodArray({
           ...this._def,
-          exactLength: { value: len, message: errorUtil.toString(message) }
+          exactLength: { value: len, message: errorUtil.toString(message2) }
         });
       }
-      nonempty(message) {
-        return this.min(1, message);
+      nonempty(message2) {
+        return this.min(1, message2);
       }
     };
     ZodArray.create = (schema, params) => {
@@ -40966,18 +40966,18 @@ var init_lib = __esm({
       get shape() {
         return this._def.shape();
       }
-      strict(message) {
+      strict(message2) {
         errorUtil.errToObj;
         return new _ZodObject({
           ...this._def,
           unknownKeys: "strict",
-          ...message !== void 0 ? {
+          ...message2 !== void 0 ? {
             errorMap: (issue, ctx) => {
               var _a, _b, _c, _d;
               const defaultError = (_c = (_b = (_a = this._def).errorMap) === null || _b === void 0 ? void 0 : _b.call(_a, issue, ctx).message) !== null && _c !== void 0 ? _c : ctx.defaultError;
               if (issue.code === "unrecognized_keys")
                 return {
-                  message: (_d = errorUtil.errToObj(message).message) !== null && _d !== void 0 ? _d : defaultError
+                  message: (_d = errorUtil.errToObj(message2).message) !== null && _d !== void 0 ? _d : defaultError
                 };
               return {
                 message: defaultError
@@ -41695,23 +41695,23 @@ var init_lib = __esm({
           return finalizeSet(elements);
         }
       }
-      min(minSize, message) {
+      min(minSize, message2) {
         return new _ZodSet({
           ...this._def,
-          minSize: { value: minSize, message: errorUtil.toString(message) }
+          minSize: { value: minSize, message: errorUtil.toString(message2) }
         });
       }
-      max(maxSize, message) {
+      max(maxSize, message2) {
         return new _ZodSet({
           ...this._def,
-          maxSize: { value: maxSize, message: errorUtil.toString(message) }
+          maxSize: { value: maxSize, message: errorUtil.toString(message2) }
         });
       }
-      size(size, message) {
-        return this.min(size, message).max(size, message);
+      size(size, message2) {
+        return this.min(size, message2).max(size, message2);
       }
-      nonempty(message) {
-        return this.min(1, message);
+      nonempty(message2) {
+        return this.min(1, message2);
       }
     };
     ZodSet.create = (valueType, params) => {
@@ -42913,6 +42913,8 @@ __export(schema_exports, {
   insertPhotoRuleSchema: () => insertPhotoRuleSchema,
   insertServiceChecklistItemSchema: () => insertServiceChecklistItemSchema,
   insertServicePackageSchema: () => insertServicePackageSchema,
+  insertStaffAlertSchema: () => insertStaffAlertSchema,
+  insertTechnicianTimeLogSchema: () => insertTechnicianTimeLogSchema,
   insertUserRoleSchema: () => insertUserRoleSchema,
   insertUserSchema: () => insertUserSchema,
   insertWashJobSchema: () => insertWashJobSchema,
@@ -42929,6 +42931,8 @@ __export(schema_exports, {
   serviceChecklistItems: () => serviceChecklistItems,
   servicePackages: () => servicePackages,
   sessions: () => sessions,
+  staffAlerts: () => staffAlerts,
+  technicianTimeLogs: () => technicianTimeLogs,
   userRoleEnum: () => userRoleEnum,
   userRoles: () => userRoles,
   users: () => users2,
@@ -42937,7 +42941,7 @@ __export(schema_exports, {
   washStatusEnum: () => washStatusEnum,
   webhookRetries: () => webhookRetries
 });
-var userRoleEnum, washStatusEnum, countryHintEnum, photoRuleEnum, userRoles, washJobs, washPhotos, businessSettings, parkingSettings, parkingZones, parkingSessions, frequentParkers, parkingReservations, eventLogs, webhookRetries, users2, customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules, servicePackages, customerMemberships, parkingValidations, customerNotifications, notificationTemplates, insertUserRoleSchema, insertWashJobSchema, insertWashPhotoSchema, insertParkingSessionSchema, insertParkingSettingsSchema, insertParkingZoneSchema, insertFrequentParkerSchema, insertParkingReservationSchema, insertEventLogSchema, insertWebhookRetrySchema, insertUserSchema, insertCustomerJobAccessSchema, insertServiceChecklistItemSchema, insertCustomerConfirmationSchema, insertPhotoRuleSchema, insertBusinessSettingsSchema, insertServicePackageSchema, insertCustomerMembershipSchema, insertParkingValidationSchema, insertCustomerNotificationSchema, insertNotificationTemplateSchema, WASH_STATUS_ORDER, COUNTRY_HINTS, PHOTO_RULES, SERVICE_CODES, RESERVATION_STATUSES, MEMBERSHIP_TYPES, NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, NOTIFICATION_STATUSES, SUPPORTED_CURRENCIES;
+var userRoleEnum, washStatusEnum, countryHintEnum, photoRuleEnum, userRoles, washJobs, washPhotos, businessSettings, parkingSettings, parkingZones, parkingSessions, frequentParkers, parkingReservations, eventLogs, webhookRetries, users2, customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules, servicePackages, customerMemberships, parkingValidations, customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts, insertUserRoleSchema, insertWashJobSchema, insertWashPhotoSchema, insertParkingSessionSchema, insertParkingSettingsSchema, insertParkingZoneSchema, insertFrequentParkerSchema, insertParkingReservationSchema, insertEventLogSchema, insertWebhookRetrySchema, insertUserSchema, insertCustomerJobAccessSchema, insertServiceChecklistItemSchema, insertCustomerConfirmationSchema, insertPhotoRuleSchema, insertBusinessSettingsSchema, insertServicePackageSchema, insertCustomerMembershipSchema, insertParkingValidationSchema, insertCustomerNotificationSchema, insertNotificationTemplateSchema, insertTechnicianTimeLogSchema, insertStaffAlertSchema, WASH_STATUS_ORDER, COUNTRY_HINTS, PHOTO_RULES, SERVICE_CODES, RESERVATION_STATUSES, MEMBERSHIP_TYPES, NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, NOTIFICATION_STATUSES, SUPPORTED_CURRENCIES;
 var init_schema2 = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -43287,6 +43291,30 @@ var init_schema2 = __esm({
       createdAt: timestamp("created_at").defaultNow(),
       updatedAt: timestamp("updated_at").defaultNow()
     });
+    technicianTimeLogs = pgTable("technician_time_logs", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      technicianId: varchar("technician_id").notNull(),
+      clockInAt: timestamp("clock_in_at").notNull(),
+      clockOutAt: timestamp("clock_out_at"),
+      totalMinutes: integer("total_minutes"),
+      // calculated on clock-out
+      breakLogs: jsonb("break_logs").$type().default([]),
+      notes: text("notes"),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow()
+    });
+    staffAlerts = pgTable("staff_alerts", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      technicianId: varchar("technician_id").notNull(),
+      type: varchar("type").notNull().$type(),
+      message: text("message"),
+      estimatedArrival: varchar("estimated_arrival"),
+      // e.g. "10:30"
+      acknowledged: boolean("acknowledged").default(false),
+      acknowledgedBy: varchar("acknowledged_by"),
+      acknowledgedAt: timestamp("acknowledged_at"),
+      createdAt: timestamp("created_at").defaultNow()
+    });
     insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
     insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
     insertWashPhotoSchema = createInsertSchema(washPhotos).omit({ id: true, createdAt: true });
@@ -43308,6 +43336,8 @@ var init_schema2 = __esm({
     insertParkingValidationSchema = createInsertSchema(parkingValidations).omit({ id: true, createdAt: true });
     insertCustomerNotificationSchema = createInsertSchema(customerNotifications).omit({ id: true, createdAt: true, updatedAt: true });
     insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+    insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLogs).omit({ id: true, createdAt: true, updatedAt: true });
+    insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
     WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"];
     COUNTRY_HINTS = ["FR", "ZA", "CD", "OTHER"];
     PHOTO_RULES = ["optional", "required", "disabled"];
@@ -44037,6 +44067,89 @@ var init_storage = __esm({
         ));
         return membership;
       }
+      // ==========================================
+      // Technician Time Logs
+      // ==========================================
+      async clockIn(technicianId, notes) {
+        const [log] = await db.insert(technicianTimeLogs).values({
+          technicianId,
+          clockInAt: /* @__PURE__ */ new Date(),
+          notes: notes || null,
+          breakLogs: []
+        }).returning();
+        return log;
+      }
+      async clockOut(logId) {
+        const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+        if (!existing || existing.clockOutAt) return void 0;
+        const clockOut = /* @__PURE__ */ new Date();
+        const totalMs = clockOut.getTime() - existing.clockInAt.getTime();
+        const breakMinutes = (existing.breakLogs || []).reduce((acc, b) => {
+          return acc + (b.durationMinutes || 0);
+        }, 0);
+        const totalMinutes = Math.floor(totalMs / 6e4) - breakMinutes;
+        const [updated] = await db.update(technicianTimeLogs).set({ clockOutAt: clockOut, totalMinutes: Math.max(0, totalMinutes), updatedAt: /* @__PURE__ */ new Date() }).where(eq(technicianTimeLogs.id, logId)).returning();
+        return updated;
+      }
+      async getActiveTimeLog(technicianId) {
+        const [log] = await db.select().from(technicianTimeLogs).where(and(eq(technicianTimeLogs.technicianId, technicianId), isNull(technicianTimeLogs.clockOutAt))).orderBy(desc(technicianTimeLogs.clockInAt)).limit(1);
+        return log;
+      }
+      async getTimeLogs(filters) {
+        const conditions = [];
+        if (filters?.technicianId) conditions.push(eq(technicianTimeLogs.technicianId, filters.technicianId));
+        if (filters?.fromDate) conditions.push(gte(technicianTimeLogs.clockInAt, filters.fromDate));
+        if (filters?.toDate) conditions.push(lte(technicianTimeLogs.clockInAt, filters.toDate));
+        let query = db.select().from(technicianTimeLogs);
+        if (conditions.length > 0) query = query.where(and(...conditions));
+        query = query.orderBy(desc(technicianTimeLogs.clockInAt));
+        if (filters?.limit) query = query.limit(filters.limit);
+        return query;
+      }
+      async addBreakLog(logId, breakEntry) {
+        const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+        if (!existing) return void 0;
+        const updatedBreaks = [...existing.breakLogs || [], { ...breakEntry, startAt: (/* @__PURE__ */ new Date()).toISOString() }];
+        const [updated] = await db.update(technicianTimeLogs).set({ breakLogs: updatedBreaks, updatedAt: /* @__PURE__ */ new Date() }).where(eq(technicianTimeLogs.id, logId)).returning();
+        return updated;
+      }
+      async endBreakLog(logId) {
+        const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+        if (!existing) return void 0;
+        const breaks = [...existing.breakLogs || []];
+        const lastBreak = breaks[breaks.length - 1];
+        if (!lastBreak || lastBreak.endAt) return existing;
+        const endAt = (/* @__PURE__ */ new Date()).toISOString();
+        const durationMinutes = Math.floor((new Date(endAt).getTime() - new Date(lastBreak.startAt).getTime()) / 6e4);
+        breaks[breaks.length - 1] = { ...lastBreak, endAt, durationMinutes };
+        const [updated] = await db.update(technicianTimeLogs).set({ breakLogs: breaks, updatedAt: /* @__PURE__ */ new Date() }).where(eq(technicianTimeLogs.id, logId)).returning();
+        return updated;
+      }
+      // ==========================================
+      // Staff Alerts (running late, absent, etc.)
+      // ==========================================
+      async createStaffAlert(data) {
+        const [alert] = await db.insert(staffAlerts).values({
+          technicianId: data.technicianId,
+          type: data.type,
+          message: data.message || null,
+          estimatedArrival: data.estimatedArrival || null,
+          acknowledged: false
+        }).returning();
+        return alert;
+      }
+      async getStaffAlerts(filters) {
+        const conditions = [];
+        if (filters?.unacknowledgedOnly) conditions.push(eq(staffAlerts.acknowledged, false));
+        if (filters?.technicianId) conditions.push(eq(staffAlerts.technicianId, filters.technicianId));
+        let query = db.select().from(staffAlerts);
+        if (conditions.length > 0) query = query.where(and(...conditions));
+        return query.orderBy(desc(staffAlerts.createdAt));
+      }
+      async acknowledgeStaffAlert(alertId, acknowledgedBy) {
+        const [updated] = await db.update(staffAlerts).set({ acknowledged: true, acknowledgedBy, acknowledgedAt: /* @__PURE__ */ new Date() }).where(eq(staffAlerts.id, alertId)).returning();
+        return updated;
+      }
       async findMembershipByEmail(email) {
         const [membership] = await db.select().from(customerMemberships).where(and(
           eq(customerMemberships.customerEmail, email),
@@ -44331,11 +44444,11 @@ var require_initialize = __commonJS({
 // node_modules/passport/lib/errors/authenticationerror.js
 var require_authenticationerror = __commonJS({
   "node_modules/passport/lib/errors/authenticationerror.js"(exports, module) {
-    function AuthenticationError(message, status) {
+    function AuthenticationError(message2, status) {
       Error.call(this);
       Error.captureStackTrace(this, arguments.callee);
       this.name = "AuthenticationError";
-      this.message = message;
+      this.message = message2;
       this.status = status || 401;
     }
     AuthenticationError.prototype.__proto__ = Error.prototype;
@@ -44904,7 +45017,7 @@ var require_cookie2 = __commonJS({
       }
       if (opt.expires) {
         var expires = opt.expires;
-        if (!isDate(expires) || isNaN(expires.valueOf())) {
+        if (!isDate2(expires) || isNaN(expires.valueOf())) {
           throw new TypeError("option expires is invalid");
         }
         str += "; Expires=" + expires.toUTCString();
@@ -44958,7 +45071,7 @@ var require_cookie2 = __commonJS({
     function decode(str) {
       return str.indexOf("%") !== -1 ? decodeURIComponent(str) : str;
     }
-    function isDate(val) {
+    function isDate2(val) {
       return __toString.call(val) === "[object Date]";
     }
     function tryDecode(str, decode2) {
@@ -44996,14 +45109,14 @@ var require_ms2 = __commonJS({
       if (str.length > 100) {
         return;
       }
-      var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(
+      var match2 = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(
         str
       );
-      if (!match) {
+      if (!match2) {
         return;
       }
-      var n = parseFloat(match[1]);
-      var type = (match[2] || "ms").toLowerCase();
+      var n = parseFloat(match2[1]);
+      var type = (match2[2] || "ms").toLowerCase();
       switch (type) {
         case "years":
         case "year":
@@ -45113,17 +45226,17 @@ var require_debug = __commonJS({
           args.unshift("%O");
         }
         var index2 = 0;
-        args[0] = args[0].replace(/%([a-zA-Z%])/g, function(match, format) {
-          if (match === "%%") return match;
+        args[0] = args[0].replace(/%([a-zA-Z%])/g, function(match2, format2) {
+          if (match2 === "%%") return match2;
           index2++;
-          var formatter = exports.formatters[format];
+          var formatter = exports.formatters[format2];
           if ("function" === typeof formatter) {
             var val = args[index2];
-            match = formatter.call(self2, val);
+            match2 = formatter.call(self2, val);
             args.splice(index2, 1);
             index2--;
           }
-          return match;
+          return match2;
         });
         exports.formatArgs.call(self2, args);
         var logFn = debug.log || exports.log || console.log.bind(console);
@@ -45221,10 +45334,10 @@ var require_browser6 = __commonJS({
       args.splice(1, 0, c, "color: inherit");
       var index2 = 0;
       var lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, function(match) {
-        if ("%%" === match) return;
+      args[0].replace(/%[a-zA-Z%]/g, function(match2) {
+        if ("%%" === match2) return;
         index2++;
-        if ("%c" === match) {
+        if ("%c" === match2) {
           lastC = index2;
         }
       });
@@ -46595,8 +46708,8 @@ var require_custom = __commonJS({
     var isObject = require_is_object();
     var isValue = require_is_value();
     var captureStackTrace = Error.captureStackTrace;
-    module.exports = function(message) {
-      var err = new Error(message), code = arguments[1], ext = arguments[2];
+    module.exports = function(message2) {
+      var err = new Error(message2), code = arguments[1], ext = arguments[2];
       if (!isValue(ext)) {
         if (isObject(code)) {
           ext = code;
@@ -50859,8 +50972,8 @@ async function authenticateWithCredentials(email, password) {
   if (!user.isActive) {
     return { success: false, error: "Account is disabled" };
   }
-  const isValid2 = await verifyPassword(password, user.passwordHash);
-  if (!isValid2) {
+  const isValid3 = await verifyPassword(password, user.passwordHash);
+  if (!isValid3) {
     return { success: false, error: "Invalid email or password" };
   }
   return { success: true, user };
@@ -51042,10 +51155,10 @@ var require_main = __commonJS({
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
-      let match;
-      while ((match = LINE.exec(lines)) != null) {
-        const key = match[1];
-        let value = match[2] || "";
+      let match2;
+      while ((match2 = LINE.exec(lines)) != null) {
+        const key = match2[1];
+        let value = match2[2] || "";
         value = value.trim();
         const maybeQuote = value[0];
         value = value.replace(/^(['"`])([\s\S]*)\1$/mg, "$2");
@@ -51084,14 +51197,14 @@ var require_main = __commonJS({
       }
       return DotenvModule.parse(decrypted);
     }
-    function _warn(message) {
-      console.error(`[dotenv@${version2}][WARN] ${message}`);
+    function _warn(message2) {
+      console.error(`[dotenv@${version2}][WARN] ${message2}`);
     }
-    function _debug(message) {
-      console.log(`[dotenv@${version2}][DEBUG] ${message}`);
+    function _debug(message2) {
+      console.log(`[dotenv@${version2}][DEBUG] ${message2}`);
     }
-    function _log(message) {
-      console.log(`[dotenv@${version2}] ${message}`);
+    function _log(message2) {
+      console.log(`[dotenv@${version2}] ${message2}`);
     }
     function _dotenvKey(options) {
       if (options && options.DOTENV_KEY && options.DOTENV_KEY.length > 0) {
@@ -51397,8 +51510,8 @@ function looseInstanceOf(input, expected) {
 }
 var ERR_INVALID_ARG_VALUE = "ERR_INVALID_ARG_VALUE";
 var ERR_INVALID_ARG_TYPE = "ERR_INVALID_ARG_TYPE";
-function CodedTypeError(message, code, cause) {
-  const err = new TypeError(message, { cause });
+function CodedTypeError(message2, code, cause) {
+  const err = new TypeError(message2, { cause });
   Object.assign(err, { code });
   return err;
 }
@@ -51469,8 +51582,8 @@ function b64u(input) {
 }
 var UnsupportedOperationError = class extends Error {
   code;
-  constructor(message, options) {
-    super(message, options);
+  constructor(message2, options) {
+    super(message2, options);
     this.name = this.constructor.name;
     this.code = UNSUPPORTED_OPERATION;
     Error.captureStackTrace?.(this, this.constructor);
@@ -51478,8 +51591,8 @@ var UnsupportedOperationError = class extends Error {
 };
 var OperationProcessingError = class extends Error {
   code;
-  constructor(message, options) {
-    super(message, options);
+  constructor(message2, options) {
+    super(message2, options);
     this.name = this.constructor.name;
     if (options?.code) {
       this.code = options?.code;
@@ -51487,8 +51600,8 @@ var OperationProcessingError = class extends Error {
     Error.captureStackTrace?.(this, this.constructor);
   }
 };
-function OPE(message, code, cause) {
-  return new OperationProcessingError(message, { code, cause });
+function OPE(message2, code, cause) {
+  return new OperationProcessingError(message2, { code, cause });
 }
 function assertCryptoKey(key, it) {
   if (!(key instanceof CryptoKey)) {
@@ -51914,8 +52027,8 @@ var ResponseBodyError = class extends Error {
   status;
   error_description;
   response;
-  constructor(message, options) {
-    super(message, options);
+  constructor(message2, options) {
+    super(message2, options);
     this.name = this.constructor.name;
     this.code = RESPONSE_BODY_ERROR;
     this.cause = options.cause;
@@ -51931,8 +52044,8 @@ var AuthorizationResponseError = class extends Error {
   code;
   error;
   error_description;
-  constructor(message, options) {
-    super(message, options);
+  constructor(message2, options) {
+    super(message2, options);
     this.name = this.constructor.name;
     this.code = AUTHORIZATION_RESPONSE_ERROR;
     this.cause = options.cause;
@@ -51946,8 +52059,8 @@ var WWWAuthenticateChallengeError = class extends Error {
   code;
   response;
   status;
-  constructor(message, options) {
-    super(message, options);
+  constructor(message2, options) {
+    super(message2, options);
     this.name = this.constructor.name;
     this.code = WWW_AUTHENTICATE_CHALLENGE;
     this.cause = options.cause;
@@ -51977,12 +52090,12 @@ function parseWwwAuthenticateChallenges(response) {
   const challenges = [];
   let rest = header;
   while (rest) {
-    let match = rest.match(schemeRE);
-    const scheme = match?.["1"].toLowerCase();
+    let match2 = rest.match(schemeRE);
+    const scheme = match2?.["1"].toLowerCase();
     if (!scheme) {
       return void 0;
     }
-    const afterScheme = rest.substring(match[0].length);
+    const afterScheme = rest.substring(match2[0].length);
     if (afterScheme && !afterScheme.match(/^[\s,]/)) {
       return void 0;
     }
@@ -51995,9 +52108,9 @@ function parseWwwAuthenticateChallenges(response) {
       while (rest) {
         let key;
         let value;
-        if (match = rest.match(quotedParamRE)) {
+        if (match2 = rest.match(quotedParamRE)) {
           ;
-          [, key, value, rest] = match;
+          [, key, value, rest] = match2;
           if (value.includes("\\")) {
             try {
               value = JSON.parse(`"${value}"`);
@@ -52007,18 +52120,18 @@ function parseWwwAuthenticateChallenges(response) {
           parameters[key.toLowerCase()] = value;
           continue;
         }
-        if (match = rest.match(unquotedParamRE)) {
+        if (match2 = rest.match(unquotedParamRE)) {
           ;
-          [, key, value, rest] = match;
+          [, key, value, rest] = match2;
           parameters[key.toLowerCase()] = value;
           continue;
         }
-        if (match = rest.match(token68ParamRE)) {
+        if (match2 = rest.match(token68ParamRE)) {
           if (Object.keys(parameters).length) {
             break;
           }
           ;
-          [, token68, rest] = match;
+          [, token68, rest] = match2;
           break;
         }
         return void 0;
@@ -52698,8 +52811,8 @@ var customFetch2 = customFetch;
 var modifyAssertion2 = modifyAssertion;
 var ERR_INVALID_ARG_VALUE2 = "ERR_INVALID_ARG_VALUE";
 var ERR_INVALID_ARG_TYPE2 = "ERR_INVALID_ARG_TYPE";
-function CodedTypeError2(message, code, cause) {
-  const err = new TypeError(message, { cause });
+function CodedTypeError2(message2, code, cause) {
+  const err = new TypeError(message2, { cause });
   Object.assign(err, { code });
   return err;
 }
@@ -52717,8 +52830,8 @@ function randomState() {
 }
 var ClientError = class extends Error {
   code;
-  constructor(message, options) {
-    super(message, options);
+  constructor(message2, options) {
+    super(message2, options);
     this.name = this.constructor.name;
     this.code = options?.code;
     Error.captureStackTrace?.(this, this.constructor);
@@ -53724,6 +53837,1737 @@ async function savePhoto(base64Data) {
   };
 }
 
+// server/lib/notification-service.ts
+init_storage();
+
+// node_modules/date-fns/toDate.mjs
+function toDate(argument) {
+  const argStr = Object.prototype.toString.call(argument);
+  if (argument instanceof Date || typeof argument === "object" && argStr === "[object Date]") {
+    return new argument.constructor(+argument);
+  } else if (typeof argument === "number" || argStr === "[object Number]" || typeof argument === "string" || argStr === "[object String]") {
+    return new Date(argument);
+  } else {
+    return /* @__PURE__ */ new Date(NaN);
+  }
+}
+
+// node_modules/date-fns/constructFrom.mjs
+function constructFrom(date2, value) {
+  if (date2 instanceof Date) {
+    return new date2.constructor(value);
+  } else {
+    return new Date(value);
+  }
+}
+
+// node_modules/date-fns/constants.mjs
+var daysInYear = 365.2425;
+var maxTime = Math.pow(10, 8) * 24 * 60 * 60 * 1e3;
+var minTime = -maxTime;
+var millisecondsInWeek = 6048e5;
+var millisecondsInDay = 864e5;
+var secondsInHour = 3600;
+var secondsInDay = secondsInHour * 24;
+var secondsInWeek = secondsInDay * 7;
+var secondsInYear = secondsInDay * daysInYear;
+var secondsInMonth = secondsInYear / 12;
+var secondsInQuarter = secondsInMonth * 3;
+
+// node_modules/date-fns/_lib/defaultOptions.mjs
+var defaultOptions = {};
+function getDefaultOptions() {
+  return defaultOptions;
+}
+
+// node_modules/date-fns/startOfWeek.mjs
+function startOfWeek(date2, options) {
+  const defaultOptions2 = getDefaultOptions();
+  const weekStartsOn = options?.weekStartsOn ?? options?.locale?.options?.weekStartsOn ?? defaultOptions2.weekStartsOn ?? defaultOptions2.locale?.options?.weekStartsOn ?? 0;
+  const _date = toDate(date2);
+  const day = _date.getDay();
+  const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;
+  _date.setDate(_date.getDate() - diff);
+  _date.setHours(0, 0, 0, 0);
+  return _date;
+}
+
+// node_modules/date-fns/startOfISOWeek.mjs
+function startOfISOWeek(date2) {
+  return startOfWeek(date2, { weekStartsOn: 1 });
+}
+
+// node_modules/date-fns/getISOWeekYear.mjs
+function getISOWeekYear(date2) {
+  const _date = toDate(date2);
+  const year = _date.getFullYear();
+  const fourthOfJanuaryOfNextYear = constructFrom(date2, 0);
+  fourthOfJanuaryOfNextYear.setFullYear(year + 1, 0, 4);
+  fourthOfJanuaryOfNextYear.setHours(0, 0, 0, 0);
+  const startOfNextYear = startOfISOWeek(fourthOfJanuaryOfNextYear);
+  const fourthOfJanuaryOfThisYear = constructFrom(date2, 0);
+  fourthOfJanuaryOfThisYear.setFullYear(year, 0, 4);
+  fourthOfJanuaryOfThisYear.setHours(0, 0, 0, 0);
+  const startOfThisYear = startOfISOWeek(fourthOfJanuaryOfThisYear);
+  if (_date.getTime() >= startOfNextYear.getTime()) {
+    return year + 1;
+  } else if (_date.getTime() >= startOfThisYear.getTime()) {
+    return year;
+  } else {
+    return year - 1;
+  }
+}
+
+// node_modules/date-fns/startOfDay.mjs
+function startOfDay(date2) {
+  const _date = toDate(date2);
+  _date.setHours(0, 0, 0, 0);
+  return _date;
+}
+
+// node_modules/date-fns/_lib/getTimezoneOffsetInMilliseconds.mjs
+function getTimezoneOffsetInMilliseconds(date2) {
+  const _date = toDate(date2);
+  const utcDate = new Date(
+    Date.UTC(
+      _date.getFullYear(),
+      _date.getMonth(),
+      _date.getDate(),
+      _date.getHours(),
+      _date.getMinutes(),
+      _date.getSeconds(),
+      _date.getMilliseconds()
+    )
+  );
+  utcDate.setUTCFullYear(_date.getFullYear());
+  return +date2 - +utcDate;
+}
+
+// node_modules/date-fns/differenceInCalendarDays.mjs
+function differenceInCalendarDays(dateLeft, dateRight) {
+  const startOfDayLeft = startOfDay(dateLeft);
+  const startOfDayRight = startOfDay(dateRight);
+  const timestampLeft = +startOfDayLeft - getTimezoneOffsetInMilliseconds(startOfDayLeft);
+  const timestampRight = +startOfDayRight - getTimezoneOffsetInMilliseconds(startOfDayRight);
+  return Math.round((timestampLeft - timestampRight) / millisecondsInDay);
+}
+
+// node_modules/date-fns/startOfISOWeekYear.mjs
+function startOfISOWeekYear(date2) {
+  const year = getISOWeekYear(date2);
+  const fourthOfJanuary = constructFrom(date2, 0);
+  fourthOfJanuary.setFullYear(year, 0, 4);
+  fourthOfJanuary.setHours(0, 0, 0, 0);
+  return startOfISOWeek(fourthOfJanuary);
+}
+
+// node_modules/date-fns/isDate.mjs
+function isDate(value) {
+  return value instanceof Date || typeof value === "object" && Object.prototype.toString.call(value) === "[object Date]";
+}
+
+// node_modules/date-fns/isValid.mjs
+function isValid2(date2) {
+  if (!isDate(date2) && typeof date2 !== "number") {
+    return false;
+  }
+  const _date = toDate(date2);
+  return !isNaN(Number(_date));
+}
+
+// node_modules/date-fns/startOfYear.mjs
+function startOfYear(date2) {
+  const cleanDate = toDate(date2);
+  const _date = constructFrom(date2, 0);
+  _date.setFullYear(cleanDate.getFullYear(), 0, 1);
+  _date.setHours(0, 0, 0, 0);
+  return _date;
+}
+
+// node_modules/date-fns/locale/en-US/_lib/formatDistance.mjs
+var formatDistanceLocale = {
+  lessThanXSeconds: {
+    one: "less than a second",
+    other: "less than {{count}} seconds"
+  },
+  xSeconds: {
+    one: "1 second",
+    other: "{{count}} seconds"
+  },
+  halfAMinute: "half a minute",
+  lessThanXMinutes: {
+    one: "less than a minute",
+    other: "less than {{count}} minutes"
+  },
+  xMinutes: {
+    one: "1 minute",
+    other: "{{count}} minutes"
+  },
+  aboutXHours: {
+    one: "about 1 hour",
+    other: "about {{count}} hours"
+  },
+  xHours: {
+    one: "1 hour",
+    other: "{{count}} hours"
+  },
+  xDays: {
+    one: "1 day",
+    other: "{{count}} days"
+  },
+  aboutXWeeks: {
+    one: "about 1 week",
+    other: "about {{count}} weeks"
+  },
+  xWeeks: {
+    one: "1 week",
+    other: "{{count}} weeks"
+  },
+  aboutXMonths: {
+    one: "about 1 month",
+    other: "about {{count}} months"
+  },
+  xMonths: {
+    one: "1 month",
+    other: "{{count}} months"
+  },
+  aboutXYears: {
+    one: "about 1 year",
+    other: "about {{count}} years"
+  },
+  xYears: {
+    one: "1 year",
+    other: "{{count}} years"
+  },
+  overXYears: {
+    one: "over 1 year",
+    other: "over {{count}} years"
+  },
+  almostXYears: {
+    one: "almost 1 year",
+    other: "almost {{count}} years"
+  }
+};
+var formatDistance = (token, count, options) => {
+  let result;
+  const tokenValue = formatDistanceLocale[token];
+  if (typeof tokenValue === "string") {
+    result = tokenValue;
+  } else if (count === 1) {
+    result = tokenValue.one;
+  } else {
+    result = tokenValue.other.replace("{{count}}", count.toString());
+  }
+  if (options?.addSuffix) {
+    if (options.comparison && options.comparison > 0) {
+      return "in " + result;
+    } else {
+      return result + " ago";
+    }
+  }
+  return result;
+};
+
+// node_modules/date-fns/locale/_lib/buildFormatLongFn.mjs
+function buildFormatLongFn(args) {
+  return (options = {}) => {
+    const width = options.width ? String(options.width) : args.defaultWidth;
+    const format2 = args.formats[width] || args.formats[args.defaultWidth];
+    return format2;
+  };
+}
+
+// node_modules/date-fns/locale/en-US/_lib/formatLong.mjs
+var dateFormats = {
+  full: "EEEE, MMMM do, y",
+  long: "MMMM do, y",
+  medium: "MMM d, y",
+  short: "MM/dd/yyyy"
+};
+var timeFormats = {
+  full: "h:mm:ss a zzzz",
+  long: "h:mm:ss a z",
+  medium: "h:mm:ss a",
+  short: "h:mm a"
+};
+var dateTimeFormats = {
+  full: "{{date}} 'at' {{time}}",
+  long: "{{date}} 'at' {{time}}",
+  medium: "{{date}}, {{time}}",
+  short: "{{date}}, {{time}}"
+};
+var formatLong = {
+  date: buildFormatLongFn({
+    formats: dateFormats,
+    defaultWidth: "full"
+  }),
+  time: buildFormatLongFn({
+    formats: timeFormats,
+    defaultWidth: "full"
+  }),
+  dateTime: buildFormatLongFn({
+    formats: dateTimeFormats,
+    defaultWidth: "full"
+  })
+};
+
+// node_modules/date-fns/locale/en-US/_lib/formatRelative.mjs
+var formatRelativeLocale = {
+  lastWeek: "'last' eeee 'at' p",
+  yesterday: "'yesterday at' p",
+  today: "'today at' p",
+  tomorrow: "'tomorrow at' p",
+  nextWeek: "eeee 'at' p",
+  other: "P"
+};
+var formatRelative = (token, _date, _baseDate, _options) => formatRelativeLocale[token];
+
+// node_modules/date-fns/locale/_lib/buildLocalizeFn.mjs
+function buildLocalizeFn(args) {
+  return (value, options) => {
+    const context = options?.context ? String(options.context) : "standalone";
+    let valuesArray;
+    if (context === "formatting" && args.formattingValues) {
+      const defaultWidth = args.defaultFormattingWidth || args.defaultWidth;
+      const width = options?.width ? String(options.width) : defaultWidth;
+      valuesArray = args.formattingValues[width] || args.formattingValues[defaultWidth];
+    } else {
+      const defaultWidth = args.defaultWidth;
+      const width = options?.width ? String(options.width) : args.defaultWidth;
+      valuesArray = args.values[width] || args.values[defaultWidth];
+    }
+    const index2 = args.argumentCallback ? args.argumentCallback(value) : value;
+    return valuesArray[index2];
+  };
+}
+
+// node_modules/date-fns/locale/en-US/_lib/localize.mjs
+var eraValues = {
+  narrow: ["B", "A"],
+  abbreviated: ["BC", "AD"],
+  wide: ["Before Christ", "Anno Domini"]
+};
+var quarterValues = {
+  narrow: ["1", "2", "3", "4"],
+  abbreviated: ["Q1", "Q2", "Q3", "Q4"],
+  wide: ["1st quarter", "2nd quarter", "3rd quarter", "4th quarter"]
+};
+var monthValues = {
+  narrow: ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"],
+  abbreviated: [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec"
+  ],
+  wide: [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December"
+  ]
+};
+var dayValues = {
+  narrow: ["S", "M", "T", "W", "T", "F", "S"],
+  short: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"],
+  abbreviated: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+  wide: [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday"
+  ]
+};
+var dayPeriodValues = {
+  narrow: {
+    am: "a",
+    pm: "p",
+    midnight: "mi",
+    noon: "n",
+    morning: "morning",
+    afternoon: "afternoon",
+    evening: "evening",
+    night: "night"
+  },
+  abbreviated: {
+    am: "AM",
+    pm: "PM",
+    midnight: "midnight",
+    noon: "noon",
+    morning: "morning",
+    afternoon: "afternoon",
+    evening: "evening",
+    night: "night"
+  },
+  wide: {
+    am: "a.m.",
+    pm: "p.m.",
+    midnight: "midnight",
+    noon: "noon",
+    morning: "morning",
+    afternoon: "afternoon",
+    evening: "evening",
+    night: "night"
+  }
+};
+var formattingDayPeriodValues = {
+  narrow: {
+    am: "a",
+    pm: "p",
+    midnight: "mi",
+    noon: "n",
+    morning: "in the morning",
+    afternoon: "in the afternoon",
+    evening: "in the evening",
+    night: "at night"
+  },
+  abbreviated: {
+    am: "AM",
+    pm: "PM",
+    midnight: "midnight",
+    noon: "noon",
+    morning: "in the morning",
+    afternoon: "in the afternoon",
+    evening: "in the evening",
+    night: "at night"
+  },
+  wide: {
+    am: "a.m.",
+    pm: "p.m.",
+    midnight: "midnight",
+    noon: "noon",
+    morning: "in the morning",
+    afternoon: "in the afternoon",
+    evening: "in the evening",
+    night: "at night"
+  }
+};
+var ordinalNumber = (dirtyNumber, _options) => {
+  const number = Number(dirtyNumber);
+  const rem100 = number % 100;
+  if (rem100 > 20 || rem100 < 10) {
+    switch (rem100 % 10) {
+      case 1:
+        return number + "st";
+      case 2:
+        return number + "nd";
+      case 3:
+        return number + "rd";
+    }
+  }
+  return number + "th";
+};
+var localize = {
+  ordinalNumber,
+  era: buildLocalizeFn({
+    values: eraValues,
+    defaultWidth: "wide"
+  }),
+  quarter: buildLocalizeFn({
+    values: quarterValues,
+    defaultWidth: "wide",
+    argumentCallback: (quarter) => quarter - 1
+  }),
+  month: buildLocalizeFn({
+    values: monthValues,
+    defaultWidth: "wide"
+  }),
+  day: buildLocalizeFn({
+    values: dayValues,
+    defaultWidth: "wide"
+  }),
+  dayPeriod: buildLocalizeFn({
+    values: dayPeriodValues,
+    defaultWidth: "wide",
+    formattingValues: formattingDayPeriodValues,
+    defaultFormattingWidth: "wide"
+  })
+};
+
+// node_modules/date-fns/locale/_lib/buildMatchFn.mjs
+function buildMatchFn(args) {
+  return (string, options = {}) => {
+    const width = options.width;
+    const matchPattern = width && args.matchPatterns[width] || args.matchPatterns[args.defaultMatchWidth];
+    const matchResult = string.match(matchPattern);
+    if (!matchResult) {
+      return null;
+    }
+    const matchedString = matchResult[0];
+    const parsePatterns = width && args.parsePatterns[width] || args.parsePatterns[args.defaultParseWidth];
+    const key = Array.isArray(parsePatterns) ? findIndex(parsePatterns, (pattern) => pattern.test(matchedString)) : (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- I challange you to fix the type
+      findKey(parsePatterns, (pattern) => pattern.test(matchedString))
+    );
+    let value;
+    value = args.valueCallback ? args.valueCallback(key) : key;
+    value = options.valueCallback ? (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- I challange you to fix the type
+      options.valueCallback(value)
+    ) : value;
+    const rest = string.slice(matchedString.length);
+    return { value, rest };
+  };
+}
+function findKey(object, predicate) {
+  for (const key in object) {
+    if (Object.prototype.hasOwnProperty.call(object, key) && predicate(object[key])) {
+      return key;
+    }
+  }
+  return void 0;
+}
+function findIndex(array, predicate) {
+  for (let key = 0; key < array.length; key++) {
+    if (predicate(array[key])) {
+      return key;
+    }
+  }
+  return void 0;
+}
+
+// node_modules/date-fns/locale/_lib/buildMatchPatternFn.mjs
+function buildMatchPatternFn(args) {
+  return (string, options = {}) => {
+    const matchResult = string.match(args.matchPattern);
+    if (!matchResult) return null;
+    const matchedString = matchResult[0];
+    const parseResult = string.match(args.parsePattern);
+    if (!parseResult) return null;
+    let value = args.valueCallback ? args.valueCallback(parseResult[0]) : parseResult[0];
+    value = options.valueCallback ? options.valueCallback(value) : value;
+    const rest = string.slice(matchedString.length);
+    return { value, rest };
+  };
+}
+
+// node_modules/date-fns/locale/en-US/_lib/match.mjs
+var matchOrdinalNumberPattern = /^(\d+)(th|st|nd|rd)?/i;
+var parseOrdinalNumberPattern = /\d+/i;
+var matchEraPatterns = {
+  narrow: /^(b|a)/i,
+  abbreviated: /^(b\.?\s?c\.?|b\.?\s?c\.?\s?e\.?|a\.?\s?d\.?|c\.?\s?e\.?)/i,
+  wide: /^(before christ|before common era|anno domini|common era)/i
+};
+var parseEraPatterns = {
+  any: [/^b/i, /^(a|c)/i]
+};
+var matchQuarterPatterns = {
+  narrow: /^[1234]/i,
+  abbreviated: /^q[1234]/i,
+  wide: /^[1234](th|st|nd|rd)? quarter/i
+};
+var parseQuarterPatterns = {
+  any: [/1/i, /2/i, /3/i, /4/i]
+};
+var matchMonthPatterns = {
+  narrow: /^[jfmasond]/i,
+  abbreviated: /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i,
+  wide: /^(january|february|march|april|may|june|july|august|september|october|november|december)/i
+};
+var parseMonthPatterns = {
+  narrow: [
+    /^j/i,
+    /^f/i,
+    /^m/i,
+    /^a/i,
+    /^m/i,
+    /^j/i,
+    /^j/i,
+    /^a/i,
+    /^s/i,
+    /^o/i,
+    /^n/i,
+    /^d/i
+  ],
+  any: [
+    /^ja/i,
+    /^f/i,
+    /^mar/i,
+    /^ap/i,
+    /^may/i,
+    /^jun/i,
+    /^jul/i,
+    /^au/i,
+    /^s/i,
+    /^o/i,
+    /^n/i,
+    /^d/i
+  ]
+};
+var matchDayPatterns = {
+  narrow: /^[smtwf]/i,
+  short: /^(su|mo|tu|we|th|fr|sa)/i,
+  abbreviated: /^(sun|mon|tue|wed|thu|fri|sat)/i,
+  wide: /^(sunday|monday|tuesday|wednesday|thursday|friday|saturday)/i
+};
+var parseDayPatterns = {
+  narrow: [/^s/i, /^m/i, /^t/i, /^w/i, /^t/i, /^f/i, /^s/i],
+  any: [/^su/i, /^m/i, /^tu/i, /^w/i, /^th/i, /^f/i, /^sa/i]
+};
+var matchDayPeriodPatterns = {
+  narrow: /^(a|p|mi|n|(in the|at) (morning|afternoon|evening|night))/i,
+  any: /^([ap]\.?\s?m\.?|midnight|noon|(in the|at) (morning|afternoon|evening|night))/i
+};
+var parseDayPeriodPatterns = {
+  any: {
+    am: /^a/i,
+    pm: /^p/i,
+    midnight: /^mi/i,
+    noon: /^no/i,
+    morning: /morning/i,
+    afternoon: /afternoon/i,
+    evening: /evening/i,
+    night: /night/i
+  }
+};
+var match = {
+  ordinalNumber: buildMatchPatternFn({
+    matchPattern: matchOrdinalNumberPattern,
+    parsePattern: parseOrdinalNumberPattern,
+    valueCallback: (value) => parseInt(value, 10)
+  }),
+  era: buildMatchFn({
+    matchPatterns: matchEraPatterns,
+    defaultMatchWidth: "wide",
+    parsePatterns: parseEraPatterns,
+    defaultParseWidth: "any"
+  }),
+  quarter: buildMatchFn({
+    matchPatterns: matchQuarterPatterns,
+    defaultMatchWidth: "wide",
+    parsePatterns: parseQuarterPatterns,
+    defaultParseWidth: "any",
+    valueCallback: (index2) => index2 + 1
+  }),
+  month: buildMatchFn({
+    matchPatterns: matchMonthPatterns,
+    defaultMatchWidth: "wide",
+    parsePatterns: parseMonthPatterns,
+    defaultParseWidth: "any"
+  }),
+  day: buildMatchFn({
+    matchPatterns: matchDayPatterns,
+    defaultMatchWidth: "wide",
+    parsePatterns: parseDayPatterns,
+    defaultParseWidth: "any"
+  }),
+  dayPeriod: buildMatchFn({
+    matchPatterns: matchDayPeriodPatterns,
+    defaultMatchWidth: "any",
+    parsePatterns: parseDayPeriodPatterns,
+    defaultParseWidth: "any"
+  })
+};
+
+// node_modules/date-fns/locale/en-US.mjs
+var enUS = {
+  code: "en-US",
+  formatDistance,
+  formatLong,
+  formatRelative,
+  localize,
+  match,
+  options: {
+    weekStartsOn: 0,
+    firstWeekContainsDate: 1
+  }
+};
+
+// node_modules/date-fns/getDayOfYear.mjs
+function getDayOfYear(date2) {
+  const _date = toDate(date2);
+  const diff = differenceInCalendarDays(_date, startOfYear(_date));
+  const dayOfYear = diff + 1;
+  return dayOfYear;
+}
+
+// node_modules/date-fns/getISOWeek.mjs
+function getISOWeek(date2) {
+  const _date = toDate(date2);
+  const diff = +startOfISOWeek(_date) - +startOfISOWeekYear(_date);
+  return Math.round(diff / millisecondsInWeek) + 1;
+}
+
+// node_modules/date-fns/getWeekYear.mjs
+function getWeekYear(date2, options) {
+  const _date = toDate(date2);
+  const year = _date.getFullYear();
+  const defaultOptions2 = getDefaultOptions();
+  const firstWeekContainsDate = options?.firstWeekContainsDate ?? options?.locale?.options?.firstWeekContainsDate ?? defaultOptions2.firstWeekContainsDate ?? defaultOptions2.locale?.options?.firstWeekContainsDate ?? 1;
+  const firstWeekOfNextYear = constructFrom(date2, 0);
+  firstWeekOfNextYear.setFullYear(year + 1, 0, firstWeekContainsDate);
+  firstWeekOfNextYear.setHours(0, 0, 0, 0);
+  const startOfNextYear = startOfWeek(firstWeekOfNextYear, options);
+  const firstWeekOfThisYear = constructFrom(date2, 0);
+  firstWeekOfThisYear.setFullYear(year, 0, firstWeekContainsDate);
+  firstWeekOfThisYear.setHours(0, 0, 0, 0);
+  const startOfThisYear = startOfWeek(firstWeekOfThisYear, options);
+  if (_date.getTime() >= startOfNextYear.getTime()) {
+    return year + 1;
+  } else if (_date.getTime() >= startOfThisYear.getTime()) {
+    return year;
+  } else {
+    return year - 1;
+  }
+}
+
+// node_modules/date-fns/startOfWeekYear.mjs
+function startOfWeekYear(date2, options) {
+  const defaultOptions2 = getDefaultOptions();
+  const firstWeekContainsDate = options?.firstWeekContainsDate ?? options?.locale?.options?.firstWeekContainsDate ?? defaultOptions2.firstWeekContainsDate ?? defaultOptions2.locale?.options?.firstWeekContainsDate ?? 1;
+  const year = getWeekYear(date2, options);
+  const firstWeek = constructFrom(date2, 0);
+  firstWeek.setFullYear(year, 0, firstWeekContainsDate);
+  firstWeek.setHours(0, 0, 0, 0);
+  const _date = startOfWeek(firstWeek, options);
+  return _date;
+}
+
+// node_modules/date-fns/getWeek.mjs
+function getWeek(date2, options) {
+  const _date = toDate(date2);
+  const diff = +startOfWeek(_date, options) - +startOfWeekYear(_date, options);
+  return Math.round(diff / millisecondsInWeek) + 1;
+}
+
+// node_modules/date-fns/_lib/addLeadingZeros.mjs
+function addLeadingZeros(number, targetLength) {
+  const sign = number < 0 ? "-" : "";
+  const output = Math.abs(number).toString().padStart(targetLength, "0");
+  return sign + output;
+}
+
+// node_modules/date-fns/_lib/format/lightFormatters.mjs
+var lightFormatters = {
+  // Year
+  y(date2, token) {
+    const signedYear = date2.getFullYear();
+    const year = signedYear > 0 ? signedYear : 1 - signedYear;
+    return addLeadingZeros(token === "yy" ? year % 100 : year, token.length);
+  },
+  // Month
+  M(date2, token) {
+    const month = date2.getMonth();
+    return token === "M" ? String(month + 1) : addLeadingZeros(month + 1, 2);
+  },
+  // Day of the month
+  d(date2, token) {
+    return addLeadingZeros(date2.getDate(), token.length);
+  },
+  // AM or PM
+  a(date2, token) {
+    const dayPeriodEnumValue = date2.getHours() / 12 >= 1 ? "pm" : "am";
+    switch (token) {
+      case "a":
+      case "aa":
+        return dayPeriodEnumValue.toUpperCase();
+      case "aaa":
+        return dayPeriodEnumValue;
+      case "aaaaa":
+        return dayPeriodEnumValue[0];
+      case "aaaa":
+      default:
+        return dayPeriodEnumValue === "am" ? "a.m." : "p.m.";
+    }
+  },
+  // Hour [1-12]
+  h(date2, token) {
+    return addLeadingZeros(date2.getHours() % 12 || 12, token.length);
+  },
+  // Hour [0-23]
+  H(date2, token) {
+    return addLeadingZeros(date2.getHours(), token.length);
+  },
+  // Minute
+  m(date2, token) {
+    return addLeadingZeros(date2.getMinutes(), token.length);
+  },
+  // Second
+  s(date2, token) {
+    return addLeadingZeros(date2.getSeconds(), token.length);
+  },
+  // Fraction of second
+  S(date2, token) {
+    const numberOfDigits = token.length;
+    const milliseconds = date2.getMilliseconds();
+    const fractionalSeconds = Math.trunc(
+      milliseconds * Math.pow(10, numberOfDigits - 3)
+    );
+    return addLeadingZeros(fractionalSeconds, token.length);
+  }
+};
+
+// node_modules/date-fns/_lib/format/formatters.mjs
+var dayPeriodEnum = {
+  am: "am",
+  pm: "pm",
+  midnight: "midnight",
+  noon: "noon",
+  morning: "morning",
+  afternoon: "afternoon",
+  evening: "evening",
+  night: "night"
+};
+var formatters = {
+  // Era
+  G: function(date2, token, localize2) {
+    const era = date2.getFullYear() > 0 ? 1 : 0;
+    switch (token) {
+      // AD, BC
+      case "G":
+      case "GG":
+      case "GGG":
+        return localize2.era(era, { width: "abbreviated" });
+      // A, B
+      case "GGGGG":
+        return localize2.era(era, { width: "narrow" });
+      // Anno Domini, Before Christ
+      case "GGGG":
+      default:
+        return localize2.era(era, { width: "wide" });
+    }
+  },
+  // Year
+  y: function(date2, token, localize2) {
+    if (token === "yo") {
+      const signedYear = date2.getFullYear();
+      const year = signedYear > 0 ? signedYear : 1 - signedYear;
+      return localize2.ordinalNumber(year, { unit: "year" });
+    }
+    return lightFormatters.y(date2, token);
+  },
+  // Local week-numbering year
+  Y: function(date2, token, localize2, options) {
+    const signedWeekYear = getWeekYear(date2, options);
+    const weekYear = signedWeekYear > 0 ? signedWeekYear : 1 - signedWeekYear;
+    if (token === "YY") {
+      const twoDigitYear = weekYear % 100;
+      return addLeadingZeros(twoDigitYear, 2);
+    }
+    if (token === "Yo") {
+      return localize2.ordinalNumber(weekYear, { unit: "year" });
+    }
+    return addLeadingZeros(weekYear, token.length);
+  },
+  // ISO week-numbering year
+  R: function(date2, token) {
+    const isoWeekYear = getISOWeekYear(date2);
+    return addLeadingZeros(isoWeekYear, token.length);
+  },
+  // Extended year. This is a single number designating the year of this calendar system.
+  // The main difference between `y` and `u` localizers are B.C. years:
+  // | Year | `y` | `u` |
+  // |------|-----|-----|
+  // | AC 1 |   1 |   1 |
+  // | BC 1 |   1 |   0 |
+  // | BC 2 |   2 |  -1 |
+  // Also `yy` always returns the last two digits of a year,
+  // while `uu` pads single digit years to 2 characters and returns other years unchanged.
+  u: function(date2, token) {
+    const year = date2.getFullYear();
+    return addLeadingZeros(year, token.length);
+  },
+  // Quarter
+  Q: function(date2, token, localize2) {
+    const quarter = Math.ceil((date2.getMonth() + 1) / 3);
+    switch (token) {
+      // 1, 2, 3, 4
+      case "Q":
+        return String(quarter);
+      // 01, 02, 03, 04
+      case "QQ":
+        return addLeadingZeros(quarter, 2);
+      // 1st, 2nd, 3rd, 4th
+      case "Qo":
+        return localize2.ordinalNumber(quarter, { unit: "quarter" });
+      // Q1, Q2, Q3, Q4
+      case "QQQ":
+        return localize2.quarter(quarter, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      // 1, 2, 3, 4 (narrow quarter; could be not numerical)
+      case "QQQQQ":
+        return localize2.quarter(quarter, {
+          width: "narrow",
+          context: "formatting"
+        });
+      // 1st quarter, 2nd quarter, ...
+      case "QQQQ":
+      default:
+        return localize2.quarter(quarter, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // Stand-alone quarter
+  q: function(date2, token, localize2) {
+    const quarter = Math.ceil((date2.getMonth() + 1) / 3);
+    switch (token) {
+      // 1, 2, 3, 4
+      case "q":
+        return String(quarter);
+      // 01, 02, 03, 04
+      case "qq":
+        return addLeadingZeros(quarter, 2);
+      // 1st, 2nd, 3rd, 4th
+      case "qo":
+        return localize2.ordinalNumber(quarter, { unit: "quarter" });
+      // Q1, Q2, Q3, Q4
+      case "qqq":
+        return localize2.quarter(quarter, {
+          width: "abbreviated",
+          context: "standalone"
+        });
+      // 1, 2, 3, 4 (narrow quarter; could be not numerical)
+      case "qqqqq":
+        return localize2.quarter(quarter, {
+          width: "narrow",
+          context: "standalone"
+        });
+      // 1st quarter, 2nd quarter, ...
+      case "qqqq":
+      default:
+        return localize2.quarter(quarter, {
+          width: "wide",
+          context: "standalone"
+        });
+    }
+  },
+  // Month
+  M: function(date2, token, localize2) {
+    const month = date2.getMonth();
+    switch (token) {
+      case "M":
+      case "MM":
+        return lightFormatters.M(date2, token);
+      // 1st, 2nd, ..., 12th
+      case "Mo":
+        return localize2.ordinalNumber(month + 1, { unit: "month" });
+      // Jan, Feb, ..., Dec
+      case "MMM":
+        return localize2.month(month, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      // J, F, ..., D
+      case "MMMMM":
+        return localize2.month(month, {
+          width: "narrow",
+          context: "formatting"
+        });
+      // January, February, ..., December
+      case "MMMM":
+      default:
+        return localize2.month(month, { width: "wide", context: "formatting" });
+    }
+  },
+  // Stand-alone month
+  L: function(date2, token, localize2) {
+    const month = date2.getMonth();
+    switch (token) {
+      // 1, 2, ..., 12
+      case "L":
+        return String(month + 1);
+      // 01, 02, ..., 12
+      case "LL":
+        return addLeadingZeros(month + 1, 2);
+      // 1st, 2nd, ..., 12th
+      case "Lo":
+        return localize2.ordinalNumber(month + 1, { unit: "month" });
+      // Jan, Feb, ..., Dec
+      case "LLL":
+        return localize2.month(month, {
+          width: "abbreviated",
+          context: "standalone"
+        });
+      // J, F, ..., D
+      case "LLLLL":
+        return localize2.month(month, {
+          width: "narrow",
+          context: "standalone"
+        });
+      // January, February, ..., December
+      case "LLLL":
+      default:
+        return localize2.month(month, { width: "wide", context: "standalone" });
+    }
+  },
+  // Local week of year
+  w: function(date2, token, localize2, options) {
+    const week = getWeek(date2, options);
+    if (token === "wo") {
+      return localize2.ordinalNumber(week, { unit: "week" });
+    }
+    return addLeadingZeros(week, token.length);
+  },
+  // ISO week of year
+  I: function(date2, token, localize2) {
+    const isoWeek = getISOWeek(date2);
+    if (token === "Io") {
+      return localize2.ordinalNumber(isoWeek, { unit: "week" });
+    }
+    return addLeadingZeros(isoWeek, token.length);
+  },
+  // Day of the month
+  d: function(date2, token, localize2) {
+    if (token === "do") {
+      return localize2.ordinalNumber(date2.getDate(), { unit: "date" });
+    }
+    return lightFormatters.d(date2, token);
+  },
+  // Day of year
+  D: function(date2, token, localize2) {
+    const dayOfYear = getDayOfYear(date2);
+    if (token === "Do") {
+      return localize2.ordinalNumber(dayOfYear, { unit: "dayOfYear" });
+    }
+    return addLeadingZeros(dayOfYear, token.length);
+  },
+  // Day of week
+  E: function(date2, token, localize2) {
+    const dayOfWeek = date2.getDay();
+    switch (token) {
+      // Tue
+      case "E":
+      case "EE":
+      case "EEE":
+        return localize2.day(dayOfWeek, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      // T
+      case "EEEEE":
+        return localize2.day(dayOfWeek, {
+          width: "narrow",
+          context: "formatting"
+        });
+      // Tu
+      case "EEEEEE":
+        return localize2.day(dayOfWeek, {
+          width: "short",
+          context: "formatting"
+        });
+      // Tuesday
+      case "EEEE":
+      default:
+        return localize2.day(dayOfWeek, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // Local day of week
+  e: function(date2, token, localize2, options) {
+    const dayOfWeek = date2.getDay();
+    const localDayOfWeek = (dayOfWeek - options.weekStartsOn + 8) % 7 || 7;
+    switch (token) {
+      // Numerical value (Nth day of week with current locale or weekStartsOn)
+      case "e":
+        return String(localDayOfWeek);
+      // Padded numerical value
+      case "ee":
+        return addLeadingZeros(localDayOfWeek, 2);
+      // 1st, 2nd, ..., 7th
+      case "eo":
+        return localize2.ordinalNumber(localDayOfWeek, { unit: "day" });
+      case "eee":
+        return localize2.day(dayOfWeek, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      // T
+      case "eeeee":
+        return localize2.day(dayOfWeek, {
+          width: "narrow",
+          context: "formatting"
+        });
+      // Tu
+      case "eeeeee":
+        return localize2.day(dayOfWeek, {
+          width: "short",
+          context: "formatting"
+        });
+      // Tuesday
+      case "eeee":
+      default:
+        return localize2.day(dayOfWeek, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // Stand-alone local day of week
+  c: function(date2, token, localize2, options) {
+    const dayOfWeek = date2.getDay();
+    const localDayOfWeek = (dayOfWeek - options.weekStartsOn + 8) % 7 || 7;
+    switch (token) {
+      // Numerical value (same as in `e`)
+      case "c":
+        return String(localDayOfWeek);
+      // Padded numerical value
+      case "cc":
+        return addLeadingZeros(localDayOfWeek, token.length);
+      // 1st, 2nd, ..., 7th
+      case "co":
+        return localize2.ordinalNumber(localDayOfWeek, { unit: "day" });
+      case "ccc":
+        return localize2.day(dayOfWeek, {
+          width: "abbreviated",
+          context: "standalone"
+        });
+      // T
+      case "ccccc":
+        return localize2.day(dayOfWeek, {
+          width: "narrow",
+          context: "standalone"
+        });
+      // Tu
+      case "cccccc":
+        return localize2.day(dayOfWeek, {
+          width: "short",
+          context: "standalone"
+        });
+      // Tuesday
+      case "cccc":
+      default:
+        return localize2.day(dayOfWeek, {
+          width: "wide",
+          context: "standalone"
+        });
+    }
+  },
+  // ISO day of week
+  i: function(date2, token, localize2) {
+    const dayOfWeek = date2.getDay();
+    const isoDayOfWeek = dayOfWeek === 0 ? 7 : dayOfWeek;
+    switch (token) {
+      // 2
+      case "i":
+        return String(isoDayOfWeek);
+      // 02
+      case "ii":
+        return addLeadingZeros(isoDayOfWeek, token.length);
+      // 2nd
+      case "io":
+        return localize2.ordinalNumber(isoDayOfWeek, { unit: "day" });
+      // Tue
+      case "iii":
+        return localize2.day(dayOfWeek, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      // T
+      case "iiiii":
+        return localize2.day(dayOfWeek, {
+          width: "narrow",
+          context: "formatting"
+        });
+      // Tu
+      case "iiiiii":
+        return localize2.day(dayOfWeek, {
+          width: "short",
+          context: "formatting"
+        });
+      // Tuesday
+      case "iiii":
+      default:
+        return localize2.day(dayOfWeek, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // AM or PM
+  a: function(date2, token, localize2) {
+    const hours = date2.getHours();
+    const dayPeriodEnumValue = hours / 12 >= 1 ? "pm" : "am";
+    switch (token) {
+      case "a":
+      case "aa":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      case "aaa":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "abbreviated",
+          context: "formatting"
+        }).toLowerCase();
+      case "aaaaa":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "narrow",
+          context: "formatting"
+        });
+      case "aaaa":
+      default:
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // AM, PM, midnight, noon
+  b: function(date2, token, localize2) {
+    const hours = date2.getHours();
+    let dayPeriodEnumValue;
+    if (hours === 12) {
+      dayPeriodEnumValue = dayPeriodEnum.noon;
+    } else if (hours === 0) {
+      dayPeriodEnumValue = dayPeriodEnum.midnight;
+    } else {
+      dayPeriodEnumValue = hours / 12 >= 1 ? "pm" : "am";
+    }
+    switch (token) {
+      case "b":
+      case "bb":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      case "bbb":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "abbreviated",
+          context: "formatting"
+        }).toLowerCase();
+      case "bbbbb":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "narrow",
+          context: "formatting"
+        });
+      case "bbbb":
+      default:
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // in the morning, in the afternoon, in the evening, at night
+  B: function(date2, token, localize2) {
+    const hours = date2.getHours();
+    let dayPeriodEnumValue;
+    if (hours >= 17) {
+      dayPeriodEnumValue = dayPeriodEnum.evening;
+    } else if (hours >= 12) {
+      dayPeriodEnumValue = dayPeriodEnum.afternoon;
+    } else if (hours >= 4) {
+      dayPeriodEnumValue = dayPeriodEnum.morning;
+    } else {
+      dayPeriodEnumValue = dayPeriodEnum.night;
+    }
+    switch (token) {
+      case "B":
+      case "BB":
+      case "BBB":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "abbreviated",
+          context: "formatting"
+        });
+      case "BBBBB":
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "narrow",
+          context: "formatting"
+        });
+      case "BBBB":
+      default:
+        return localize2.dayPeriod(dayPeriodEnumValue, {
+          width: "wide",
+          context: "formatting"
+        });
+    }
+  },
+  // Hour [1-12]
+  h: function(date2, token, localize2) {
+    if (token === "ho") {
+      let hours = date2.getHours() % 12;
+      if (hours === 0) hours = 12;
+      return localize2.ordinalNumber(hours, { unit: "hour" });
+    }
+    return lightFormatters.h(date2, token);
+  },
+  // Hour [0-23]
+  H: function(date2, token, localize2) {
+    if (token === "Ho") {
+      return localize2.ordinalNumber(date2.getHours(), { unit: "hour" });
+    }
+    return lightFormatters.H(date2, token);
+  },
+  // Hour [0-11]
+  K: function(date2, token, localize2) {
+    const hours = date2.getHours() % 12;
+    if (token === "Ko") {
+      return localize2.ordinalNumber(hours, { unit: "hour" });
+    }
+    return addLeadingZeros(hours, token.length);
+  },
+  // Hour [1-24]
+  k: function(date2, token, localize2) {
+    let hours = date2.getHours();
+    if (hours === 0) hours = 24;
+    if (token === "ko") {
+      return localize2.ordinalNumber(hours, { unit: "hour" });
+    }
+    return addLeadingZeros(hours, token.length);
+  },
+  // Minute
+  m: function(date2, token, localize2) {
+    if (token === "mo") {
+      return localize2.ordinalNumber(date2.getMinutes(), { unit: "minute" });
+    }
+    return lightFormatters.m(date2, token);
+  },
+  // Second
+  s: function(date2, token, localize2) {
+    if (token === "so") {
+      return localize2.ordinalNumber(date2.getSeconds(), { unit: "second" });
+    }
+    return lightFormatters.s(date2, token);
+  },
+  // Fraction of second
+  S: function(date2, token) {
+    return lightFormatters.S(date2, token);
+  },
+  // Timezone (ISO-8601. If offset is 0, output is always `'Z'`)
+  X: function(date2, token, _localize) {
+    const timezoneOffset = date2.getTimezoneOffset();
+    if (timezoneOffset === 0) {
+      return "Z";
+    }
+    switch (token) {
+      // Hours and optional minutes
+      case "X":
+        return formatTimezoneWithOptionalMinutes(timezoneOffset);
+      // Hours, minutes and optional seconds without `:` delimiter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `XX`
+      case "XXXX":
+      case "XX":
+        return formatTimezone(timezoneOffset);
+      // Hours, minutes and optional seconds with `:` delimiter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `XXX`
+      case "XXXXX":
+      case "XXX":
+      // Hours and minutes with `:` delimiter
+      default:
+        return formatTimezone(timezoneOffset, ":");
+    }
+  },
+  // Timezone (ISO-8601. If offset is 0, output is `'+00:00'` or equivalent)
+  x: function(date2, token, _localize) {
+    const timezoneOffset = date2.getTimezoneOffset();
+    switch (token) {
+      // Hours and optional minutes
+      case "x":
+        return formatTimezoneWithOptionalMinutes(timezoneOffset);
+      // Hours, minutes and optional seconds without `:` delimiter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `xx`
+      case "xxxx":
+      case "xx":
+        return formatTimezone(timezoneOffset);
+      // Hours, minutes and optional seconds with `:` delimiter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `xxx`
+      case "xxxxx":
+      case "xxx":
+      // Hours and minutes with `:` delimiter
+      default:
+        return formatTimezone(timezoneOffset, ":");
+    }
+  },
+  // Timezone (GMT)
+  O: function(date2, token, _localize) {
+    const timezoneOffset = date2.getTimezoneOffset();
+    switch (token) {
+      // Short
+      case "O":
+      case "OO":
+      case "OOO":
+        return "GMT" + formatTimezoneShort(timezoneOffset, ":");
+      // Long
+      case "OOOO":
+      default:
+        return "GMT" + formatTimezone(timezoneOffset, ":");
+    }
+  },
+  // Timezone (specific non-location)
+  z: function(date2, token, _localize) {
+    const timezoneOffset = date2.getTimezoneOffset();
+    switch (token) {
+      // Short
+      case "z":
+      case "zz":
+      case "zzz":
+        return "GMT" + formatTimezoneShort(timezoneOffset, ":");
+      // Long
+      case "zzzz":
+      default:
+        return "GMT" + formatTimezone(timezoneOffset, ":");
+    }
+  },
+  // Seconds timestamp
+  t: function(date2, token, _localize) {
+    const timestamp2 = Math.trunc(date2.getTime() / 1e3);
+    return addLeadingZeros(timestamp2, token.length);
+  },
+  // Milliseconds timestamp
+  T: function(date2, token, _localize) {
+    const timestamp2 = date2.getTime();
+    return addLeadingZeros(timestamp2, token.length);
+  }
+};
+function formatTimezoneShort(offset, delimiter = "") {
+  const sign = offset > 0 ? "-" : "+";
+  const absOffset = Math.abs(offset);
+  const hours = Math.trunc(absOffset / 60);
+  const minutes = absOffset % 60;
+  if (minutes === 0) {
+    return sign + String(hours);
+  }
+  return sign + String(hours) + delimiter + addLeadingZeros(minutes, 2);
+}
+function formatTimezoneWithOptionalMinutes(offset, delimiter) {
+  if (offset % 60 === 0) {
+    const sign = offset > 0 ? "-" : "+";
+    return sign + addLeadingZeros(Math.abs(offset) / 60, 2);
+  }
+  return formatTimezone(offset, delimiter);
+}
+function formatTimezone(offset, delimiter = "") {
+  const sign = offset > 0 ? "-" : "+";
+  const absOffset = Math.abs(offset);
+  const hours = addLeadingZeros(Math.trunc(absOffset / 60), 2);
+  const minutes = addLeadingZeros(absOffset % 60, 2);
+  return sign + hours + delimiter + minutes;
+}
+
+// node_modules/date-fns/_lib/format/longFormatters.mjs
+var dateLongFormatter = (pattern, formatLong2) => {
+  switch (pattern) {
+    case "P":
+      return formatLong2.date({ width: "short" });
+    case "PP":
+      return formatLong2.date({ width: "medium" });
+    case "PPP":
+      return formatLong2.date({ width: "long" });
+    case "PPPP":
+    default:
+      return formatLong2.date({ width: "full" });
+  }
+};
+var timeLongFormatter = (pattern, formatLong2) => {
+  switch (pattern) {
+    case "p":
+      return formatLong2.time({ width: "short" });
+    case "pp":
+      return formatLong2.time({ width: "medium" });
+    case "ppp":
+      return formatLong2.time({ width: "long" });
+    case "pppp":
+    default:
+      return formatLong2.time({ width: "full" });
+  }
+};
+var dateTimeLongFormatter = (pattern, formatLong2) => {
+  const matchResult = pattern.match(/(P+)(p+)?/) || [];
+  const datePattern = matchResult[1];
+  const timePattern = matchResult[2];
+  if (!timePattern) {
+    return dateLongFormatter(pattern, formatLong2);
+  }
+  let dateTimeFormat;
+  switch (datePattern) {
+    case "P":
+      dateTimeFormat = formatLong2.dateTime({ width: "short" });
+      break;
+    case "PP":
+      dateTimeFormat = formatLong2.dateTime({ width: "medium" });
+      break;
+    case "PPP":
+      dateTimeFormat = formatLong2.dateTime({ width: "long" });
+      break;
+    case "PPPP":
+    default:
+      dateTimeFormat = formatLong2.dateTime({ width: "full" });
+      break;
+  }
+  return dateTimeFormat.replace("{{date}}", dateLongFormatter(datePattern, formatLong2)).replace("{{time}}", timeLongFormatter(timePattern, formatLong2));
+};
+var longFormatters = {
+  p: timeLongFormatter,
+  P: dateTimeLongFormatter
+};
+
+// node_modules/date-fns/_lib/protectedTokens.mjs
+var dayOfYearTokenRE = /^D+$/;
+var weekYearTokenRE = /^Y+$/;
+var throwTokens = ["D", "DD", "YY", "YYYY"];
+function isProtectedDayOfYearToken(token) {
+  return dayOfYearTokenRE.test(token);
+}
+function isProtectedWeekYearToken(token) {
+  return weekYearTokenRE.test(token);
+}
+function warnOrThrowProtectedError(token, format2, input) {
+  const _message = message(token, format2, input);
+  console.warn(_message);
+  if (throwTokens.includes(token)) throw new RangeError(_message);
+}
+function message(token, format2, input) {
+  const subject = token[0] === "Y" ? "years" : "days of the month";
+  return `Use \`${token.toLowerCase()}\` instead of \`${token}\` (in \`${format2}\`) for formatting ${subject} to the input \`${input}\`; see: https://github.com/date-fns/date-fns/blob/master/docs/unicodeTokens.md`;
+}
+
+// node_modules/date-fns/format.mjs
+var formattingTokensRegExp = /[yYQqMLwIdDecihHKkms]o|(\w)\1*|''|'(''|[^'])+('|$)|./g;
+var longFormattingTokensRegExp = /P+p+|P+|p+|''|'(''|[^'])+('|$)|./g;
+var escapedStringRegExp = /^'([^]*?)'?$/;
+var doubleQuoteRegExp = /''/g;
+var unescapedLatinCharacterRegExp = /[a-zA-Z]/;
+function format(date2, formatStr, options) {
+  const defaultOptions2 = getDefaultOptions();
+  const locale = options?.locale ?? defaultOptions2.locale ?? enUS;
+  const firstWeekContainsDate = options?.firstWeekContainsDate ?? options?.locale?.options?.firstWeekContainsDate ?? defaultOptions2.firstWeekContainsDate ?? defaultOptions2.locale?.options?.firstWeekContainsDate ?? 1;
+  const weekStartsOn = options?.weekStartsOn ?? options?.locale?.options?.weekStartsOn ?? defaultOptions2.weekStartsOn ?? defaultOptions2.locale?.options?.weekStartsOn ?? 0;
+  const originalDate = toDate(date2);
+  if (!isValid2(originalDate)) {
+    throw new RangeError("Invalid time value");
+  }
+  let parts = formatStr.match(longFormattingTokensRegExp).map((substring) => {
+    const firstCharacter = substring[0];
+    if (firstCharacter === "p" || firstCharacter === "P") {
+      const longFormatter = longFormatters[firstCharacter];
+      return longFormatter(substring, locale.formatLong);
+    }
+    return substring;
+  }).join("").match(formattingTokensRegExp).map((substring) => {
+    if (substring === "''") {
+      return { isToken: false, value: "'" };
+    }
+    const firstCharacter = substring[0];
+    if (firstCharacter === "'") {
+      return { isToken: false, value: cleanEscapedString(substring) };
+    }
+    if (formatters[firstCharacter]) {
+      return { isToken: true, value: substring };
+    }
+    if (firstCharacter.match(unescapedLatinCharacterRegExp)) {
+      throw new RangeError(
+        "Format string contains an unescaped latin alphabet character `" + firstCharacter + "`"
+      );
+    }
+    return { isToken: false, value: substring };
+  });
+  if (locale.localize.preprocessor) {
+    parts = locale.localize.preprocessor(originalDate, parts);
+  }
+  const formatterOptions = {
+    firstWeekContainsDate,
+    weekStartsOn,
+    locale
+  };
+  return parts.map((part) => {
+    if (!part.isToken) return part.value;
+    const token = part.value;
+    if (!options?.useAdditionalWeekYearTokens && isProtectedWeekYearToken(token) || !options?.useAdditionalDayOfYearTokens && isProtectedDayOfYearToken(token)) {
+      warnOrThrowProtectedError(token, formatStr, String(date2));
+    }
+    const formatter = formatters[token[0]];
+    return formatter(originalDate, token, locale.localize, formatterOptions);
+  }).join("");
+}
+function cleanEscapedString(input) {
+  const matched = input.match(escapedStringRegExp);
+  if (!matched) {
+    return input;
+  }
+  return matched[1].replace(doubleQuoteRegExp, "'");
+}
+
+// server/lib/notification-service.ts
+function formatDate(date2) {
+  if (!date2) return "N/A";
+  try {
+    return format(new Date(date2), "EEEE, MMMM d, yyyy");
+  } catch {
+    return String(date2);
+  }
+}
+function renderTemplate(template, data) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => data[key] || "");
+}
+var TEMPLATES = {
+  BOOKING_CANCELLED: {
+    subject: "Your booking {{bookingReference}} has been cancelled",
+    body: `Dear {{customerName}},
+
+We regret to inform you that your booking has been cancelled.
+
+Booking Details:
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+Reference:    {{bookingReference}}
+Vehicle:      {{licensePlate}} ({{vehicleMake}} {{vehicleModel}})
+Service:      {{serviceName}}
+Date:         {{originalDate}}
+Time:         {{originalTimeSlot}}
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+
+{{reasonSection}}
+
+We apologise for any inconvenience caused. We would love to have you back \u2014 please don't hesitate to rebook at your earliest convenience.
+
+If you have any questions, please contact us directly.
+
+Warm regards,
+The HOPSVOIR Team`
+  },
+  BOOKING_MODIFIED: {
+    subject: "Your booking {{bookingReference}} has been updated",
+    body: `Dear {{customerName}},
+
+Your booking details have been updated by our team.
+
+Updated Booking Details:
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+Reference:    {{bookingReference}}
+Vehicle:      {{licensePlate}} ({{vehicleMake}} {{vehicleModel}})
+Service:      {{serviceName}}
+Date:         {{newDate}}
+Time:         {{newTimeSlot}}
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+
+{{reasonSection}}
+
+Please review the updated details above. If you have any questions or concerns, please contact us.
+
+Warm regards,
+The HOPSVOIR Team`
+  },
+  BOOKING_RESCHEDULED: {
+    subject: "Your booking {{bookingReference}} has been rescheduled",
+    body: `Dear {{customerName}},
+
+Your booking has been rescheduled. Here are your updated appointment details:
+
+Rescheduled Booking:
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+Reference:    {{bookingReference}}
+Vehicle:      {{licensePlate}} ({{vehicleMake}} {{vehicleModel}})
+Service:      {{serviceName}}
+
+Previous Appointment:
+  Date: {{originalDate}}
+  Time: {{originalTimeSlot}}
+
+New Appointment:
+  Date: {{newDate}}
+  Time: {{newTimeSlot}}
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+
+{{reasonSection}}
+
+Please make note of your new appointment time. If this time does not work for you, please contact us to arrange an alternative.
+
+Warm regards,
+The HOPSVOIR Team`
+  }
+};
+function renderBookingNotification(type, data) {
+  const template = TEMPLATES[type];
+  const reasonSection = data.reason ? `Reason for change:
+${data.reason}
+` : "";
+  const vars = {
+    customerName: data.customerName || "Valued Customer",
+    bookingReference: data.bookingReference,
+    licensePlate: data.licensePlate,
+    vehicleMake: data.vehicleMake || "",
+    vehicleModel: data.vehicleModel || "",
+    serviceName: data.serviceName,
+    originalDate: formatDate(data.originalDate),
+    originalTimeSlot: data.originalTimeSlot || "N/A",
+    newDate: formatDate(data.newDate || data.originalDate),
+    newTimeSlot: data.newTimeSlot || data.originalTimeSlot || "N/A",
+    reasonSection
+  };
+  return {
+    subject: renderTemplate(template.subject, vars),
+    body: renderTemplate(template.body, vars)
+  };
+}
+async function queueBookingNotification(type, data, triggeredBy) {
+  try {
+    const { subject, body } = renderBookingNotification(type, data);
+    const hasEmail = !!data.customerEmail;
+    const hasPhone = !!data.customerPhone;
+    const channel = hasEmail && hasPhone ? "both" : hasEmail ? "email" : hasPhone ? "sms" : "email";
+    const notification = await storage.createNotification({
+      customerName: data.customerName || void 0,
+      customerEmail: data.customerEmail || void 0,
+      customerPhone: data.customerPhone || void 0,
+      channel,
+      type: type.toLowerCase(),
+      subject,
+      message: body,
+      bookingId: data.bookingId,
+      status: "pending",
+      createdBy: triggeredBy || "system"
+    });
+    await storage.logEvent({
+      type: "notification_queued",
+      userId: triggeredBy,
+      payloadJson: {
+        notificationId: notification.id,
+        notificationType: type,
+        bookingId: data.bookingId,
+        bookingReference: data.bookingReference,
+        customerEmail: data.customerEmail,
+        channel
+      }
+    });
+    return notification.id;
+  } catch (error) {
+    console.error("Failed to queue booking notification:", error);
+    return null;
+  }
+}
+async function markNotificationSent(notificationId) {
+  await storage.updateNotificationStatus(notificationId, "sent");
+}
+function detectBookingChangeType(original, updates) {
+  const hasDateChange = !!updates.bookingDate && new Date(updates.bookingDate).toDateString() !== new Date(original.bookingDate).toDateString();
+  const hasTimeChange = !!updates.timeSlot && updates.timeSlot !== original.timeSlot;
+  const hasOtherChange = updates.notes !== void 0 && updates.notes !== (original.notes || "") || updates.status !== void 0 && updates.status !== original.status;
+  let type = "BOOKING_MODIFIED";
+  if (hasDateChange || hasTimeChange) {
+    type = "BOOKING_RESCHEDULED";
+  }
+  return { type, hasDateChange, hasTimeChange, hasOtherChange };
+}
+
 // server/routes.ts
 init_credentials_auth();
 init_lib();
@@ -53754,7 +55598,6 @@ async function getUpcomingBookings(limit = 20) {
     const result = await pool2.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -53780,7 +55623,7 @@ async function getUpcomingBookings(limit = 20) {
     `, [limit]);
     return result.rows.map((row) => ({
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -53808,7 +55651,6 @@ async function getTodayBookings() {
     const result = await pool2.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -53833,7 +55675,7 @@ async function getTodayBookings() {
     `);
     return result.rows.map((row) => ({
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -53862,7 +55704,6 @@ async function findBookingByPlate(licensePlate) {
     const result = await pool2.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -53891,7 +55732,7 @@ async function findBookingByPlate(licensePlate) {
     const row = result.rows[0];
     return {
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -54352,7 +56193,6 @@ async function getBookingWithMembership(bookingId) {
     const bookingResult = await pool2.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -54377,7 +56217,7 @@ async function getBookingWithMembership(bookingId) {
     const row = bookingResult.rows[0];
     const booking = {
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -54432,7 +56272,6 @@ async function getManagerBookings(filters) {
     let query = `
       SELECT
         b.id,
-        COALESCE(b."bookingReference", CONCAT('BKG-', UPPER(SUBSTRING(b.id::text, 1, 8)))) as "bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -54502,7 +56341,7 @@ async function getManagerBookings(filters) {
       const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
       return {
         id: row.id,
-        bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+        bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
         status: row.status,
         bookingDate: new Date(row.bookingDate),
         timeSlot: row.timeSlot,
@@ -54541,7 +56380,6 @@ async function getBookingById(bookingId) {
     const result = await pool2.query(`
       SELECT
         b.id,
-        b."bookingReference",
         b.status,
         b."bookingDate",
         b."timeSlot",
@@ -54575,7 +56413,7 @@ async function getBookingById(bookingId) {
     const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
     return {
       id: row.id,
-      bookingReference: row.bookingReference || row.id.slice(0, 8).toUpperCase(),
+      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -54967,17 +56805,17 @@ function enrichSessionWithCalculations(session2, settings, parker, businessSetti
 var sseClients = /* @__PURE__ */ new Set();
 var customerSseClients = /* @__PURE__ */ new Set();
 function broadcastEvent(data) {
-  const message = `data: ${JSON.stringify(data)}
+  const message2 = `data: ${JSON.stringify(data)}
 
 `;
   sseClients.forEach((client) => {
-    client.write(message);
+    client.write(message2);
   });
   if (data.job?.id || data.washJobId) {
     const jobId = data.job?.id || data.washJobId;
     customerSseClients.forEach((client) => {
       if (client.washJobId === jobId) {
-        client.res.write(message);
+        client.res.write(message2);
       }
     });
   }
@@ -55408,13 +57246,13 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.get("/api/parking/sessions", isAuthenticated, async (req, res) => {
     try {
-      const { open, plateSearch, fromDate, toDate, zoneId } = req.query;
+      const { open, plateSearch, fromDate, toDate: toDate2, zoneId } = req.query;
       const filters = {};
       if (open === "true") filters.open = true;
       if (open === "false") filters.open = false;
       if (plateSearch) filters.plateSearch = plateSearch;
       if (fromDate) filters.fromDate = new Date(fromDate);
-      if (toDate) filters.toDate = new Date(toDate);
+      if (toDate2) filters.toDate = new Date(toDate2);
       if (zoneId) filters.zoneId = zoneId;
       const sessions2 = await storage.getParkingSessions(filters);
       const settings = await storage.getParkingSettings();
@@ -55716,11 +57554,11 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.get("/api/parking/reservations", isAuthenticated, async (req, res) => {
     try {
-      const { status, fromDate, toDate } = req.query;
+      const { status, fromDate, toDate: toDate2 } = req.query;
       const filters = {};
       if (status) filters.status = status;
       if (fromDate) filters.fromDate = new Date(fromDate);
-      if (toDate) filters.toDate = new Date(toDate);
+      if (toDate2) filters.toDate = new Date(toDate2);
       const reservations = await storage.getParkingReservations(filters);
       res.json(reservations);
     } catch (error) {
@@ -56064,12 +57902,12 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.get("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
     try {
-      const { status, fromDate, toDate, search, limit, offset } = req.query;
+      const { status, fromDate, toDate: toDate2, search, limit, offset } = req.query;
       console.log("Manager Bookings API: Request received with query:", req.query);
       const filters = {};
       if (status && typeof status === "string") filters.status = status;
       if (fromDate && typeof fromDate === "string") filters.fromDate = new Date(fromDate);
-      if (toDate && typeof toDate === "string") filters.toDate = new Date(toDate);
+      if (toDate2 && typeof toDate2 === "string") filters.toDate = new Date(toDate2);
       if (search && typeof search === "string") filters.customerSearch = search;
       if (limit) filters.limit = parseInt(limit);
       if (offset) filters.offset = parseInt(offset);
@@ -56120,20 +57958,22 @@ async function registerRoutes(httpServer2, app2) {
         timeSlot: z.string().optional(),
         serviceId: z.string().optional(),
         notes: z.string().optional(),
-        status: z.enum(["CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "READY_FOR_PICKUP"]).optional()
+        status: z.enum(["CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "READY_FOR_PICKUP"]).optional(),
+        reason: z.string().optional()
+        // reason for change, included in notification
       });
       const result = updateSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: "Invalid update data", errors: result.error.errors });
       }
-      const updates = result.data;
+      const { reason, ...updates } = result.data;
+      const originalBooking = await getBookingById(id);
+      if (!originalBooking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
       if (updates.bookingDate || updates.timeSlot) {
-        const booking = await getBookingById(id);
-        if (!booking) {
-          return res.status(404).json({ message: "Booking not found" });
-        }
-        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : booking.bookingDate;
-        const newTimeSlot = updates.timeSlot || booking.timeSlot;
+        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : originalBooking.bookingDate;
+        const newTimeSlot = updates.timeSlot || originalBooking.timeSlot;
         const isAvailable = await isTimeSlotAvailable(newDate, newTimeSlot, id);
         if (!isAvailable) {
           return res.status(409).json({ message: "Time slot is not available" });
@@ -56149,6 +57989,27 @@ async function registerRoutes(httpServer2, app2) {
       if (!success) {
         return res.status(500).json({ message: "Failed to update booking" });
       }
+      const changeSummary = detectBookingChangeType(originalBooking, updateData);
+      const notificationId = await queueBookingNotification(
+        changeSummary.type,
+        {
+          customerName: originalBooking.customerName,
+          customerEmail: originalBooking.customerEmail,
+          customerPhone: originalBooking.customerPhone,
+          bookingReference: originalBooking.bookingReference,
+          licensePlate: originalBooking.licensePlate,
+          vehicleMake: originalBooking.vehicleMake,
+          vehicleModel: originalBooking.vehicleModel,
+          serviceName: originalBooking.serviceName,
+          originalDate: originalBooking.bookingDate,
+          originalTimeSlot: originalBooking.timeSlot,
+          newDate: updateData.bookingDate || originalBooking.bookingDate,
+          newTimeSlot: updateData.timeSlot || originalBooking.timeSlot,
+          reason,
+          bookingId: id
+        },
+        userId
+      );
       await storage.logEvent({
         type: "booking_modified",
         userId,
@@ -56156,11 +58017,18 @@ async function registerRoutes(httpServer2, app2) {
           bookingId: id,
           updates: updateData,
           modifiedBy: userId,
-          modifiedAt: (/* @__PURE__ */ new Date()).toISOString()
+          modifiedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          notificationQueued: !!notificationId,
+          notificationId
         }
       });
       const updatedBooking = await getBookingById(id);
-      res.json({ message: "Booking updated successfully", booking: updatedBooking });
+      res.json({
+        message: "Booking updated successfully",
+        booking: updatedBooking,
+        notificationQueued: !!notificationId,
+        notificationId
+      });
     } catch (error) {
       console.error("Error updating booking:", error);
       res.status(500).json({ message: "Failed to update booking" });
@@ -56170,6 +58038,7 @@ async function registerRoutes(httpServer2, app2) {
     try {
       const id = req.params.id;
       const userId = req.user?.claims?.sub;
+      const { reason } = req.body || {};
       const booking = await getBookingById(id);
       if (!booking) {
         return res.status(404).json({ message: "Booking not found" });
@@ -56184,6 +58053,24 @@ async function registerRoutes(httpServer2, app2) {
       if (!success) {
         return res.status(500).json({ message: "Failed to cancel booking" });
       }
+      const notificationId = await queueBookingNotification(
+        "BOOKING_CANCELLED",
+        {
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          customerPhone: booking.customerPhone,
+          bookingReference: booking.bookingReference,
+          licensePlate: booking.licensePlate,
+          vehicleMake: booking.vehicleMake,
+          vehicleModel: booking.vehicleModel,
+          serviceName: booking.serviceName,
+          originalDate: booking.bookingDate,
+          originalTimeSlot: booking.timeSlot,
+          reason,
+          bookingId: id
+        },
+        userId
+      );
       await storage.logEvent({
         type: "booking_cancelled",
         userId,
@@ -56194,13 +58081,93 @@ async function registerRoutes(httpServer2, app2) {
           bookingDate: booking.bookingDate,
           timeSlot: booking.timeSlot,
           cancelledBy: userId,
-          cancelledAt: (/* @__PURE__ */ new Date()).toISOString()
+          cancelledAt: (/* @__PURE__ */ new Date()).toISOString(),
+          notificationQueued: !!notificationId,
+          notificationId
         }
       });
-      res.json({ message: "Booking cancelled successfully" });
+      res.json({ message: "Booking cancelled successfully", notificationQueued: !!notificationId, notificationId });
     } catch (error) {
       console.error("Error cancelling booking:", error);
       res.status(500).json({ message: "Failed to cancel booking" });
+    }
+  });
+  app2.post("/api/manager/notifications/preview", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { bookingId, type, reason } = req.body;
+      if (!bookingId || !type) {
+        return res.status(400).json({ message: "bookingId and type are required" });
+      }
+      const validTypes = ["BOOKING_CANCELLED", "BOOKING_MODIFIED", "BOOKING_RESCHEDULED"];
+      if (!validTypes.includes(type)) {
+        return res.status(400).json({ message: "Invalid notification type" });
+      }
+      const booking = await getBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+      const { subject, body } = renderBookingNotification(type, {
+        customerName: booking.customerName,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        bookingReference: booking.bookingReference,
+        licensePlate: booking.licensePlate,
+        vehicleMake: booking.vehicleMake,
+        vehicleModel: booking.vehicleModel,
+        serviceName: booking.serviceName,
+        originalDate: booking.bookingDate,
+        originalTimeSlot: booking.timeSlot,
+        reason,
+        bookingId
+      });
+      res.json({ subject, body, customerEmail: booking.customerEmail, customerPhone: booking.customerPhone });
+    } catch (error) {
+      console.error("Error previewing notification:", error);
+      res.status(500).json({ message: "Failed to generate preview" });
+    }
+  });
+  app2.post("/api/manager/notifications/send", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { bookingId, type, subject, body, reason } = req.body;
+      const userId = req.user?.claims?.sub;
+      if (!bookingId || !type || !body) {
+        return res.status(400).json({ message: "bookingId, type, and body are required" });
+      }
+      const booking = await getBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+      const notificationId = await queueBookingNotification(
+        type,
+        {
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          customerPhone: booking.customerPhone,
+          bookingReference: booking.bookingReference,
+          licensePlate: booking.licensePlate,
+          vehicleMake: booking.vehicleMake,
+          vehicleModel: booking.vehicleModel,
+          serviceName: booking.serviceName,
+          originalDate: booking.bookingDate,
+          originalTimeSlot: booking.timeSlot,
+          reason,
+          bookingId
+        },
+        userId
+      );
+      if (!notificationId) {
+        return res.status(500).json({ message: "Failed to queue notification" });
+      }
+      await markNotificationSent(notificationId);
+      await storage.logEvent({
+        type: "notification_sent_manual",
+        userId,
+        payloadJson: { notificationId, bookingId, notificationType: type, customerEmail: booking.customerEmail }
+      });
+      res.json({ message: "Notification queued successfully", notificationId });
+    } catch (error) {
+      console.error("Error sending notification:", error);
+      res.status(500).json({ message: "Failed to send notification" });
     }
   });
   app2.get("/api/manager/services", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
@@ -56268,6 +58235,14 @@ async function registerRoutes(httpServer2, app2) {
       if (!["technician", "manager", "admin"].includes(role)) {
         return res.status(400).json({ message: "Invalid role" });
       }
+      const allUsers = await storage.getUsers();
+      const targetUser = allUsers.find((u) => u.id === userId);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      if (isSuperAdmin(targetUser.email)) {
+        return res.status(403).json({ message: "Cannot modify super admin account" });
+      }
       const user = await storage.updateUser(userId, { role });
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -56285,6 +58260,14 @@ async function registerRoutes(httpServer2, app2) {
       if (typeof isActive !== "boolean") {
         return res.status(400).json({ message: "Invalid status" });
       }
+      const allUsers = await storage.getUsers();
+      const targetUser = allUsers.find((u) => u.id === userId);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      if (isSuperAdmin(targetUser.email)) {
+        return res.status(403).json({ message: "Cannot disable super admin account" });
+      }
       const user = await storage.updateUser(userId, { isActive });
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -56293,6 +58276,176 @@ async function registerRoutes(httpServer2, app2) {
     } catch (error) {
       console.error("Error updating user status:", error);
       res.status(500).json({ message: "Failed to update status" });
+    }
+  });
+  app2.get("/api/time/status", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const activeLog = await storage.getActiveTimeLog(userId);
+      res.json({ clockedIn: !!activeLog, activeLog: activeLog || null });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get time status" });
+    }
+  });
+  app2.post("/api/time/clock-in", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { notes } = req.body;
+      const existing = await storage.getActiveTimeLog(userId);
+      if (existing) {
+        return res.status(400).json({ message: "Already clocked in" });
+      }
+      const log = await storage.clockIn(userId, notes);
+      await storage.logEvent({ type: "clock_in", userId, payloadJson: { logId: log.id } });
+      res.json({ message: "Clocked in successfully", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to clock in" });
+    }
+  });
+  app2.post("/api/time/clock-out", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const activeLog = await storage.getActiveTimeLog(userId);
+      if (!activeLog) {
+        return res.status(400).json({ message: "Not currently clocked in" });
+      }
+      const log = await storage.clockOut(activeLog.id);
+      await storage.logEvent({ type: "clock_out", userId, payloadJson: { logId: activeLog.id, totalMinutes: log?.totalMinutes } });
+      res.json({ message: "Clocked out successfully", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to clock out" });
+    }
+  });
+  app2.post("/api/time/break/start", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { type, notes } = req.body;
+      if (!["lunch", "short", "absent"].includes(type)) {
+        return res.status(400).json({ message: "Invalid break type" });
+      }
+      const activeLog = await storage.getActiveTimeLog(userId);
+      if (!activeLog) {
+        return res.status(400).json({ message: "Not clocked in" });
+      }
+      const log = await storage.addBreakLog(activeLog.id, { type, notes });
+      res.json({ message: "Break started", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to start break" });
+    }
+  });
+  app2.post("/api/time/break/end", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const activeLog = await storage.getActiveTimeLog(userId);
+      if (!activeLog) {
+        return res.status(400).json({ message: "Not clocked in" });
+      }
+      const log = await storage.endBreakLog(activeLog.id);
+      res.json({ message: "Break ended", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to end break" });
+    }
+  });
+  app2.get("/api/time/logs", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { fromDate, toDate: toDate2 } = req.query;
+      const logs = await storage.getTimeLogs({
+        technicianId: userId,
+        fromDate: fromDate ? new Date(fromDate) : void 0,
+        toDate: toDate2 ? new Date(toDate2) : void 0,
+        limit: 50
+      });
+      res.json(logs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get time logs" });
+    }
+  });
+  app2.get("/api/manager/roster", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { technicianId, fromDate, toDate: toDate2 } = req.query;
+      const logs = await storage.getTimeLogs({
+        technicianId,
+        fromDate: fromDate ? new Date(fromDate) : void 0,
+        toDate: toDate2 ? new Date(toDate2) : void 0,
+        limit: 200
+      });
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map((u) => [u.id, u]));
+      const enriched = logs.map((log) => ({
+        ...log,
+        technician: userMap.get(log.technicianId) || null
+      }));
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get roster" });
+    }
+  });
+  app2.get("/api/manager/roster/active", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const logs = await storage.getTimeLogs({ limit: 200 });
+      const activeLogs = logs.filter((l) => !l.clockOutAt);
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map((u) => [u.id, u]));
+      const enriched = activeLogs.map((log) => ({
+        ...log,
+        technician: userMap.get(log.technicianId) || null
+      }));
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get active roster" });
+    }
+  });
+  app2.post("/api/time/alert", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { type, message: message2, estimatedArrival } = req.body;
+      if (!type || !["running_late", "absent", "emergency", "other"].includes(type)) {
+        return res.status(400).json({ message: "Invalid alert type" });
+      }
+      const alert = await storage.createStaffAlert({
+        technicianId: userId,
+        type,
+        message: message2 || void 0,
+        estimatedArrival: estimatedArrival || void 0
+      });
+      await storage.logEvent({
+        type: "staff_alert",
+        userId,
+        payloadJson: { alertId: alert.id, alertType: type, message: message2 }
+      });
+      res.json({ alert });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to send alert" });
+    }
+  });
+  app2.get("/api/manager/alerts", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { unacknowledgedOnly } = req.query;
+      const alerts = await storage.getStaffAlerts({
+        unacknowledgedOnly: unacknowledgedOnly === "true"
+      });
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map((u) => [u.id, u]));
+      const enriched = alerts.map((a) => ({
+        ...a,
+        technician: userMap.get(a.technicianId) || null
+      }));
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get alerts" });
+    }
+  });
+  app2.patch("/api/manager/alerts/:id/acknowledge", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const alertId = String(req.params.id);
+      const alert = await storage.acknowledgeStaffAlert(alertId, String(userId));
+      if (!alert) return res.status(404).json({ message: "Alert not found" });
+      res.json({ alert });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to acknowledge alert" });
     }
   });
   app2.get("/api/customer/job/:token", async (req, res) => {

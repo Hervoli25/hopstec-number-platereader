@@ -7,6 +7,13 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { normalizePlate, displayPlate } from "./lib/plate-utils";
 import { requireRole, ensureUserRole, isSuperAdmin } from "./lib/roles";
 import { savePhoto } from "./lib/photo-storage";
+import {
+  queueBookingNotification,
+  detectBookingChangeType,
+  renderBookingNotification,
+  markNotificationSent,
+  type BookingNotificationType,
+} from "./lib/notification-service";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
 import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES } from "@shared/schema";
@@ -1484,6 +1491,7 @@ export async function registerRoutes(
         serviceId: z.string().optional(),
         notes: z.string().optional(),
         status: z.enum(["CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "READY_FOR_PICKUP"]).optional(),
+        reason: z.string().optional(), // reason for change, included in notification
       });
 
       const result = updateSchema.safeParse(req.body);
@@ -1491,18 +1499,18 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid update data", errors: result.error.errors });
       }
 
-      const updates = result.data;
+      const { reason, ...updates } = result.data;
+
+      // Fetch original booking before changes (for notification diff)
+      const originalBooking = await getBookingById(id);
+      if (!originalBooking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
 
       // If rescheduling, check time slot availability
       if (updates.bookingDate || updates.timeSlot) {
-        const booking = await getBookingById(id);
-        if (!booking) {
-          return res.status(404).json({ message: "Booking not found" });
-        }
-
-        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : booking.bookingDate;
-        const newTimeSlot = updates.timeSlot || booking.timeSlot;
-
+        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : originalBooking.bookingDate;
+        const newTimeSlot = updates.timeSlot || originalBooking.timeSlot;
         const isAvailable = await isTimeSlotAvailable(newDate, newTimeSlot, id);
         if (!isAvailable) {
           return res.status(409).json({ message: "Time slot is not available" });
@@ -1521,7 +1529,29 @@ export async function registerRoutes(
         return res.status(500).json({ message: "Failed to update booking" });
       }
 
-      // Log the action
+      // Detect change type and queue customer notification
+      const changeSummary = detectBookingChangeType(originalBooking, updateData);
+      const notificationId = await queueBookingNotification(
+        changeSummary.type,
+        {
+          customerName: originalBooking.customerName,
+          customerEmail: originalBooking.customerEmail,
+          customerPhone: originalBooking.customerPhone,
+          bookingReference: originalBooking.bookingReference,
+          licensePlate: originalBooking.licensePlate,
+          vehicleMake: originalBooking.vehicleMake,
+          vehicleModel: originalBooking.vehicleModel,
+          serviceName: originalBooking.serviceName,
+          originalDate: originalBooking.bookingDate,
+          originalTimeSlot: originalBooking.timeSlot,
+          newDate: updateData.bookingDate || originalBooking.bookingDate,
+          newTimeSlot: updateData.timeSlot || originalBooking.timeSlot,
+          reason,
+          bookingId: id,
+        },
+        userId
+      );
+
       await storage.logEvent({
         type: "booking_modified",
         userId,
@@ -1530,12 +1560,18 @@ export async function registerRoutes(
           updates: updateData,
           modifiedBy: userId,
           modifiedAt: new Date().toISOString(),
+          notificationQueued: !!notificationId,
+          notificationId,
         },
       });
 
-      // Fetch updated booking
       const updatedBooking = await getBookingById(id);
-      res.json({ message: "Booking updated successfully", booking: updatedBooking });
+      res.json({
+        message: "Booking updated successfully",
+        booking: updatedBooking,
+        notificationQueued: !!notificationId,
+        notificationId,
+      });
     } catch (error) {
       console.error("Error updating booking:", error);
       res.status(500).json({ message: "Failed to update booking" });
@@ -1547,6 +1583,7 @@ export async function registerRoutes(
     try {
       const id = req.params.id as string;
       const userId = (req as any).user?.claims?.sub;
+      const { reason } = req.body || {};
 
       const booking = await getBookingById(id);
       if (!booking) {
@@ -1566,7 +1603,26 @@ export async function registerRoutes(
         return res.status(500).json({ message: "Failed to cancel booking" });
       }
 
-      // Log the action
+      // Queue cancellation notification
+      const notificationId = await queueBookingNotification(
+        "BOOKING_CANCELLED",
+        {
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          customerPhone: booking.customerPhone,
+          bookingReference: booking.bookingReference,
+          licensePlate: booking.licensePlate,
+          vehicleMake: booking.vehicleMake,
+          vehicleModel: booking.vehicleModel,
+          serviceName: booking.serviceName,
+          originalDate: booking.bookingDate,
+          originalTimeSlot: booking.timeSlot,
+          reason,
+          bookingId: id,
+        },
+        userId
+      );
+
       await storage.logEvent({
         type: "booking_cancelled",
         userId,
@@ -1578,13 +1634,113 @@ export async function registerRoutes(
           timeSlot: booking.timeSlot,
           cancelledBy: userId,
           cancelledAt: new Date().toISOString(),
+          notificationQueued: !!notificationId,
+          notificationId,
         },
       });
 
-      res.json({ message: "Booking cancelled successfully" });
+      res.json({ message: "Booking cancelled successfully", notificationQueued: !!notificationId, notificationId });
     } catch (error) {
       console.error("Error cancelling booking:", error);
       res.status(500).json({ message: "Failed to cancel booking" });
+    }
+  });
+
+  // =====================
+  // BOOKING NOTIFICATIONS
+  // =====================
+
+  // Preview a notification before sending manually
+  app.post("/api/manager/notifications/preview", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { bookingId, type, reason } = req.body;
+      if (!bookingId || !type) {
+        return res.status(400).json({ message: "bookingId and type are required" });
+      }
+
+      const validTypes: BookingNotificationType[] = ["BOOKING_CANCELLED", "BOOKING_MODIFIED", "BOOKING_RESCHEDULED"];
+      if (!validTypes.includes(type)) {
+        return res.status(400).json({ message: "Invalid notification type" });
+      }
+
+      const booking = await getBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+
+      const { subject, body } = renderBookingNotification(type as BookingNotificationType, {
+        customerName: booking.customerName,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        bookingReference: booking.bookingReference,
+        licensePlate: booking.licensePlate,
+        vehicleMake: booking.vehicleMake,
+        vehicleModel: booking.vehicleModel,
+        serviceName: booking.serviceName,
+        originalDate: booking.bookingDate,
+        originalTimeSlot: booking.timeSlot,
+        reason,
+        bookingId,
+      });
+
+      res.json({ subject, body, customerEmail: booking.customerEmail, customerPhone: booking.customerPhone });
+    } catch (error) {
+      console.error("Error previewing notification:", error);
+      res.status(500).json({ message: "Failed to generate preview" });
+    }
+  });
+
+  // Manually queue/send a notification
+  app.post("/api/manager/notifications/send", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { bookingId, type, subject, body, reason } = req.body;
+      const userId = (req as any).user?.claims?.sub;
+
+      if (!bookingId || !type || !body) {
+        return res.status(400).json({ message: "bookingId, type, and body are required" });
+      }
+
+      const booking = await getBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+
+      const notificationId = await queueBookingNotification(
+        type as BookingNotificationType,
+        {
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          customerPhone: booking.customerPhone,
+          bookingReference: booking.bookingReference,
+          licensePlate: booking.licensePlate,
+          vehicleMake: booking.vehicleMake,
+          vehicleModel: booking.vehicleModel,
+          serviceName: booking.serviceName,
+          originalDate: booking.bookingDate,
+          originalTimeSlot: booking.timeSlot,
+          reason,
+          bookingId,
+        },
+        userId
+      );
+
+      if (!notificationId) {
+        return res.status(500).json({ message: "Failed to queue notification" });
+      }
+
+      // Mark as sent immediately (manual trigger)
+      await markNotificationSent(notificationId);
+
+      await storage.logEvent({
+        type: "notification_sent_manual",
+        userId,
+        payloadJson: { notificationId, bookingId, notificationType: type, customerEmail: booking.customerEmail },
+      });
+
+      res.json({ message: "Notification queued successfully", notificationId });
+    } catch (error) {
+      console.error("Error sending notification:", error);
+      res.status(500).json({ message: "Failed to send notification" });
     }
   });
 
@@ -1675,7 +1831,8 @@ export async function registerRoutes(
       }
 
       // Get the user first to check if they're the super admin
-      const targetUser = await storage.getUser(userId);
+      const allUsers = await storage.getUsers();
+      const targetUser = allUsers.find(u => u.id === userId);
       if (!targetUser) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -1708,7 +1865,8 @@ export async function registerRoutes(
       }
 
       // Get the user first to check if they're the super admin
-      const targetUser = await storage.getUser(userId);
+      const allUsers = await storage.getUsers();
+      const targetUser = allUsers.find(u => u.id === userId);
       if (!targetUser) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -1727,6 +1885,240 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating user status:", error);
       res.status(500).json({ message: "Failed to update status" });
+    }
+  });
+
+  // =====================
+  // TECHNICIAN TIME TRACKING
+  // =====================
+
+  // Get current clock-in status for the logged-in technician
+  app.get("/api/time/status", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const activeLog = await storage.getActiveTimeLog(userId);
+      res.json({ clockedIn: !!activeLog, activeLog: activeLog || null });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get time status" });
+    }
+  });
+
+  // Clock in
+  app.post("/api/time/clock-in", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      const { notes } = req.body;
+
+      // Check if already clocked in
+      const existing = await storage.getActiveTimeLog(userId);
+      if (existing) {
+        return res.status(400).json({ message: "Already clocked in" });
+      }
+
+      const log = await storage.clockIn(userId, notes);
+      await storage.logEvent({ type: "clock_in", userId, payloadJson: { logId: log.id } });
+      res.json({ message: "Clocked in successfully", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to clock in" });
+    }
+  });
+
+  // Clock out
+  app.post("/api/time/clock-out", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+
+      const activeLog = await storage.getActiveTimeLog(userId);
+      if (!activeLog) {
+        return res.status(400).json({ message: "Not currently clocked in" });
+      }
+
+      const log = await storage.clockOut(activeLog.id);
+      await storage.logEvent({ type: "clock_out", userId, payloadJson: { logId: activeLog.id, totalMinutes: log?.totalMinutes } });
+      res.json({ message: "Clocked out successfully", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to clock out" });
+    }
+  });
+
+  // Log a break start
+  app.post("/api/time/break/start", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      const { type, notes } = req.body;
+
+      if (!["lunch", "short", "absent"].includes(type)) {
+        return res.status(400).json({ message: "Invalid break type" });
+      }
+
+      const activeLog = await storage.getActiveTimeLog(userId);
+      if (!activeLog) {
+        return res.status(400).json({ message: "Not clocked in" });
+      }
+
+      const log = await storage.addBreakLog(activeLog.id, { type, notes });
+      res.json({ message: "Break started", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to start break" });
+    }
+  });
+
+  // End a break
+  app.post("/api/time/break/end", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+
+      const activeLog = await storage.getActiveTimeLog(userId);
+      if (!activeLog) {
+        return res.status(400).json({ message: "Not clocked in" });
+      }
+
+      const log = await storage.endBreakLog(activeLog.id);
+      res.json({ message: "Break ended", log });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to end break" });
+    }
+  });
+
+  // Get my own time logs (technician)
+  app.get("/api/time/logs", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      const { fromDate, toDate } = req.query;
+
+      const logs = await storage.getTimeLogs({
+        technicianId: userId,
+        fromDate: fromDate ? new Date(fromDate as string) : undefined,
+        toDate: toDate ? new Date(toDate as string) : undefined,
+        limit: 50,
+      });
+      res.json(logs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get time logs" });
+    }
+  });
+
+  // Manager/Admin: Get all time logs (roster view)
+  app.get("/api/manager/roster", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { technicianId, fromDate, toDate } = req.query;
+
+      const logs = await storage.getTimeLogs({
+        technicianId: technicianId as string | undefined,
+        fromDate: fromDate ? new Date(fromDate as string) : undefined,
+        toDate: toDate ? new Date(toDate as string) : undefined,
+        limit: 200,
+      });
+
+      // Attach user details to each log
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+      const enriched = logs.map(log => ({
+        ...log,
+        technician: userMap.get(log.technicianId) || null,
+      }));
+
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get roster" });
+    }
+  });
+
+  // Manager/Admin: Who is currently clocked in
+  app.get("/api/manager/roster/active", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const logs = await storage.getTimeLogs({ limit: 200 });
+      const activeLogs = logs.filter(l => !l.clockOutAt);
+
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+      const enriched = activeLogs.map(log => ({
+        ...log,
+        technician: userMap.get(log.technicianId) || null,
+      }));
+
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get active roster" });
+    }
+  });
+
+  // =====================
+  // STAFF ALERTS (running late, absent, etc.)
+  // =====================
+
+  // Technician: Send an alert to management
+  app.post("/api/time/alert", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      const { type, message, estimatedArrival } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({ message: "User ID not found" });
+      }
+
+      if (!type || !["running_late", "absent", "emergency", "other"].includes(type)) {
+        return res.status(400).json({ message: "Invalid alert type" });
+      }
+
+      const alert = await storage.createStaffAlert({
+        technicianId: String(userId),
+        type,
+        message: message || undefined,
+        estimatedArrival: estimatedArrival || undefined,
+      });
+
+      // Log event in background — don't block the response
+      storage.logEvent({
+        type: "staff_alert",
+        userId: String(userId),
+        payloadJson: { alertId: alert.id, alertType: type },
+      }).catch(err => console.error("Failed to log staff_alert event:", err));
+
+      res.json({ alert });
+    } catch (error) {
+      console.error("POST /api/time/alert error:", error);
+      res.status(500).json({ message: "Failed to send alert" });
+    }
+  });
+
+  // Manager/Admin: Get staff alerts
+  app.get("/api/manager/alerts", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const { unacknowledgedOnly } = req.query;
+      const alerts = await storage.getStaffAlerts({
+        unacknowledgedOnly: unacknowledgedOnly === "true",
+      });
+
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+      const enriched = alerts.map(a => ({
+        ...a,
+        technician: userMap.get(a.technicianId) || null,
+      }));
+
+      res.json(enriched);
+    } catch (error) {
+      console.error("GET /api/manager/alerts error:", error);
+      res.status(500).json({ message: "Failed to get alerts" });
+    }
+  });
+
+  // Manager/Admin: Acknowledge a staff alert
+  app.patch("/api/manager/alerts/:id/acknowledge", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      const alertId = String(req.params.id);
+      const alert = await storage.acknowledgeStaffAlert(alertId, String(userId));
+      if (!alert) return res.status(404).json({ message: "Alert not found" });
+      res.json({ alert });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to acknowledge alert" });
     }
   });
 

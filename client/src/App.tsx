@@ -23,6 +23,7 @@ import ManagerDashboard from "@/pages/manager-dashboard";
 import ManagerAnalytics from "@/pages/manager-analytics";
 import ManagerAudit from "@/pages/manager-audit";
 import ManagerBookings from "@/pages/manager-bookings";
+import ManagerRoster from "@/pages/manager-roster";
 import AdminUsers from "@/pages/admin-users";
 import CustomerJob from "@/pages/customer-job";
 import About from "@/pages/about";
@@ -121,6 +122,7 @@ function AppRouter() {
         <Route path="/manager/analytics" component={ManagerAnalytics} />
         <Route path="/manager/audit" component={ManagerAudit} />
         <Route path="/manager/bookings" component={ManagerBookings} />
+        <Route path="/manager/roster" component={ManagerRoster} />
         <Route path="/manager/settings" component={BusinessSettings} />
         <Route path="/admin/users" component={AdminUsers} />
         <Route component={NotFound} />
