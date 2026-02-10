@@ -2047,6 +2047,30 @@ export async function registerRoutes(
     }
   });
 
+  // Manager/Admin: Force clock-out a technician who forgot to clock out
+  app.post("/api/manager/roster/force-clockout/:logId", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const logId = String(req.params.logId);
+      const managerId = (req as any).user?.claims?.sub;
+
+      const log = await storage.clockOut(logId);
+      if (!log) {
+        return res.status(404).json({ message: "Time log not found or already clocked out" });
+      }
+
+      storage.logEvent({
+        type: "force_clock_out",
+        userId: managerId,
+        payloadJson: { logId, technicianId: log.technicianId, totalMinutes: log.totalMinutes },
+      }).catch((err: Error) => console.error("Failed to log force_clock_out event:", err));
+
+      res.json({ message: "Technician clocked out successfully", log });
+    } catch (error) {
+      console.error("POST /api/manager/roster/force-clockout error:", error);
+      res.status(500).json({ message: "Failed to force clock-out" });
+    }
+  });
+
   // =====================
   // STAFF ALERTS (running late, absent, etc.)
   // =====================

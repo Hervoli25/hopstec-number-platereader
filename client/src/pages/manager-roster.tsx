@@ -20,9 +20,20 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Clock, Users, Coffee, LogIn, LogOut,
   Calendar, Download, RefreshCw, AlertTriangle, CheckCircle,
-  BellRing, X, BarChart2, ChevronDown, ChevronUp,
+  BellRing, X, BarChart2, ChevronDown, ChevronUp, UserX,
 } from "lucide-react";
-import { format, startOfWeek, endOfWeek, endOfDay } from "date-fns";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { format, startOfWeek, endOfWeek, endOfDay, isToday } from "date-fns";
 
 interface BreakLog {
   type: "lunch" | "short" | "absent";
@@ -161,6 +172,27 @@ export default function ManagerRoster() {
     },
   });
 
+  const forceClockOutMutation = useMutation({
+    mutationFn: async (logId: string) => {
+      const r = await fetch(`/api/manager/roster/force-clockout/${logId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.message || `Server error ${r.status}`);
+      }
+      return r.json();
+    },
+    onSuccess: (_, logId) => {
+      toast({ title: "Technician clocked out successfully" });
+      qClient.invalidateQueries({ queryKey: ["/api/manager/roster/active"] });
+      qClient.invalidateQueries({ queryKey: ["/api/manager/roster"] });
+    },
+    onError: (err: any) => toast({ title: err?.message || "Failed to clock out", variant: "destructive" }),
+  });
+
   // Build technician list from logs for the filter dropdown
   const technicianList = Array.from(
     new Map(
@@ -186,6 +218,11 @@ export default function ManagerRoster() {
     }
     return Array.from(map.entries()).map(([id, v]) => ({ id, ...v }));
   })();
+
+  // Technicians still clocked in from a previous day (forgot to clock out)
+  const overdueClockOuts = (activeRoster || []).filter(
+    log => !isToday(new Date(log.clockInAt))
+  );
 
   // Stats
   const totalShifts = logs?.length || 0;
@@ -254,6 +291,67 @@ export default function ManagerRoster() {
             </Button>
           </div>
         </div>
+
+        {/* Missed Clock-Out Alert — technicians still in from a previous day */}
+        {overdueClockOuts.length > 0 && (
+          <Card className="mb-6 border-red-500/30 bg-red-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2 text-red-700 dark:text-red-400">
+                <UserX className="w-4 h-4" />
+                Missed Clock-Out
+                <Badge className="bg-red-500 text-white text-xs">{overdueClockOuts.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground mb-3">
+                These technicians have been clocked in since a previous day and likely forgot to clock out. You can clock them out on their behalf.
+              </p>
+              <div className="space-y-2">
+                {overdueClockOuts.map(log => (
+                  <div key={log.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-red-500/20 bg-background">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+                        <UserX className="w-4 h-4 text-red-500" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{getTechName(log)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Clocked in {format(new Date(log.clockInAt), "EEE MMM d")} at {format(new Date(log.clockInAt), "HH:mm")}
+                          {" — "}{Math.floor((Date.now() - new Date(log.clockInAt).getTime()) / 3600000)}h ago
+                        </p>
+                      </div>
+                    </div>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" variant="destructive" className="shrink-0 text-xs h-7">
+                          <LogOut className="w-3 h-3 mr-1" />
+                          Clock Out
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Force Clock-Out</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Clock out <strong>{getTechName(log)}</strong> now? Their shift will be recorded as ending at the current time. This action will be logged.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => forceClockOutMutation.mutate(log.id)}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
+                            Yes, Clock Out Now
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Staff Alerts Section */}
         {alerts && alerts.length > 0 && (
@@ -376,6 +474,31 @@ export default function ManagerRoster() {
                       <span className="font-medium">{getTechName(log)}</span>
                       <span className="text-xs text-muted-foreground">since {format(new Date(log.clockInAt), "HH:mm")}</span>
                       {onBreak && <Badge variant="secondary" className="text-xs py-0"><Coffee className="w-3 h-3 mr-1" />{activeBreak.type}</Badge>}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-auto">
+                            <LogOut className="w-3 h-3 mr-1" />
+                            Clock Out
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Force Clock-Out</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Clock out <strong>{getTechName(log)}</strong> now? Their shift will end at the current time. This action will be logged.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => forceClockOutMutation.mutate(log.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              Yes, Clock Out Now
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   );
                 })}
@@ -621,9 +744,36 @@ export default function ManagerRoster() {
                               </div>
                             )}
                           </div>
-                          <div className="text-right shrink-0">
+                          <div className="text-right shrink-0 flex flex-col items-end gap-1">
                             <p className="text-lg font-bold text-primary">{minutesToHoursDisplay(workMins)}</p>
                             <p className="text-xs text-muted-foreground">work time</p>
+                            {stillIn && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive border-destructive/40 hover:bg-destructive/10">
+                                    <LogOut className="w-3 h-3 mr-1" />
+                                    Clock Out
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Force Clock-Out</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Clock out <strong>{getTechName(log)}</strong> now? Their shift will end at the current time. This action will be logged.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => forceClockOutMutation.mutate(log.id)}
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    >
+                                      Yes, Clock Out Now
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
                           </div>
                         </div>
                       </div>
