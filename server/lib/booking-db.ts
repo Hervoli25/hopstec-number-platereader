@@ -122,7 +122,7 @@ export async function getUpcomingBookings(limit: number = 20): Promise<CRMBookin
 
     return result.rows.map(row => ({
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -178,7 +178,7 @@ export async function getTodayBookings(): Promise<CRMBooking[]> {
 
     return result.rows.map(row => ({
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -242,7 +242,7 @@ export async function findBookingByPlate(licensePlate: string): Promise<CRMBooki
     const row = result.rows[0];
     return {
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -823,7 +823,7 @@ export async function getBookingWithMembership(bookingId: string): Promise<CRMBo
     const row = bookingResult.rows[0];
     const booking: CRMBooking = {
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -908,8 +908,7 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
   console.log("Manager Bookings: Searching with filters:", JSON.stringify(filters));
 
   try {
-    // Note: bookingReference column may not exist in all CRM databases
-    // We don't select it from DB - generate from ID in application code instead
+    // Booking reference is derived from the last 8 chars of the CRM booking ID
     let query = `
       SELECT
         b.id,
@@ -954,9 +953,9 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
 
     if (filters?.customerSearch) {
       const searchTerm = `%${filters.customerSearch}%`;
-      // Search by generated reference (from ID), name, email, phone, or plate
+      // Search by reference (last 8 chars of ID), name, email, phone, or plate
       query += ` AND (
-        UPPER(SUBSTRING(b.id::text, 1, 8)) ILIKE $${paramIndex} OR
+        UPPER(RIGHT(b.id::text, 8)) ILIKE $${paramIndex} OR
         u.name ILIKE $${paramIndex} OR
         u.email ILIKE $${paramIndex} OR
         u.phone ILIKE $${paramIndex} OR
@@ -999,7 +998,7 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
 
       return {
         id: row.id,
-        bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+        bookingReference: row.id.slice(-8).toUpperCase(),
         status: row.status,
         bookingDate: new Date(row.bookingDate),
         timeSlot: row.timeSlot,
@@ -1080,7 +1079,7 @@ export async function getBookingById(bookingId: string): Promise<CRMBookingExten
 
     return {
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,

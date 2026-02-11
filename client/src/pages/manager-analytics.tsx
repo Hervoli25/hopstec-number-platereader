@@ -23,9 +23,12 @@ interface AnalyticsSummary {
 const STAGE_LABELS: Record<string, string> = {
   received: "Receiving",
   prewash: "Pre-Wash",
-  foam: "Foam",
   rinse: "Rinse",
-  dry: "Drying",
+  dry_vacuum: "Dry & Vacuum",
+  simple_polish: "Simple Polish",
+  detailing_polish: "Detail Polish",
+  tyre_shine: "Tyre Shine",
+  clay_treatment: "Clay Treatment",
 };
 
 function formatDuration(seconds: number): string {
@@ -243,7 +246,7 @@ export default function ManagerAnalytics() {
                 <Skeleton className="h-10" />
               </div>
             ) : analytics?.avgTimePerStage && Object.keys(analytics.avgTimePerStage).length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {Object.entries(analytics.avgTimePerStage).map(([stage, seconds]) => (
                   <div 
                     key={stage}

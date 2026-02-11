@@ -9,8 +9,10 @@ import { PlateConfirmDialog } from "@/components/plate-confirm-dialog";
 import { CustomerUrlDialog } from "@/components/customer-url-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { ArrowLeft, Camera, Keyboard, Loader2 } from "lucide-react";
-import type { CountryHint } from "@shared/schema";
+import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Camera, Keyboard, Loader2, Car, Sparkles, CircleDot, Star } from "lucide-react";
+import type { CountryHint, ServiceCode } from "@shared/schema";
+import { SERVICE_TYPE_CONFIG, SERVICE_CODES } from "@shared/schema";
 
 export default function ScanCarwash() {
   const [, setLocation] = useLocation();
@@ -21,13 +23,24 @@ export default function ScanCarwash() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<{ plate: string; confidence: number }[]>([]);
   const [createdJob, setCreatedJob] = useState<{ id: string; customerUrl: string; plateDisplay: string } | null>(null);
+  const [showServiceSelect, setShowServiceSelect] = useState(false);
+  const [selectedServiceCode, setSelectedServiceCode] = useState<ServiceCode>("STANDARD");
+  const [pendingPlate, setPendingPlate] = useState<{ plate: string; countryHint: CountryHint } | null>(null);
+
+  const SERVICE_ICONS: Record<ServiceCode, typeof Car> = {
+    STANDARD: Car,
+    RIM_ONLY: CircleDot,
+    TYRE_SHINE_ONLY: Sparkles,
+    FULL_VALET: Star,
+  };
 
   const createJobMutation = useMutation({
-    mutationFn: async ({ plate, countryHint, photo }: { plate: string; countryHint: CountryHint; photo?: string }) => {
+    mutationFn: async ({ plate, countryHint, photo, serviceCode }: { plate: string; countryHint: CountryHint; photo?: string; serviceCode: ServiceCode }) => {
       const res = await apiRequest("POST", "/api/wash-jobs", {
         plateDisplay: plate,
         countryHint,
-        photo
+        photo,
+        serviceCode,
       });
       return res.json();
     },
@@ -67,7 +80,21 @@ export default function ScanCarwash() {
 
   const handleConfirmPlate = (plate: string, countryHint: CountryHint) => {
     setShowConfirm(false);
-    createJobMutation.mutate({ plate, countryHint, photo: capturedImage || undefined });
+    setPendingPlate({ plate, countryHint });
+    setShowServiceSelect(true);
+  };
+
+  const handleServiceSelect = (code: ServiceCode) => {
+    setSelectedServiceCode(code);
+    setShowServiceSelect(false);
+    if (pendingPlate) {
+      createJobMutation.mutate({
+        plate: pendingPlate.plate,
+        countryHint: pendingPlate.countryHint,
+        photo: capturedImage || undefined,
+        serviceCode: code,
+      });
+    }
   };
 
   if (showCamera) {
@@ -156,6 +183,45 @@ export default function ScanCarwash() {
           customerUrl={createdJob.customerUrl}
           plateDisplay={createdJob.plateDisplay}
         />
+      )}
+
+      {/* Service Type Selection */}
+      {showServiceSelect && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold mb-1">Select Service</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              {pendingPlate?.plate}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {SERVICE_CODES.map(code => {
+                const cfg = SERVICE_TYPE_CONFIG[code];
+                const Icon = SERVICE_ICONS[code];
+                return (
+                  <Card
+                    key={code}
+                    className="p-4 text-center cursor-pointer hover:bg-primary/5 hover:border-primary/30 transition-colors"
+                    onClick={() => handleServiceSelect(code)}
+                  >
+                    <Icon className="w-8 h-8 mx-auto mb-2 text-primary" />
+                    <p className="font-medium text-sm">{cfg.label}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{cfg.description}</p>
+                    {cfg.mode === "timer" && (
+                      <Badge variant="secondary" className="mt-2 text-xs">Timer</Badge>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+            <Button
+              variant="ghost"
+              className="w-full mt-3"
+              onClick={() => setShowServiceSelect(false)}
+            >
+              Cancel
+            </Button>
+          </Card>
+        </div>
       )}
 
       {createJobMutation.isPending && (

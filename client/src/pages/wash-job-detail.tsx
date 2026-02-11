@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -13,8 +13,8 @@ import {
   ArrowLeft, Check, Loader2, Camera,
   Droplets, Wind, Sparkles, CircleDot, Car, Clock, Calendar
 } from "lucide-react";
-import type { WashJob, WashStatus } from "@shared/schema";
-import { WASH_STATUS_ORDER } from "@shared/schema";
+import type { WashJob, WashStatus, ServiceCode } from "@shared/schema";
+import { WASH_STATUS_ORDER, SERVICE_TYPE_CONFIG } from "@shared/schema";
 import { formatDistanceToNow, format, differenceInMinutes, differenceInSeconds } from "date-fns";
 
 function formatDuration(seconds: number): string {
@@ -27,11 +27,20 @@ function formatDuration(seconds: number): string {
   return `${hours}h ${remainMins}m`;
 }
 
+function formatElapsedHHMMSS(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds]
+    .map(v => String(v).padStart(2, "0"))
+    .join(":");
+}
+
 function calculateStageDurations(stageTimestamps: Record<string, string> | null | undefined): { stage: string; duration: number; startTime: string }[] {
   if (!stageTimestamps) return [];
   
   // Use explicit stage order to ensure correct calculation
-  const orderedStages = ["received", "prewash", "foam", "rinse", "dry", "complete"];
+  const orderedStages = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"];
   const presentStages = orderedStages.filter(s => stageTimestamps[s]);
   const durations: { stage: string; duration: number; startTime: string }[] = [];
   
@@ -68,9 +77,12 @@ function calculateStageDurations(stageTimestamps: Record<string, string> | null 
 const STATUS_CONFIG: Record<WashStatus, { label: string; icon: typeof Car; color: string }> = {
   received: { label: "Received", icon: Car, color: "bg-blue-500" },
   prewash: { label: "Pre-Wash", icon: Droplets, color: "bg-cyan-500" },
-  foam: { label: "Foam", icon: Sparkles, color: "bg-purple-500" },
   rinse: { label: "Rinse", icon: Droplets, color: "bg-teal-500" },
-  dry: { label: "Dry", icon: Wind, color: "bg-amber-500" },
+  dry_vacuum: { label: "Dry & Vacuum", icon: Wind, color: "bg-amber-500" },
+  simple_polish: { label: "Simple Polish", icon: Sparkles, color: "bg-purple-500" },
+  detailing_polish: { label: "Detailing Polish", icon: Sparkles, color: "bg-indigo-500" },
+  tyre_shine: { label: "Tyre Shine", icon: Sparkles, color: "bg-pink-500" },
+  clay_treatment: { label: "Clay Treatment", icon: Sparkles, color: "bg-rose-500" },
   complete: { label: "Complete", icon: Check, color: "bg-green-500" },
 };
 
@@ -80,6 +92,7 @@ export default function WashJobDetail() {
   const { toast } = useToast();
   const [showPhotoDialog, setShowPhotoDialog] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<WashStatus | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const { data: job, isLoading } = useQuery<WashJob>({
     queryKey: ["/api/wash-jobs", params.id],
@@ -135,6 +148,22 @@ export default function WashJobDetail() {
     }
   };
 
+  // Timer effect for timer-mode services — runs every second while job is active
+  useEffect(() => {
+    if (!job?.startAt || job.status === "complete") return;
+    const sc = (job?.serviceCode || "STANDARD") as ServiceCode;
+    const cfg = SERVICE_TYPE_CONFIG[sc];
+    if (cfg?.mode !== "timer") return;
+
+    const startTime = new Date(job.startAt).getTime();
+    const tick = () => {
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [job?.startAt, job?.status, job?.serviceCode]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -166,6 +195,10 @@ export default function WashJobDetail() {
       </div>
     );
   }
+
+  const serviceCode = (job?.serviceCode || "STANDARD") as ServiceCode;
+  const serviceConfig = SERVICE_TYPE_CONFIG[serviceCode];
+  const isTimerMode = serviceConfig?.mode === "timer";
 
   const currentStatusIndex = WASH_STATUS_ORDER.indexOf(job.status as WashStatus);
   const isComplete = job.status === "complete";
@@ -212,65 +245,97 @@ export default function WashJobDetail() {
             </div>
           </Card>
 
-          <div className="space-y-3 mb-6">
-            <h2 className="text-lg font-semibold mb-4">Wash Progress</h2>
-            
-            {WASH_STATUS_ORDER.map((status, index) => {
-              const config = STATUS_CONFIG[status];
-              const Icon = config.icon;
-              const isPast = index < currentStatusIndex;
-              const isCurrent = index === currentStatusIndex;
-              const isNext = index === currentStatusIndex + 1;
-              const isFuture = index > currentStatusIndex + 1;
-
-              return (
-                <motion.div
-                  key={status}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <Card
-                    className={`p-4 flex items-center gap-4 transition-all ${
-                      isCurrent ? "ring-2 ring-primary" : ""
-                    } ${isPast ? "opacity-60" : ""} ${
-                      isNext && !isComplete ? "hover-elevate active-elevate-2 cursor-pointer" : ""
-                    } ${isFuture ? "opacity-40" : ""}`}
-                    onClick={() => {
-                      if (isNext && !isComplete) {
-                        handleStatusClick(status);
-                      }
-                    }}
-                    data-testid={`card-status-${status}`}
+          {isTimerMode ? (
+            <div className="space-y-3 mb-6">
+              <h2 className="text-lg font-semibold mb-4">{serviceConfig.label}</h2>
+              <Card className="p-6 text-center">
+                <p className="text-sm text-muted-foreground mb-2">
+                  {isComplete ? "Total Time" : "Elapsed Time"}
+                </p>
+                <p className="text-5xl font-mono font-bold tracking-wider mb-6" data-testid="text-timer-display">
+                  {isComplete && job.startAt && job.endAt
+                    ? formatElapsedHHMMSS(differenceInSeconds(new Date(job.endAt), new Date(job.startAt)))
+                    : formatElapsedHHMMSS(elapsedSeconds)
+                  }
+                </p>
+                {!isComplete && (
+                  <Button
+                    className="w-full bg-green-500 hover:bg-green-600 text-white"
+                    onClick={() => handleStatusClick("complete" as WashStatus)}
+                    disabled={updateStatusMutation.isPending}
+                    data-testid="button-mark-complete"
                   >
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      isPast || isCurrent ? config.color : "bg-muted"
-                    }`}>
-                      {isPast ? (
-                        <Check className="w-5 h-5 text-white" />
-                      ) : (
-                        <Icon className={`w-5 h-5 ${isPast || isCurrent ? "text-white" : "text-muted-foreground"}`} />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <p className={`font-medium ${isFuture ? "text-muted-foreground" : ""}`}>
-                        {config.label}
-                      </p>
-                      {isCurrent && (
-                        <p className="text-xs text-muted-foreground">Current stage</p>
-                      )}
-                      {isNext && !isComplete && (
-                        <p className="text-xs text-primary">Tap to advance</p>
-                      )}
-                    </div>
-                    {updateStatusMutation.isPending && isNext && (
-                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    {updateStatusMutation.isPending ? (
+                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    ) : (
+                      <Check className="w-5 h-5 mr-2" />
                     )}
-                  </Card>
-                </motion.div>
-              );
-            })}
-          </div>
+                    Mark Complete
+                  </Button>
+                )}
+              </Card>
+            </div>
+          ) : (
+            <div className="space-y-3 mb-6">
+              <h2 className="text-lg font-semibold mb-4">Wash Progress</h2>
+
+              {WASH_STATUS_ORDER.map((status, index) => {
+                const config = STATUS_CONFIG[status];
+                const Icon = config.icon;
+                const isPast = index < currentStatusIndex;
+                const isCurrent = index === currentStatusIndex;
+                const isFutureClickable = index > currentStatusIndex && !isComplete;
+                const isFuture = index > currentStatusIndex;
+
+                return (
+                  <motion.div
+                    key={status}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <Card
+                      className={`p-4 flex items-center gap-4 transition-all ${
+                        isCurrent ? "ring-2 ring-primary" : ""
+                      } ${isPast ? "opacity-60" : ""} ${
+                        isFutureClickable ? "hover-elevate active-elevate-2 cursor-pointer" : ""
+                      } ${isFuture && !isFutureClickable ? "opacity-40" : ""}`}
+                      onClick={() => {
+                        if (isFutureClickable) {
+                          handleStatusClick(status);
+                        }
+                      }}
+                      data-testid={`card-status-${status}`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        isPast || isCurrent ? config.color : "bg-muted"
+                      }`}>
+                        {isPast ? (
+                          <Check className="w-5 h-5 text-white" />
+                        ) : (
+                          <Icon className={`w-5 h-5 ${isPast || isCurrent ? "text-white" : "text-muted-foreground"}`} />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <p className={`font-medium ${isFuture ? "text-muted-foreground" : ""}`}>
+                          {config.label}
+                        </p>
+                        {isCurrent && (
+                          <p className="text-xs text-muted-foreground">Current stage</p>
+                        )}
+                        {isFutureClickable && (
+                          <p className="text-xs text-primary">Tap to advance</p>
+                        )}
+                      </div>
+                      {updateStatusMutation.isPending && isFutureClickable && (
+                        <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                      )}
+                    </Card>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
 
           {isComplete && (
             <motion.div

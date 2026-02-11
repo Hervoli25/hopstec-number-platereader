@@ -39,10 +39,11 @@ export default function TechnicianGuide() {
       steps: [
         "Open the active wash job",
         "You'll see the current status and available next steps",
-        "Tap the status button to advance: Received → Pre-Wash → Foam → Rinse → Dry → Complete",
+        "For Standard Wash: tap any future step to advance — Pre-Wash → Rinse → Dry & Vacuum → Simple Polish → Detailing Polish → Tyre Shine → Clay Treatment → Complete",
+        "You can skip steps if the client only needs specific services",
+        "For Rim Only, Tyre Shine Only, and Full Valet: a timer is shown — tap 'Mark Complete' when done",
         "Each status change is timestamped automatically",
-        "Customers with tracking links see updates in real-time",
-        "Mark as 'Complete' when the vehicle is ready for pickup"
+        "Customers with tracking links see updates in real-time"
       ]
     },
     {

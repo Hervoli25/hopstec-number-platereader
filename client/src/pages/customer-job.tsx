@@ -16,18 +16,22 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import hopsovirLogo from "@/assets/images/logo.png";
-import type { WashJob, WashPhoto, ServiceChecklistItem, CustomerConfirmation } from "@shared/schema";
+import type { WashJob, WashPhoto, ServiceChecklistItem, CustomerConfirmation, ServiceCode } from "@shared/schema";
+import { SERVICE_TYPE_CONFIG } from "@shared/schema";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
   received: { label: "Received", icon: Car, color: "bg-blue-500" },
-  prewash: { label: "Pre-wash", icon: Droplets, color: "bg-cyan-500" },
-  foam: { label: "Foam", icon: Sparkles, color: "bg-purple-500" },
-  rinse: { label: "Rinse", icon: Droplets, color: "bg-blue-400" },
-  dry: { label: "Drying", icon: Wind, color: "bg-orange-500" },
+  prewash: { label: "Pre-Wash", icon: Droplets, color: "bg-cyan-500" },
+  rinse: { label: "Rinse", icon: Droplets, color: "bg-teal-500" },
+  dry_vacuum: { label: "Dry & Vacuum", icon: Wind, color: "bg-amber-500" },
+  simple_polish: { label: "Simple Polish", icon: Sparkles, color: "bg-purple-500" },
+  detailing_polish: { label: "Detailing Polish", icon: Sparkles, color: "bg-indigo-500" },
+  tyre_shine: { label: "Tyre Shine", icon: Sparkles, color: "bg-pink-500" },
+  clay_treatment: { label: "Clay Treatment", icon: Sparkles, color: "bg-rose-500" },
   complete: { label: "Complete", icon: CheckCircle2, color: "bg-green-500" },
 };
 
-const STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"];
+const STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"];
 
 interface CustomerJobData {
   job: WashJob;
@@ -147,6 +151,9 @@ export default function CustomerJob() {
   const { job, photos, checklist, confirmation, customerName, serviceCode } = data;
   const currentStatusIndex = STATUS_ORDER.indexOf(job.status);
   const isComplete = job.status === "complete";
+  const svcCode = (job.serviceCode || "STANDARD") as ServiceCode;
+  const svcConfig = SERVICE_TYPE_CONFIG[svcCode];
+  const isTimerMode = svcConfig?.mode === "timer";
 
   return (
     <div className="min-h-screen bg-background">
@@ -203,61 +210,93 @@ export default function CustomerJob() {
         >
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Wash Progress</CardTitle>
+              <CardTitle className="text-lg">
+                {isTimerMode ? svcConfig.label : "Wash Progress"}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="relative">
-                <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-border" />
-                
-                <div className="space-y-4">
-                  {STATUS_ORDER.map((status, index) => {
-                    const config = STATUS_CONFIG[status];
-                    const isPast = index <= currentStatusIndex;
-                    const isCurrent = index === currentStatusIndex;
-                    const Icon = config.icon;
-                    const statusPhotos = photos.filter(p => p.statusAtTime === status);
-                    
-                    return (
-                      <div key={status} className="flex gap-4 relative">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                          isPast ? config.color : "bg-muted"
-                        }`}>
-                          <Icon className={`h-4 w-4 ${isPast ? "text-white" : "text-muted-foreground"}`} />
-                        </div>
-                        <div className="flex-1 pt-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`font-medium ${isPast ? "" : "text-muted-foreground"}`}>
-                              {config.label}
-                            </span>
-                            {isCurrent && !isComplete && (
-                              <Badge className="animate-pulse">Current</Badge>
-                            )}
+              {isTimerMode ? (
+                <div className="text-center py-4">
+                  <Badge className="mb-3">{svcConfig.label}</Badge>
+                  {isComplete ? (
+                    <div>
+                      <CheckCircle2 className="h-12 w-12 mx-auto text-green-500 mb-2" />
+                      <p className="text-lg font-semibold text-green-600">Service Complete</p>
+                      {job.startAt && job.endAt && (
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Total time: {Math.round((new Date(job.endAt).getTime() - new Date(job.startAt).getTime()) / 60000)} minutes
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <Clock className="h-12 w-12 mx-auto text-primary animate-pulse mb-2" />
+                      <p className="text-lg font-semibold">In Progress</p>
+                      <p className="text-sm text-muted-foreground mt-1">Your vehicle is being serviced</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="relative">
+                  <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-border" />
+
+                  <div className="space-y-4">
+                    {STATUS_ORDER.map((status, index) => {
+                      const config = STATUS_CONFIG[status];
+                      if (!config) return null;
+                      const isPast = index <= currentStatusIndex;
+                      const isCurrent = index === currentStatusIndex;
+                      const Icon = config.icon;
+                      const statusPhotos = photos.filter(p => p.statusAtTime === status);
+                      // Check if this step was skipped (no timestamp and it's past)
+                      const timestamps = (job.stageTimestamps || {}) as Record<string, string>;
+                      const wasSkipped = isPast && !isCurrent && !timestamps[status] && status !== "received";
+
+                      return (
+                        <div key={status} className="flex gap-4 relative">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
+                            isPast ? config.color : "bg-muted"
+                          } ${wasSkipped ? "opacity-40" : ""}`}>
+                            <Icon className={`h-4 w-4 ${isPast ? "text-white" : "text-muted-foreground"}`} />
+                          </div>
+                          <div className="flex-1 pt-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-medium ${isPast ? "" : "text-muted-foreground"} ${wasSkipped ? "line-through opacity-50" : ""}`}>
+                                {config.label}
+                              </span>
+                              {wasSkipped && (
+                                <Badge variant="outline" className="text-xs opacity-50">Skipped</Badge>
+                              )}
+                              {isCurrent && !isComplete && (
+                                <Badge className="animate-pulse">Current</Badge>
+                              )}
+                              {statusPhotos.length > 0 && (
+                                <Badge variant="outline" className="gap-1">
+                                  <Camera className="h-3 w-3" />
+                                  {statusPhotos.length}
+                                </Badge>
+                              )}
+                            </div>
+
                             {statusPhotos.length > 0 && (
-                              <Badge variant="outline" className="gap-1">
-                                <Camera className="h-3 w-3" />
-                                {statusPhotos.length}
-                              </Badge>
+                              <div className="flex gap-2 mt-2 overflow-x-auto pb-2">
+                                {statusPhotos.map(photo => (
+                                  <img
+                                    key={photo.id}
+                                    src={photo.url}
+                                    alt={`${config.label} photo`}
+                                    className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
+                                  />
+                                ))}
+                              </div>
                             )}
                           </div>
-                          
-                          {statusPhotos.length > 0 && (
-                            <div className="flex gap-2 mt-2 overflow-x-auto pb-2">
-                              {statusPhotos.map(photo => (
-                                <img
-                                  key={photo.id}
-                                  src={photo.url}
-                                  alt={`${config.label} photo`}
-                                  className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
-                                />
-                              ))}
-                            </div>
-                          )}
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>

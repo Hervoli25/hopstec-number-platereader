@@ -816,17 +816,20 @@ export class DatabaseStorage implements IStorage {
 
     // Calculate average time per stage
     const stageTimeKPIs: Record<string, { avgSeconds: number; count: number }> = {};
-    const stages = ["received", "prewash", "foam", "rinse", "dry"];
-    
+    const stages = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment"];
+
     for (const job of completedJobs) {
       const timestamps = job.stageTimestamps as Record<string, string> | null;
       if (!timestamps) continue;
-      
-      for (let i = 0; i < stages.length; i++) {
-        const stage = stages[i];
-        const nextStage = stages[i + 1] || "complete";
-        
-        if (timestamps[stage] && timestamps[nextStage]) {
+
+      // Only compute durations between stages that actually have timestamps (handles skipped steps)
+      const presentStages = stages.filter(s => timestamps[s]);
+
+      for (let i = 0; i < presentStages.length; i++) {
+        const stage = presentStages[i];
+        const nextStage = presentStages[i + 1] || (timestamps["complete"] ? "complete" : null);
+
+        if (nextStage && timestamps[stage] && timestamps[nextStage]) {
           const duration = (new Date(timestamps[nextStage]).getTime() - new Date(timestamps[stage]).getTime()) / 1000;
           if (duration > 0) {
             if (!stageTimeKPIs[stage]) {

@@ -90,18 +90,24 @@ interface AnalyticsSummary {
 const STATUS_COLORS: Record<WashStatus, string> = {
   received: "bg-blue-500",
   prewash: "bg-cyan-500",
-  foam: "bg-purple-500",
   rinse: "bg-teal-500",
-  dry: "bg-amber-500",
+  dry_vacuum: "bg-amber-500",
+  simple_polish: "bg-purple-500",
+  detailing_polish: "bg-indigo-500",
+  tyre_shine: "bg-pink-500",
+  clay_treatment: "bg-rose-500",
   complete: "bg-green-500",
 };
 
 const STATUS_LABELS: Record<WashStatus, string> = {
   received: "Received",
   prewash: "Pre-Wash",
-  foam: "Foam",
   rinse: "Rinse",
-  dry: "Dry",
+  dry_vacuum: "Dry & Vacuum",
+  simple_polish: "Simple Polish",
+  detailing_polish: "Detail Polish",
+  tyre_shine: "Tyre Shine",
+  clay_treatment: "Clay Treatment",
   complete: "Complete",
 };
 
@@ -113,7 +119,7 @@ export default function ManagerDashboard() {
   // Enable SSE for real-time updates
   useSSE();
 
-  const { data: stats, isLoading, refetch } = useQuery<QueueStats>({
+  const { data: stats, isLoading, isFetching, refetch } = useQuery<QueueStats>({
     queryKey: ["/api/queue/stats"],
     refetchInterval: 30000,
   });
@@ -434,10 +440,11 @@ export default function ManagerDashboard() {
                   variant="outline"
                   size="sm"
                   onClick={handleRefresh}
+                  disabled={isFetching}
                   data-testid="button-refresh"
                 >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Refresh
+                  <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
+                  {isFetching ? "Refreshing..." : "Refresh"}
                 </Button>
               </div>
 
@@ -455,7 +462,8 @@ export default function ManagerDashboard() {
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted/50"
+                      className="flex items-center justify-between p-3 rounded-lg bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                      onClick={() => setLocation(`/wash-job/${job.id}`)}
                       data-testid={`queue-job-${job.id}`}
                     >
                       <div className="flex items-center gap-3">
@@ -470,8 +478,8 @@ export default function ManagerDashboard() {
                           </div>
                         </div>
                       </div>
-                      <Badge className={`${STATUS_COLORS[job.status as WashStatus]} text-white text-xs`}>
-                        {STATUS_LABELS[job.status as WashStatus]}
+                      <Badge className={`${STATUS_COLORS[job.status as WashStatus] || "bg-gray-500"} text-white text-xs`}>
+                        {STATUS_LABELS[job.status as WashStatus] || job.status}
                       </Badge>
                     </motion.div>
                   ))}
@@ -657,7 +665,7 @@ export default function ManagerDashboard() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Enter BKG-XXXXXXXX, name, email, phone, or plate..."
+                placeholder="Search by reference, name, email, phone, or plate..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
@@ -739,7 +747,7 @@ export default function ManagerDashboard() {
             <DialogDescription>
               {selectedBooking && (
                 <span className="font-mono text-primary">
-                  #{selectedBooking.bookingReference || selectedBooking.id.slice(0, 8).toUpperCase()}
+                  #{selectedBooking.bookingReference || selectedBooking.id.slice(-8).toUpperCase()}
                 </span>
               )}
             </DialogDescription>
@@ -871,7 +879,7 @@ export default function ManagerDashboard() {
                 <div>
                   <Label className="text-muted-foreground">Amount</Label>
                   <p className="font-medium">
-                    ${((selectedBooking.totalAmount || 0) / 100).toFixed(2)}
+                    R{((selectedBooking.totalAmount || 0) / 100).toFixed(2)}
                   </p>
                 </div>
               </div>

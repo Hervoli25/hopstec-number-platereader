@@ -633,7 +633,7 @@ export default function ManagerBookings() {
                 <div>
                   <Label className="text-muted-foreground">Amount</Label>
                   <p className="font-medium">
-                    ${(selectedBooking.totalAmount / 100).toFixed(2)}
+                    R{(selectedBooking.totalAmount / 100).toFixed(2)}
                   </p>
                 </div>
               </div>

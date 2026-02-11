@@ -16,7 +16,8 @@ import {
 } from "./lib/notification-service";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
-import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES } from "@shared/schema";
+import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG } from "@shared/schema";
+import type { ServiceCode, WashStatus } from "@shared/schema";
 import {
   getUpcomingBookings,
   getTodayBookings,
@@ -86,6 +87,7 @@ const createWashJobSchema = z.object({
   plateDisplay: z.string().min(1, "Plate is required"),
   countryHint: z.enum(COUNTRY_HINTS).optional().default("OTHER"),
   photo: z.string().optional(),
+  serviceCode: z.enum(SERVICE_CODES).optional().default("STANDARD"),
 });
 
 const updateStatusSchema = z.object({
@@ -303,7 +305,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: result.error.errors[0].message });
       }
 
-      const { plateDisplay, countryHint, photo } = result.data;
+      const { plateDisplay, countryHint, photo, serviceCode } = result.data;
       const userId = req.user?.claims?.sub;
 
       // Save photo if provided
@@ -323,6 +325,7 @@ export async function registerRoutes(
         countryHint,
         technicianId: userId,
         status: "received",
+        serviceCode: serviceCode || "STANDARD",
         startAt: new Date(),
       });
 
@@ -414,6 +417,28 @@ export async function registerRoutes(
 
       const { status } = result.data;
       const userId = req.user?.claims?.sub;
+
+      // Get current job to validate transition
+      const currentJob = await storage.getWashJob(req.params.id as string);
+      if (!currentJob) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      // Determine service mode
+      const svcCode = (currentJob.serviceCode as ServiceCode) || "STANDARD";
+      const svcConfig = SERVICE_TYPE_CONFIG[svcCode];
+
+      // For timer-mode services only allow "complete"
+      if (svcConfig?.mode === "timer" && status !== "complete") {
+        return res.status(400).json({ message: "This service type only supports marking as complete" });
+      }
+
+      // Ensure we're not going backward
+      const currentIdx = WASH_STATUS_ORDER.indexOf(currentJob.status as WashStatus);
+      const newIdx = WASH_STATUS_ORDER.indexOf(status as WashStatus);
+      if (newIdx >= 0 && currentIdx >= 0 && newIdx <= currentIdx) {
+        return res.status(400).json({ message: "Cannot move to a previous or current status" });
+      }
 
       let job;
       if (status === "complete") {

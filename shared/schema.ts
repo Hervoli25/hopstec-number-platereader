@@ -8,7 +8,7 @@ export * from "./models/auth";
 
 // Enums
 export const userRoleEnum = pgEnum("user_role", ["technician", "manager", "admin"]);
-export const washStatusEnum = pgEnum("wash_status", ["received", "prewash", "foam", "rinse", "dry", "complete"]);
+export const washStatusEnum = pgEnum("wash_status", ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"]);
 export const countryHintEnum = pgEnum("country_hint", ["FR", "ZA", "CD", "OTHER"]);
 export const photoRuleEnum = pgEnum("photo_rule", ["optional", "required", "disabled"]);
 
@@ -477,7 +477,7 @@ export type StaffAlert = typeof staffAlerts.$inferSelect;
 export type InsertStaffAlert = z.infer<typeof insertStaffAlertSchema>;
 
 // Status flow for wash jobs
-export const WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"] as const;
+export const WASH_STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
 
 // Country hints
@@ -489,8 +489,20 @@ export const PHOTO_RULES = ["optional", "required", "disabled"] as const;
 export type PhotoRuleType = typeof PHOTO_RULES[number];
 
 // Service codes
-export const SERVICE_CODES = ["BASIC", "PREMIUM", "DELUXE", "CUSTOM"] as const;
+export const SERVICE_CODES = ["STANDARD", "RIM_ONLY", "TYRE_SHINE_ONLY", "FULL_VALET"] as const;
 export type ServiceCode = typeof SERVICE_CODES[number];
+
+// Service type configuration — determines step vs timer mode
+export const SERVICE_TYPE_CONFIG: Record<ServiceCode, {
+  label: string;
+  mode: "steps" | "timer";
+  description: string;
+}> = {
+  STANDARD: { label: "Standard Wash", mode: "steps", description: "Full car wash with all available steps" },
+  RIM_ONLY: { label: "Rim Only", mode: "timer", description: "Rim cleaning service" },
+  TYRE_SHINE_ONLY: { label: "Tyre Shine Only", mode: "timer", description: "Tyre shine service" },
+  FULL_VALET: { label: "Full Valet", mode: "timer", description: "Full valet — time managed on-site" },
+};
 
 // Reservation statuses
 export const RESERVATION_STATUSES = ["pending", "confirmed", "checked_in", "completed", "cancelled"] as const;
