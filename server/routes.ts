@@ -16,7 +16,7 @@ import {
 } from "./lib/notification-service";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
 import { z } from "zod";
-import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG } from "@shared/schema";
+import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE } from "@shared/schema";
 import type { ServiceCode, WashStatus } from "@shared/schema";
 import {
   getUpcomingBookings,
@@ -33,6 +33,10 @@ import {
   findCRMSubscriptionByPhone,
   getBookingWithMembership,
   getUpcomingBookingsWithMemberships,
+  findCRMCustomerByPlate,
+  findCRMMembershipByPlate,
+  creditCRMLoyaltyPoints,
+  getCRMLoyaltyAnalytics,
   getManagerBookings,
   getBookingById,
   updateBooking,
@@ -48,6 +52,10 @@ import {
   generateConfirmationCode,
   formatCurrency
 } from "./lib/parking-utils";
+import { startNotificationProcessor } from "./lib/notification-processor";
+import { getVapidPublicKey, sendPushToCustomer, sendPushToAllManagers } from "./lib/web-push-service";
+import { calculateJobPriority } from "./lib/priority-calculator";
+import { getQueuePosition } from "./lib/eta-calculator";
 
 // SSE clients for real-time updates
 const sseClients: Set<any> = new Set();
@@ -110,6 +118,9 @@ export async function registerRoutes(
 
   // Seed credentials users from env vars
   await seedUsers();
+
+  // Start notification delivery processor (Twilio SMS/WhatsApp)
+  startNotificationProcessor();
 
   // Serve uploaded files
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
@@ -362,6 +373,16 @@ export async function registerRoutes(
       // Broadcast to SSE clients
       broadcastEvent({ type: "wash_created", job });
 
+      // Push notification to managers about new job
+      try {
+        await sendPushToAllManagers({
+          title: "New Wash Job",
+          body: `${job.plateDisplay} — ${job.serviceCode} added to queue`,
+          url: "/manager/dashboard",
+          tag: `new-job-${job.id}`,
+        });
+      } catch (_pushErr) { /* non-blocking */ }
+
       // Return job with customer tracking URL
       const baseUrl = getBaseUrl(req);
       res.json({
@@ -465,10 +486,289 @@ export async function registerRoutes(
       // Broadcast update
       broadcastEvent({ type: "wash_status_update", job });
 
+      // === AUTO-CREDIT LOYALTY POINTS ON COMPLETION (CRM) ===
+      if (status === "complete" && job) {
+        try {
+          const svcCode = (job.serviceCode || "STANDARD") as ServiceCode;
+          const basePoints = LOYALTY_POINTS_PER_SERVICE[svcCode] || 0;
+
+          if (basePoints > 0) {
+            // Look up CRM membership to get multiplier and userId
+            const membership = await findCRMMembershipByPlate(job.plateNormalized);
+
+            if (membership) {
+              // Apply loyalty multiplier (e.g. Premium = 2x)
+              const pointsToAward = Math.round(basePoints * membership.loyaltyMultiplier);
+
+              // Credit points directly to CRM User.loyaltyPoints
+              const creditResult = await creditCRMLoyaltyPoints(membership.userId, pointsToAward);
+              const newBalance = creditResult?.newBalance ?? (membership.loyaltyPoints + pointsToAward);
+
+              // Log transaction locally for audit trail
+              await storage.logLoyaltyTransaction({
+                crmUserId: membership.userId,
+                memberNumber: membership.memberNumber,
+                type: "earn_wash",
+                points: pointsToAward,
+                balanceAfter: newBalance,
+                washJobId: job.id,
+                serviceCode: svcCode,
+                description: `Earned ${pointsToAward} points for ${SERVICE_TYPE_CONFIG[svcCode].label}${membership.loyaltyMultiplier > 1 ? ` (${membership.loyaltyMultiplier}x multiplier)` : ""}`,
+                createdBy: userId,
+              });
+
+              // Log the loyalty event
+              await storage.logEvent({
+                type: "loyalty_points_earned",
+                plateDisplay: job.plateDisplay,
+                plateNormalized: job.plateNormalized,
+                washJobId: job.id,
+                userId,
+                payloadJson: {
+                  points: pointsToAward,
+                  serviceCode: svcCode,
+                  balanceAfter: newBalance,
+                  memberNumber: membership.memberNumber,
+                  tierName: membership.tierName,
+                  loyaltyMultiplier: membership.loyaltyMultiplier,
+                },
+              });
+
+              // Broadcast loyalty update
+              broadcastEvent({
+                type: "loyalty_points_earned",
+                washJobId: job.id,
+                points: pointsToAward,
+                balance: newBalance,
+                memberNumber: membership.memberNumber,
+              });
+            }
+
+            // Also increment local membership wash count if applicable
+            const localMembership = await storage.getActiveMembershipForPlate(job.plateNormalized);
+            if (localMembership) {
+              await storage.incrementMembershipWashUsed(localMembership.id);
+            }
+          }
+        } catch (loyaltyErr) {
+          // Non-blocking: log error but don't fail the wash completion
+          console.error("Loyalty points credit failed (non-blocking):", loyaltyErr);
+        }
+
+        // === AUTO-QUEUE "CAR READY" SMS/WHATSAPP NOTIFICATION ===
+        try {
+          const membership = await findCRMMembershipByPlate(job.plateNormalized);
+          const customerPhone = membership?.customerPhone;
+          const customerName = membership?.customerName;
+          if (customerPhone) {
+            await storage.createNotification({
+              customerName: customerName || undefined,
+              customerPhone,
+              customerEmail: membership?.customerEmail || undefined,
+              plateNormalized: job.plateNormalized,
+              channel: "sms",
+              type: "wash_complete",
+              message: `Hi ${customerName || "there"}! Your vehicle (${job.plateDisplay}) is ready for pickup. Thank you for choosing Prestige by Ekhaya!`,
+              washJobId: job.id,
+              status: "pending",
+            });
+          }
+        } catch (notifErr) {
+          console.error("Auto-notification queue failed (non-blocking):", notifErr);
+        }
+
+        // Push notification to customer on wash complete
+        try {
+          const customerAccess = await storage.getCustomerJobAccessByJobId(job.id);
+          if (customerAccess) {
+            await sendPushToCustomer(customerAccess.token, {
+              title: "Your Car is Ready!",
+              body: `Your vehicle (${job.plateDisplay}) is ready for pickup.`,
+              url: `/customer/job/${customerAccess.token}`,
+              tag: `wash-complete-${job.id}`,
+            });
+          }
+        } catch (_pushErr) { /* non-blocking */ }
+      }
+
       res.json(job);
     } catch (error) {
       console.error("Error updating wash job status:", error);
       res.status(500).json({ message: "Failed to update status" });
+    }
+  });
+
+  // Delete wash job (manager/admin only)
+  app.delete("/api/wash-jobs/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const job = await storage.getWashJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      const deleted = await storage.deleteWashJob(req.params.id);
+      if (!deleted) {
+        return res.status(500).json({ message: "Failed to delete job" });
+      }
+
+      // Log the deletion event
+      await storage.logEvent({
+        type: "wash_deleted",
+        plateDisplay: job.plateDisplay,
+        plateNormalized: job.plateNormalized,
+        countryHint: job.countryHint,
+        userId: req.user.id,
+        payloadJson: { jobId: job.id, serviceCode: job.serviceCode, status: job.status },
+      });
+
+      res.json({ message: "Job deleted" });
+    } catch (error) {
+      console.error("Error deleting wash job:", error);
+      res.status(500).json({ message: "Failed to delete job" });
+    }
+  });
+
+  // Send custom SMS/WhatsApp notification (manager/admin only)
+  app.post("/api/notifications/send", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    const schema = z.object({
+      customerPhone: z.string().min(1),
+      message: z.string().min(1),
+      channel: z.enum(["sms", "whatsapp"]).default("sms"),
+    });
+    const result = schema.safeParse(req.body);
+    if (!result.success) return res.status(400).json({ message: result.error.errors[0].message });
+
+    try {
+      const notification = await storage.createNotification({
+        customerPhone: result.data.customerPhone,
+        channel: result.data.channel,
+        type: "custom",
+        message: result.data.message,
+        status: "pending",
+        createdBy: req.user?.claims?.sub || req.user?.id,
+      });
+      res.json(notification);
+    } catch (error) {
+      console.error("Error creating notification:", error);
+      res.status(500).json({ message: "Failed to queue notification" });
+    }
+  });
+
+  // =====================
+  // WEB PUSH NOTIFICATIONS
+  // =====================
+
+  // Get VAPID public key (public endpoint)
+  app.get("/api/push/vapid-key", (_req, res) => {
+    const key = getVapidPublicKey();
+    res.json({ vapidPublicKey: key });
+  });
+
+  // Staff push subscription (authenticated)
+  app.post("/api/push/subscribe", isAuthenticated, async (req: any, res) => {
+    const schema = z.object({
+      endpoint: z.string().url(),
+      p256dh: z.string().min(1),
+      auth: z.string().min(1),
+    });
+    const result = schema.safeParse(req.body);
+    if (!result.success) return res.status(400).json({ message: result.error.errors[0].message });
+
+    try {
+      const userId = req.user?.claims?.sub || req.user?.id;
+      const sub = await storage.savePushSubscription({
+        endpoint: result.data.endpoint,
+        p256dh: result.data.p256dh,
+        auth: result.data.auth,
+        userId,
+      });
+      res.json(sub);
+    } catch (error) {
+      console.error("Error saving push subscription:", error);
+      res.status(500).json({ message: "Failed to save subscription" });
+    }
+  });
+
+  // Customer push subscription (token-gated)
+  app.post("/api/customer/push/subscribe/:token", async (req, res) => {
+    const { token } = req.params;
+    const access = await storage.getCustomerJobAccessByToken(token);
+    if (!access) return res.status(404).json({ message: "Invalid token" });
+
+    const schema = z.object({
+      endpoint: z.string().url(),
+      p256dh: z.string().min(1),
+      auth: z.string().min(1),
+    });
+    const result = schema.safeParse(req.body);
+    if (!result.success) return res.status(400).json({ message: result.error.errors[0].message });
+
+    try {
+      const sub = await storage.savePushSubscription({
+        endpoint: result.data.endpoint,
+        p256dh: result.data.p256dh,
+        auth: result.data.auth,
+        customerToken: token,
+      });
+      res.json(sub);
+    } catch (error) {
+      console.error("Error saving customer push subscription:", error);
+      res.status(500).json({ message: "Failed to save subscription" });
+    }
+  });
+
+  // =====================
+  // ETA & QUEUE POSITION
+  // =====================
+
+  // Helper: get priority-sorted active jobs for today
+  async function getSortedActiveJobs() {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const allJobs = await storage.getWashJobs({ fromDate: todayStart });
+    const active = allJobs.filter(j => j.status !== "complete");
+    const withPriority = await Promise.all(
+      active.map(async (job) => {
+        try {
+          const { score } = await calculateJobPriority(job);
+          return { ...job, priority: score };
+        } catch {
+          return { ...job, priority: 0 };
+        }
+      })
+    );
+    withPriority.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    return withPriority;
+  }
+
+  // Queue position for authenticated users (technicians/managers)
+  app.get("/api/wash-jobs/:id/queue-position", isAuthenticated, async (req, res) => {
+    try {
+      const analytics = await storage.getAnalyticsSummary();
+      const sortedJobs = await getSortedActiveJobs();
+      const result = getQueuePosition(req.params.id as string, sortedJobs, analytics.avgCycleTimeMinutes);
+      if (!result) return res.status(404).json({ message: "Job not in active queue" });
+      res.json(result);
+    } catch (error) {
+      console.error("Error getting queue position:", error);
+      res.status(500).json({ message: "Failed to get queue position" });
+    }
+  });
+
+  // Queue position for customers (token-gated)
+  app.get("/api/customer/job/:token/queue-position", async (req, res) => {
+    try {
+      const access = await storage.getCustomerJobAccessByToken(req.params.token);
+      if (!access) return res.status(404).json({ message: "Invalid token" });
+
+      const analytics = await storage.getAnalyticsSummary();
+      const sortedJobs = await getSortedActiveJobs();
+      const result = getQueuePosition(access.washJobId, sortedJobs, analytics.avgCycleTimeMinutes);
+      if (!result) return res.json({ position: 0, estimatedMinutes: 0, totalInQueue: 0, estimatedReadyAt: null });
+      res.json(result);
+    } catch (error) {
+      console.error("Error getting customer queue position:", error);
+      res.status(500).json({ message: "Failed to get queue position" });
     }
   });
 
@@ -1164,6 +1464,17 @@ export async function registerRoutes(
     }
   });
 
+  // Technician performance (customer ratings aggregation)
+  app.get("/api/analytics/technician-performance", isAuthenticated, requireRole("manager", "admin"), async (_req, res) => {
+    try {
+      const performance = await storage.getTechnicianPerformance();
+      res.json(performance);
+    } catch (error) {
+      console.error("Error fetching technician performance:", error);
+      res.status(500).json({ message: "Failed to fetch technician performance" });
+    }
+  });
+
   // Live queue stats
   app.get("/api/queue/stats", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
     try {
@@ -1175,11 +1486,27 @@ export async function registerRoutes(
       const openParking = await storage.getParkingSessions({ open: true });
       const analytics = await storage.getAnalyticsSummary();
 
+      // Calculate priority for active jobs
+      const activeJobs = todayJobs.filter(j => j.status !== "complete");
+      const jobsWithPriority = await Promise.all(
+        activeJobs.map(async (job) => {
+          try {
+            const { score, factors } = await calculateJobPriority(job);
+            return { ...job, priority: score, priorityFactors: factors };
+          } catch {
+            return { ...job, priority: 0, priorityFactors: {} };
+          }
+        })
+      );
+
+      // Sort by priority descending
+      jobsWithPriority.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
       res.json({
-        activeWashes: todayJobs.filter(j => j.status !== "complete").length,
+        activeWashes: activeJobs.length,
         parkedVehicles: openParking.length,
         todayWashes: analytics.todayWashes,
-        activeJobs: todayJobs.filter(j => j.status !== "complete"),
+        activeJobs: jobsWithPriority,
       });
     } catch (error) {
       console.error("Error fetching queue stats:", error);
@@ -1451,6 +1778,188 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error finding subscription by phone:", error);
       res.status(500).json({ message: "Failed to find subscription" });
+    }
+  });
+
+  // =====================
+  // LOYALTY POINTS
+  // =====================
+
+  // Combined customer lookup by plate: CRM customer + membership + subscription
+  app.get("/api/customer/lookup-by-plate", isAuthenticated, async (req, res) => {
+    try {
+      const { plate } = req.query;
+      if (!plate || typeof plate !== "string") {
+        return res.status(400).json({ message: "Plate parameter required" });
+      }
+
+      const plateNormalized = normalizePlate(plate);
+
+      const [crmCustomer, crmSubscription, crmMembership] = await Promise.all([
+        findCRMCustomerByPlate(plateNormalized).catch(() => null),
+        findCRMSubscriptionByPlate(plate).catch(() => null),
+        findCRMMembershipByPlate(plateNormalized).catch(() => null),
+      ]);
+
+      const isRegistered = !!(crmCustomer || crmMembership);
+
+      res.json({
+        isRegistered,
+        crmCustomer,
+        crmSubscription,
+        crmMembership,
+      });
+    } catch (error) {
+      console.error("Error looking up customer by plate:", error);
+      res.status(500).json({ message: "Failed to look up customer" });
+    }
+  });
+
+  // Get loyalty membership by plate (from CRM)
+  app.get("/api/loyalty/by-plate", isAuthenticated, async (req, res) => {
+    try {
+      const { plate } = req.query;
+      if (!plate || typeof plate !== "string") {
+        return res.status(400).json({ message: "Plate parameter required" });
+      }
+
+      const plateNormalized = normalizePlate(plate);
+      const membership = await findCRMMembershipByPlate(plateNormalized);
+
+      if (!membership) {
+        return res.status(404).json({ message: "No membership found for this plate" });
+      }
+
+      res.json(membership);
+    } catch (error) {
+      console.error("Error fetching loyalty membership:", error);
+      res.status(500).json({ message: "Failed to fetch loyalty membership" });
+    }
+  });
+
+  // Loyalty analytics (CRM members + local transaction history)
+  app.get("/api/loyalty/analytics", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const crmAnalytics = await getCRMLoyaltyAnalytics();
+      const localTransactions = await storage.getLoyaltyTransactions({ limit: 1000 });
+
+      // Calculate points issued today from local audit log
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayTransactions = localTransactions.filter(
+        t => t.createdAt && new Date(t.createdAt) >= todayStart && t.points > 0
+      );
+      const pointsIssuedToday = todayTransactions.reduce((sum, t) => sum + t.points, 0);
+      const totalPointsIssued = localTransactions
+        .filter(t => t.points > 0)
+        .reduce((sum, t) => sum + t.points, 0);
+
+      res.json({
+        totalAccounts: crmAnalytics?.totalMembers || 0,
+        totalPointsIssued,
+        totalPointsRedeemed: 0,
+        pointsIssuedToday,
+        topEarners: (crmAnalytics?.topMembers || []).map(m => ({
+          plateDisplay: m.memberNumber,
+          customerName: m.customerName,
+          pointsBalance: m.loyaltyPoints,
+          totalWashes: 0,
+        })),
+      });
+    } catch (error) {
+      console.error("Error fetching loyalty analytics:", error);
+      res.status(500).json({ message: "Failed to fetch loyalty analytics" });
+    }
+  });
+
+  // Get loyalty info for a specific wash job (used on completion screen)
+  app.get("/api/loyalty/by-wash-job/:washJobId", isAuthenticated, async (req, res) => {
+    try {
+      const washJobId = req.params.washJobId as string;
+      const job = await storage.getWashJob(washJobId);
+      if (!job) {
+        return res.status(404).json({ message: "Wash job not found" });
+      }
+
+      // Look up CRM membership by plate
+      const membership = await findCRMMembershipByPlate(job.plateNormalized);
+      if (!membership) {
+        return res.json({ account: null, transaction: null });
+      }
+
+      // Find the local audit transaction for this wash job
+      const transactions = await storage.getLoyaltyTransactions({ limit: 200 });
+      const washTransaction = transactions.find(t => t.washJobId === washJobId);
+
+      res.json({
+        account: {
+          membershipNumber: membership.memberNumber,
+          pointsBalance: membership.loyaltyPoints,
+          tier: membership.tierName,
+          totalWashes: 0,
+        },
+        transaction: washTransaction ? {
+          points: washTransaction.points,
+          balanceAfter: washTransaction.balanceAfter,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error fetching loyalty info for wash job:", error);
+      res.status(500).json({ message: "Failed to fetch loyalty info" });
+    }
+  });
+
+  // Manager: Award manual bonus points (credits to CRM)
+  app.post("/api/loyalty/bonus", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const schema = z.object({
+        plate: z.string().min(1),
+        points: z.number().int().min(1),
+        description: z.string().optional(),
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid data" });
+      }
+
+      const { plate, points, description } = result.data;
+      const opUserId = req.user?.claims?.sub;
+      const plateNormalized = normalizePlate(plate);
+
+      // Find membership in CRM
+      const membership = await findCRMMembershipByPlate(plateNormalized);
+      if (!membership) {
+        return res.status(404).json({ message: "No CRM membership found for this plate" });
+      }
+
+      // Credit to CRM
+      const creditResult = await creditCRMLoyaltyPoints(membership.userId, points);
+      const newBalance = creditResult?.newBalance ?? (membership.loyaltyPoints + points);
+
+      // Log locally
+      await storage.logLoyaltyTransaction({
+        crmUserId: membership.userId,
+        memberNumber: membership.memberNumber,
+        type: "earn_bonus",
+        points,
+        balanceAfter: newBalance,
+        description: description || `Bonus ${points} points awarded by manager`,
+        createdBy: opUserId,
+      });
+
+      await storage.logEvent({
+        type: "loyalty_bonus_awarded",
+        plateDisplay: displayPlate(plate),
+        plateNormalized,
+        userId: opUserId,
+        payloadJson: { points, balanceAfter: newBalance, memberNumber: membership.memberNumber },
+      });
+
+      res.json({ membership: { ...membership, loyaltyPoints: newBalance }, points });
+    } catch (error) {
+      console.error("Error awarding bonus points:", error);
+      res.status(500).json({ message: "Failed to award bonus points" });
     }
   });
 
@@ -2298,6 +2807,19 @@ export async function registerRoutes(
         washJobId: access.washJobId,
         payloadJson: { rating, hasNotes: !!notes, hasIssue: !!issueReported },
       });
+
+      // Push notification to managers if issue reported
+      if (issueReported) {
+        try {
+          const job = await storage.getWashJob(access.washJobId);
+          await sendPushToAllManagers({
+            title: "Issue Reported",
+            body: `Customer reported an issue${job ? ` for ${job.plateDisplay}` : ""}: ${typeof issueReported === "string" ? issueReported : "See details"}`,
+            url: "/manager/dashboard",
+            tag: `issue-${access.washJobId}`,
+          });
+        } catch (_pushErr) { /* non-blocking */ }
+      }
 
       res.json({ message: "Confirmation recorded", confirmation });
     } catch (error) {

@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import Swal from "sweetalert2";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -7,12 +8,15 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PhotoCheckpointDialog } from "@/components/photo-checkpoint-dialog";
 import {
-  ArrowLeft, Check, Loader2, Camera,
-  Droplets, Wind, Sparkles, CircleDot, Car, Clock, Calendar
+  ArrowLeft, Check, Loader2, Camera, Trash2,
+  Droplets, Wind, Sparkles, CircleDot, Car, Clock, Calendar, Award
 } from "lucide-react";
+import { useVoiceCommands } from "@/hooks/use-voice-commands";
+import { VoiceCommandButton } from "@/components/voice-command-button";
 import type { WashJob, WashStatus, ServiceCode } from "@shared/schema";
 import { WASH_STATUS_ORDER, SERVICE_TYPE_CONFIG } from "@shared/schema";
 import { formatDistanceToNow, format, differenceInMinutes, differenceInSeconds } from "date-fns";
@@ -90,12 +94,39 @@ export default function WashJobDetail() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [showPhotoDialog, setShowPhotoDialog] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<WashStatus | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const canDelete = user?.role === "manager" || user?.role === "admin" || user?.role === "super_admin";
 
   const { data: job, isLoading } = useQuery<WashJob>({
     queryKey: ["/api/wash-jobs", params.id],
+  });
+
+  // ETA & queue position
+  const { data: queuePosition } = useQuery<{
+    position: number;
+    estimatedMinutes: number;
+    estimatedReadyAt: string | null;
+    totalInQueue: number;
+  }>({
+    queryKey: ["/api/wash-jobs", params.id, "queue-position"],
+    queryFn: async () => {
+      const res = await fetch(`/api/wash-jobs/${params.id}/queue-position`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!job && job.status !== "complete",
+    refetchInterval: 30000,
+  });
+
+  const { data: loyaltyData } = useQuery<{
+    account: { membershipNumber: string; pointsBalance: number; tier: string; totalWashes: number } | null;
+    transaction: { points: number; balanceAfter: number } | null;
+  }>({
+    queryKey: ["/api/loyalty/by-wash-job", params.id],
+    enabled: !!job && job.status === "complete",
   });
 
   const addPhotoMutation = useMutation({
@@ -120,11 +151,82 @@ export default function WashJobDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs", params.id] });
       queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/loyalty/by-wash-job", params.id] });
       toast({ title: "Status updated" });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
+  });
+
+  const deleteJobMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", `/api/wash-jobs/${params.id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/queue/stats"] });
+      toast({ title: "Job removed" });
+      setLocation("/");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
+  // Voice command handler
+  const handleVoiceCommand = useCallback(async (command: "next" | "complete") => {
+    if (!job || job.status === "complete") return;
+
+    const sc = (job.serviceCode || "STANDARD") as ServiceCode;
+    const cfg = SERVICE_TYPE_CONFIG[sc];
+    const isTimer = cfg?.mode === "timer";
+    const currentIdx = WASH_STATUS_ORDER.indexOf(job.status as WashStatus);
+
+    if (command === "next") {
+      if (isTimer) return; // No intermediate steps in timer mode
+      const nextIdx = currentIdx + 1;
+      if (nextIdx >= WASH_STATUS_ORDER.length) return;
+      const nextStatus = WASH_STATUS_ORDER[nextIdx];
+
+      const result = await Swal.fire({
+        title: `Advance to ${STATUS_CONFIG[nextStatus]?.label || nextStatus}?`,
+        text: 'Voice command: "next step"',
+        icon: "question",
+        showCancelButton: true,
+        confirmButtonColor: "#3b82f6",
+        cancelButtonColor: "#6b7280",
+        confirmButtonText: "Yes, advance",
+        cancelButtonText: "Cancel",
+        timer: 10000,
+        timerProgressBar: true,
+      });
+      if (result.isConfirmed) {
+        updateStatusMutation.mutate(nextStatus);
+      }
+    } else if (command === "complete") {
+      const result = await Swal.fire({
+        title: "Mark as Complete?",
+        text: 'Voice command: "complete"',
+        icon: "question",
+        showCancelButton: true,
+        confirmButtonColor: "#22c55e",
+        cancelButtonColor: "#6b7280",
+        confirmButtonText: "Yes, complete",
+        cancelButtonText: "Cancel",
+        timer: 10000,
+        timerProgressBar: true,
+      });
+      if (result.isConfirmed) {
+        updateStatusMutation.mutate("complete" as WashStatus);
+      }
+    }
+  }, [job, updateStatusMutation]);
+
+  const voiceCommands = useVoiceCommands({
+    onCommand: handleVoiceCommand,
+    enabled: !!job && job.status !== "complete",
   });
 
   const handleStatusClick = (newStatus: WashStatus) => {
@@ -210,11 +312,38 @@ export default function WashJobDetail() {
           <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="font-semibold">Wash Job</h1>
+          <h1 className="font-semibold flex-1">Wash Job</h1>
+          {!isComplete && (
+            <VoiceCommandButton
+              isListening={voiceCommands.isListening}
+              isSupported={voiceCommands.isSupported}
+              transcript={voiceCommands.transcript}
+              onToggle={voiceCommands.toggleListening}
+            />
+          )}
         </div>
       </header>
 
       <main className="max-w-lg mx-auto px-4 py-6">
+        {/* ETA & Queue Position */}
+        {!isComplete && queuePosition && queuePosition.position > 0 && (
+          <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
+            <Card className="p-4 bg-primary/5 border-primary/20">
+              <div className="flex items-center gap-3">
+                <Clock className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="text-sm font-medium">
+                    Queue position: <span className="font-bold">#{queuePosition.position}</span> of {queuePosition.totalInQueue}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Estimated wait: ~{queuePosition.estimatedMinutes} min
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -404,10 +533,39 @@ export default function WashJobDetail() {
                   </div>
                 </Card>
               )}
+
+              {/* Loyalty Points Earned */}
+              {loyaltyData?.transaction && loyaltyData?.account && (
+                <Card className="p-4 bg-amber-500/5 border-amber-500/20">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                      <Award className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-amber-700 dark:text-amber-400">
+                        +{loyaltyData.transaction.points} Loyalty Points Earned
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Member #{loyaltyData.account.membershipNumber}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="text-center p-2 bg-background rounded">
+                      <p className="font-bold text-lg">{loyaltyData.account.pointsBalance}</p>
+                      <p className="text-xs text-muted-foreground">Total Points</p>
+                    </div>
+                    <div className="text-center p-2 bg-background rounded">
+                      <p className="font-bold text-lg">{loyaltyData.account.totalWashes}</p>
+                      <p className="text-xs text-muted-foreground">Total Washes</p>
+                    </div>
+                  </div>
+                </Card>
+              )}
             </motion.div>
           )}
 
-          <div className="mt-6">
+          <div className="mt-6 space-y-2">
             <Button
               variant="outline"
               className="w-full"
@@ -416,6 +574,32 @@ export default function WashJobDetail() {
             >
               Done
             </Button>
+            {canDelete && (
+              <Button
+                variant="ghost"
+                className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={async () => {
+                  const result = await Swal.fire({
+                    title: 'Remove this job?',
+                    text: `Remove job for ${job.plateDisplay}? This cannot be undone.`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#ef4444',
+                    cancelButtonColor: '#6b7280',
+                    confirmButtonText: 'Yes, remove it',
+                    cancelButtonText: 'Cancel',
+                  });
+                  if (result.isConfirmed) {
+                    deleteJobMutation.mutate();
+                  }
+                }}
+                disabled={deleteJobMutation.isPending}
+                data-testid="button-delete-job"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                {deleteJobMutation.isPending ? "Removing..." : "Remove Job"}
+              </Button>
+            )}
           </div>
         </motion.div>
       </main>

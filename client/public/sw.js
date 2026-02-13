@@ -30,6 +30,53 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Push notification event
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  try {
+    const data = event.data.json();
+    const options = {
+      body: data.body || '',
+      icon: data.icon || '/favicon.png',
+      badge: data.badge || '/favicon.png',
+      vibrate: [200, 100, 200],
+      data: { url: data.url || '/' },
+      tag: data.tag || 'hopsvoir-notification',
+    };
+    event.waitUntil(
+      self.registration.showNotification(data.title || 'HOPSVOIR', options)
+    );
+  } catch (e) {
+    // Fallback for plain text push
+    event.waitUntil(
+      self.registration.showNotification('HOPSVOIR', {
+        body: event.data.text(),
+        icon: '/favicon.png',
+      })
+    );
+  }
+});
+
+// Notification click handler
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      // Focus existing window if open
+      for (const client of clients) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          client.navigate(url);
+          return client.focus();
+        }
+      }
+      // Open new window
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
 // Fetch event - network first, fallback to cache
 self.addEventListener('fetch', (event) => {
   // Skip non-GET requests

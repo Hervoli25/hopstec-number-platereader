@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Swal from "sweetalert2";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -45,7 +46,7 @@ import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
   TrendingUp, Calendar, Target, ArrowRight, Zap, Settings,
-  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer
+  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer, Award
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
@@ -55,7 +56,7 @@ interface QueueStats {
   activeWashes: number;
   parkedVehicles: number;
   todayWashes: number;
-  activeJobs: WashJob[];
+  activeJobs: (WashJob & { priority?: number; priorityFactors?: Record<string, number> })[];
 }
 
 interface CRMBooking {
@@ -130,6 +131,16 @@ export default function ManagerDashboard() {
 
   const { data: crmBookings } = useQuery<CRMBooking[]>({
     queryKey: ["/api/crm/bookings"],
+  });
+
+  const { data: loyaltyAnalytics } = useQuery<{
+    totalAccounts: number;
+    totalPointsIssued: number;
+    totalPointsRedeemed: number;
+    pointsIssuedToday: number;
+    topEarners: { plateDisplay: string; customerName: string | null; pointsBalance: number; totalWashes: number }[];
+  }>({
+    queryKey: ["/api/loyalty/analytics"],
   });
 
   const upcomingBookings = crmBookings?.filter(b => b.status === "CONFIRMED").slice(0, 5) || [];
@@ -217,6 +228,29 @@ export default function ManagerDashboard() {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to cancel", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteJobMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/wash-jobs/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to delete job");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Job removed from queue" });
+      qClient.invalidateQueries({ queryKey: ["/api/queue/stats"] });
+      qClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
+      qClient.invalidateQueries({ queryKey: ["/api/analytics/summary"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete job", description: error.message, variant: "destructive" });
     },
   });
 
@@ -462,7 +496,11 @@ export default function ManagerDashboard() {
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                      className={`flex items-center justify-between p-3 rounded-lg cursor-pointer hover:bg-muted transition-colors ${
+                        (job.priority || 0) > 80 ? "bg-red-500/10 border border-red-500/30" :
+                        (job.priority || 0) > 50 ? "bg-amber-500/10 border border-amber-500/30" :
+                        "bg-muted/50"
+                      }`}
                       onClick={() => setLocation(`/wash-job/${job.id}`)}
                       data-testid={`queue-job-${job.id}`}
                     >
@@ -471,16 +509,59 @@ export default function ManagerDashboard() {
                           <Car className="w-4 h-4 text-primary" />
                         </div>
                         <div>
-                          <p className="font-mono font-semibold text-sm">{job.plateDisplay}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-mono font-semibold text-sm">{job.plateDisplay}</p>
+                            {job.priorityFactors?.vipBonus && (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-yellow-500 text-yellow-600">
+                                <Award className="w-3 h-3 mr-0.5" /> VIP
+                              </Badge>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
                             <Clock className="w-3 h-3" />
                             {job.startAt ? formatDistanceToNow(new Date(job.startAt), { addSuffix: true }) : "N/A"}
                           </div>
                         </div>
                       </div>
-                      <Badge className={`${STATUS_COLORS[job.status as WashStatus] || "bg-gray-500"} text-white text-xs`}>
-                        {STATUS_LABELS[job.status as WashStatus] || job.status}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        {(job.priority || 0) > 0 && (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            (job.priority || 0) > 80 ? "bg-red-500/20 text-red-600" :
+                            (job.priority || 0) > 50 ? "bg-amber-500/20 text-amber-600" :
+                            "bg-muted text-muted-foreground"
+                          }`}>
+                            P{job.priority}
+                          </span>
+                        )}
+                        <Badge className={`${STATUS_COLORS[job.status as WashStatus] || "bg-gray-500"} text-white text-xs`}>
+                          {STATUS_LABELS[job.status as WashStatus] || job.status}
+                        </Badge>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const result = await Swal.fire({
+                              title: 'Remove from queue?',
+                              text: `Remove ${job.plateDisplay} from the queue?`,
+                              icon: 'warning',
+                              showCancelButton: true,
+                              confirmButtonColor: '#ef4444',
+                              cancelButtonColor: '#6b7280',
+                              confirmButtonText: 'Yes, remove it',
+                              cancelButtonText: 'Cancel',
+                            });
+                            if (result.isConfirmed) {
+                              deleteJobMutation.mutate(job.id);
+                            }
+                          }}
+                          disabled={deleteJobMutation.isPending}
+                          data-testid={`delete-job-${job.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </motion.div>
                   ))}
                   {stats.activeJobs.length > 5 && (
@@ -601,6 +682,66 @@ export default function ManagerDashboard() {
               </div>
             </div>
           </Card>
+
+          {/* Loyalty Program Summary */}
+          {loyaltyAnalytics && loyaltyAnalytics.totalAccounts > 0 && (
+            <Card className="p-6">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Award className="w-5 h-5 text-amber-500" />
+                Loyalty Program
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="text-center p-3 rounded-lg bg-muted/50">
+                  <p className="text-2xl font-bold text-amber-500">
+                    {loyaltyAnalytics.totalAccounts}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Members</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-muted/50">
+                  <p className="text-2xl font-bold text-green-500">
+                    {loyaltyAnalytics.pointsIssuedToday.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Points Today</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-muted/50">
+                  <p className="text-2xl font-bold text-primary">
+                    {loyaltyAnalytics.totalPointsIssued.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Total Issued</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-muted/50">
+                  <p className="text-2xl font-bold text-rose-500">
+                    {loyaltyAnalytics.totalPointsRedeemed.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Redeemed</p>
+                </div>
+              </div>
+              {loyaltyAnalytics.topEarners.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-2">Top Members</h3>
+                  <div className="space-y-2">
+                    {loyaltyAnalytics.topEarners.slice(0, 5).map((earner, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm p-2 rounded bg-muted/30">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-muted-foreground w-5">{i + 1}.</span>
+                          <div>
+                            <span className="font-mono font-medium">{earner.plateDisplay}</span>
+                            {earner.customerName && (
+                              <span className="text-muted-foreground ml-2 text-xs">{earner.customerName}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-amber-500">{earner.pointsBalance}</span>
+                          <span className="text-xs text-muted-foreground ml-1">pts</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* Quick Actions */}
           <Card className="p-6">

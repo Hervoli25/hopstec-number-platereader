@@ -10,10 +10,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { 
+import {
   Car, Camera, CheckCircle2, Clock, Loader2, Star, AlertTriangle,
-  Droplets, Wind, Sparkles, Send
+  Droplets, Wind, Sparkles, Send, Timer, Bell
 } from "lucide-react";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { format } from "date-fns";
 import hopsovirLogo from "@/assets/images/logo.png";
 import type { WashJob, WashPhoto, ServiceChecklistItem, CustomerConfirmation, ServiceCode } from "@shared/schema";
@@ -63,6 +64,26 @@ export default function CustomerJob() {
     enabled: !!token,
     refetchInterval: 5000,
   });
+
+  // ETA & queue position
+  const { data: queuePosition } = useQuery<{
+    position: number;
+    estimatedMinutes: number;
+    estimatedReadyAt: string | null;
+    totalInQueue: number;
+  }>({
+    queryKey: ["/api/customer/job", token, "queue-position"],
+    queryFn: async () => {
+      const res = await fetch(`/api/customer/job/${token}/queue-position`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!token && data?.job?.status !== "complete",
+    refetchInterval: 30000,
+  });
+
+  // Push notifications
+  const { isSupported: pushSupported, isSubscribed: pushSubscribed, subscribe: subscribePush, isLoading: pushLoading } = usePushNotifications({ customerToken: token });
 
   useEffect(() => {
     if (!token) return;
@@ -167,6 +188,44 @@ export default function CustomerJob() {
       </header>
 
       <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
+        {/* ETA & Queue Position */}
+        {!isComplete && queuePosition && queuePosition.position > 0 && (
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+            <Card className="bg-primary/5 border-primary/20">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Timer className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold">
+                        #{queuePosition.position} in queue
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        ~{queuePosition.estimatedMinutes} min{queuePosition.estimatedMinutes !== 1 ? "s" : ""}
+                        {" "}&bull; {queuePosition.totalInQueue} total
+                      </p>
+                    </div>
+                  </div>
+                  {pushSupported && !pushSubscribed && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={subscribePush}
+                      disabled={pushLoading}
+                      className="gap-1.5"
+                    >
+                      <Bell className="w-4 h-4" />
+                      Notify me
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

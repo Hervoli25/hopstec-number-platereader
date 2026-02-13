@@ -67,6 +67,37 @@ export interface CRMSubscription {
   licensePlate?: string;
 }
 
+// CRM Customer (User + Vehicle lookup, regardless of subscription)
+export interface CRMCustomer {
+  userId: string;
+  customerName: string | null;
+  customerEmail: string;
+  customerPhone: string | null;
+  licensePlate: string;
+  vehicleMake: string;
+  vehicleModel: string;
+  vehicleColor: string;
+  subscription?: CRMSubscription;
+}
+
+// CRM Membership (from Membership + MembershipPlanConfig + User.loyaltyPoints)
+export interface CRMMembership {
+  membershipId: string;
+  userId: string;
+  memberNumber: string;       // Membership.qrCode (e.g. EKHAYA-40551C30A0A65B7FDD29E150)
+  tierName: string;           // MembershipPlanConfig.displayName (e.g. "Basic Member")
+  tierCode: string;           // MembershipPlanConfig.name (e.g. "BASIC")
+  discountRate: number;       // 0.1 = 10%
+  loyaltyMultiplier: number;  // 1.0 or 2.0
+  loyaltyPoints: number;      // User.loyaltyPoints
+  isActive: boolean;
+  startDate: Date;
+  endDate: Date | null;
+  customerName: string | null;
+  customerEmail: string;
+  customerPhone: string | null;
+}
+
 // Types for booking data
 export interface CRMBooking {
   id: string;
@@ -787,6 +818,52 @@ export async function findCRMSubscriptionByPhone(phone: string): Promise<CRMSubs
   }
 }
 
+// Find CRM customer by license plate (User + Vehicle, regardless of subscription)
+export async function findCRMCustomerByPlate(licensePlate: string): Promise<CRMCustomer | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const normalizedPlate = licensePlate.replace(/[\s-]/g, "").toUpperCase();
+
+    const result = await pool.query(`
+      SELECT
+        u.id as "userId",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone",
+        v."licensePlate",
+        v.make as "vehicleMake",
+        v.model as "vehicleModel",
+        v.color as "vehicleColor"
+      FROM "Vehicle" v
+      JOIN "User" u ON v."userId" = u.id
+      WHERE UPPER(REPLACE(REPLACE(v."licensePlate", ' ', ''), '-', '')) = $1
+      LIMIT 1
+    `, [normalizedPlate]);
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    const subscription = await findCRMSubscriptionByPlate(licensePlate);
+
+    return {
+      userId: row.userId,
+      customerName: row.customerName,
+      customerEmail: row.customerEmail,
+      customerPhone: row.customerPhone,
+      licensePlate: row.licensePlate,
+      vehicleMake: row.vehicleMake,
+      vehicleModel: row.vehicleModel,
+      vehicleColor: row.vehicleColor,
+      subscription: subscription || undefined,
+    };
+  } catch (error) {
+    console.error("Error finding CRM customer by plate:", error);
+    return null;
+  }
+}
+
 // Get booking with membership info
 export async function getBookingWithMembership(bookingId: string): Promise<CRMBooking & { subscription?: CRMSubscription } | null> {
   const pool = getBookingPool();
@@ -1276,5 +1353,143 @@ export async function getAvailableTimeSlots(date: Date): Promise<string[]> {
   } catch (error) {
     console.error("Error fetching available time slots:", error);
     return [];
+  }
+}
+
+// ==========================================
+// CRM Membership / Loyalty Functions
+// ==========================================
+
+// Find CRM membership by license plate (Vehicle → User → Membership → MembershipPlanConfig)
+export async function findCRMMembershipByPlate(licensePlate: string): Promise<CRMMembership | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const normalizedPlate = licensePlate.replace(/[\s-]/g, "").toUpperCase();
+
+    const result = await pool.query(`
+      SELECT
+        m.id as "membershipId",
+        u.id as "userId",
+        m."qrCode" as "memberNumber",
+        mpc."displayName" as "tierName",
+        mpc.name as "tierCode",
+        mpc."discountRate",
+        mpc."loyaltyMultiplier",
+        u."loyaltyPoints",
+        m."isActive",
+        m."startDate",
+        m."endDate",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone"
+      FROM "Vehicle" v
+      JOIN "User" u ON v."userId" = u.id
+      JOIN "Membership" m ON m."userId" = u.id
+      JOIN "MembershipPlanConfig" mpc ON m."membershipPlanId" = mpc.id
+      WHERE UPPER(REPLACE(REPLACE(v."licensePlate", ' ', ''), '-', '')) = $1
+        AND m."isActive" = true
+      ORDER BY m."createdAt" DESC
+      LIMIT 1
+    `, [normalizedPlate]);
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      membershipId: row.membershipId,
+      userId: row.userId,
+      memberNumber: row.memberNumber,
+      tierName: row.tierName,
+      tierCode: row.tierCode,
+      discountRate: row.discountRate || 0,
+      loyaltyMultiplier: row.loyaltyMultiplier || 1,
+      loyaltyPoints: row.loyaltyPoints || 0,
+      isActive: row.isActive,
+      startDate: new Date(row.startDate),
+      endDate: row.endDate ? new Date(row.endDate) : null,
+      customerName: row.customerName,
+      customerEmail: row.customerEmail,
+      customerPhone: row.customerPhone,
+    };
+  } catch (error) {
+    console.error("Error finding CRM membership by plate:", error);
+    return null;
+  }
+}
+
+// Credit loyalty points to CRM User.loyaltyPoints
+export async function creditCRMLoyaltyPoints(
+  userId: string,
+  points: number
+): Promise<{ newBalance: number } | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const result = await pool.query(`
+      UPDATE "User"
+      SET "loyaltyPoints" = "loyaltyPoints" + $1
+      WHERE id = $2
+      RETURNING "loyaltyPoints"
+    `, [points, userId]);
+
+    if (result.rows.length === 0) return null;
+
+    return { newBalance: result.rows[0].loyaltyPoints };
+  } catch (error) {
+    console.error("Error crediting CRM loyalty points:", error);
+    return null;
+  }
+}
+
+// Get CRM loyalty analytics (total members, total points across all members)
+export async function getCRMLoyaltyAnalytics(): Promise<{
+  totalMembers: number;
+  totalPointsAcrossMembers: number;
+  topMembers: { memberNumber: string; customerName: string | null; loyaltyPoints: number; tierName: string }[];
+} | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const [countResult, topResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)::int as "totalMembers",
+          COALESCE(SUM(u."loyaltyPoints"), 0)::int as "totalPoints"
+        FROM "Membership" m
+        JOIN "User" u ON m."userId" = u.id
+        WHERE m."isActive" = true
+      `),
+      pool.query(`
+        SELECT
+          m."qrCode" as "memberNumber",
+          u.name as "customerName",
+          u."loyaltyPoints",
+          mpc."displayName" as "tierName"
+        FROM "Membership" m
+        JOIN "User" u ON m."userId" = u.id
+        JOIN "MembershipPlanConfig" mpc ON m."membershipPlanId" = mpc.id
+        WHERE m."isActive" = true
+        ORDER BY u."loyaltyPoints" DESC
+        LIMIT 10
+      `),
+    ]);
+
+    return {
+      totalMembers: countResult.rows[0]?.totalMembers || 0,
+      totalPointsAcrossMembers: countResult.rows[0]?.totalPoints || 0,
+      topMembers: topResult.rows.map(r => ({
+        memberNumber: r.memberNumber,
+        customerName: r.customerName,
+        loyaltyPoints: r.loyaltyPoints || 0,
+        tierName: r.tierName,
+      })),
+    };
+  } catch (error) {
+    console.error("Error fetching CRM loyalty analytics:", error);
+    return null;
   }
 }

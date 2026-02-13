@@ -11,6 +11,8 @@ export const userRoleEnum = pgEnum("user_role", ["technician", "manager", "admin
 export const washStatusEnum = pgEnum("wash_status", ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"]);
 export const countryHintEnum = pgEnum("country_hint", ["FR", "ZA", "CD", "OTHER"]);
 export const photoRuleEnum = pgEnum("photo_rule", ["optional", "required", "disabled"]);
+export const loyaltyTransactionTypeEnum = pgEnum("loyalty_transaction_type", ["earn_wash", "earn_bonus", "redeem", "expire", "adjust"]);
+export const loyaltyTierEnum = pgEnum("loyalty_tier", ["basic", "premium"]);
 
 // User roles table (extends base users from auth)
 export const userRoles = pgTable("user_roles", {
@@ -30,6 +32,8 @@ export const washJobs = pgTable("wash_jobs", {
   technicianId: varchar("technician_id").notNull(),
   serviceCode: varchar("service_code", { length: 100 }),
   stageTimestamps: jsonb("stage_timestamps").$type<Record<string, string>>(),
+  priority: integer("priority").default(0),
+  priorityFactors: jsonb("priority_factors").$type<Record<string, number>>(),
   startAt: timestamp("start_at").defaultNow(),
   endAt: timestamp("end_at"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -289,6 +293,38 @@ export const customerMemberships = pgTable("customer_memberships", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Loyalty Accounts (one per plate/customer)
+export const loyaltyAccounts = pgTable("loyalty_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  plateNormalized: varchar("plate_normalized", { length: 50 }).notNull().unique(),
+  plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
+  customerName: varchar("customer_name", { length: 255 }),
+  customerPhone: varchar("customer_phone", { length: 50 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  crmUserId: varchar("crm_user_id", { length: 255 }),
+  membershipNumber: varchar("membership_number", { length: 20 }).notNull().unique(),
+  tier: loyaltyTierEnum("tier").default("basic"),
+  pointsBalance: integer("points_balance").default(0),
+  lifetimePoints: integer("lifetime_points").default(0),
+  totalWashes: integer("total_washes").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Loyalty Transactions (append-only audit log)
+export const loyaltyTransactions = pgTable("loyalty_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  loyaltyAccountId: varchar("loyalty_account_id").notNull(),
+  type: loyaltyTransactionTypeEnum("type").notNull(),
+  points: integer("points").notNull(),
+  balanceAfter: integer("balance_after").notNull(),
+  washJobId: varchar("wash_job_id"),
+  serviceCode: varchar("service_code", { length: 100 }),
+  description: text("description"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Parking Validations (for mall/store validations)
 export const parkingValidations = pgTable("parking_validations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -381,7 +417,19 @@ export const staffAlerts = pgTable("staff_alerts", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Push Subscriptions (Web Push notifications)
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userId: varchar("user_id"),       // for staff (technician/manager/admin)
+  customerToken: varchar("customer_token", { length: 64 }), // for customer tracking pages
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
+export const insertPushSubscriptionSchema = createInsertSchema(pushSubscriptions).omit({ id: true, createdAt: true });
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWashPhotoSchema = createInsertSchema(washPhotos).omit({ id: true, createdAt: true });
@@ -405,6 +453,8 @@ export const insertCustomerNotificationSchema = createInsertSchema(customerNotif
 export const insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLogs).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
+export const insertLoyaltyAccountSchema = createInsertSchema(loyaltyAccounts).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertLoyaltyTransactionSchema = createInsertSchema(loyaltyTransactions).omit({ id: true, createdAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -476,6 +526,15 @@ export type InsertTechnicianTimeLog = z.infer<typeof insertTechnicianTimeLogSche
 export type StaffAlert = typeof staffAlerts.$inferSelect;
 export type InsertStaffAlert = z.infer<typeof insertStaffAlertSchema>;
 
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type InsertPushSubscription = z.infer<typeof insertPushSubscriptionSchema>;
+
+export type LoyaltyAccount = typeof loyaltyAccounts.$inferSelect;
+export type InsertLoyaltyAccount = z.infer<typeof insertLoyaltyAccountSchema>;
+
+export type LoyaltyTransaction = typeof loyaltyTransactions.$inferSelect;
+export type InsertLoyaltyTransaction = z.infer<typeof insertLoyaltyTransactionSchema>;
+
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
@@ -489,7 +548,7 @@ export const PHOTO_RULES = ["optional", "required", "disabled"] as const;
 export type PhotoRuleType = typeof PHOTO_RULES[number];
 
 // Service codes
-export const SERVICE_CODES = ["STANDARD", "RIM_ONLY", "TYRE_SHINE_ONLY", "FULL_VALET"] as const;
+export const SERVICE_CODES = ["STANDARD", "RIM_ONLY", "TYRE_SHINE_ONLY", "HEADLIGHT_RESTORATION", "FULL_VALET"] as const;
 export type ServiceCode = typeof SERVICE_CODES[number];
 
 // Service type configuration — determines step vs timer mode
@@ -501,8 +560,31 @@ export const SERVICE_TYPE_CONFIG: Record<ServiceCode, {
   STANDARD: { label: "Standard Wash", mode: "steps", description: "Full car wash with all available steps" },
   RIM_ONLY: { label: "Rim Only", mode: "timer", description: "Rim cleaning service" },
   TYRE_SHINE_ONLY: { label: "Tyre Shine Only", mode: "timer", description: "Tyre shine service" },
+  HEADLIGHT_RESTORATION: { label: "Headlight Restoration", mode: "timer", description: "Headlight cleaning & restoration" },
   FULL_VALET: { label: "Full Valet", mode: "timer", description: "Full valet — time managed on-site" },
 };
+
+// Loyalty points earned per service type
+export const LOYALTY_POINTS_PER_SERVICE: Record<ServiceCode, number> = {
+  STANDARD: 100,
+  RIM_ONLY: 30,
+  TYRE_SHINE_ONLY: 25,
+  HEADLIGHT_RESTORATION: 50,
+  FULL_VALET: 150,
+};
+
+// Priority weights by service code (for Smart Task Queue)
+export const SERVICE_PRIORITY_WEIGHT: Record<ServiceCode, number> = {
+  FULL_VALET: 50,
+  STANDARD: 30,
+  HEADLIGHT_RESTORATION: 20,
+  TYRE_SHINE_ONLY: 10,
+  RIM_ONLY: 10,
+};
+
+// Loyalty tiers
+export const LOYALTY_TIERS = ["basic", "premium"] as const;
+export type LoyaltyTier = typeof LOYALTY_TIERS[number];
 
 // Reservation statuses
 export const RESERVATION_STATUSES = ["pending", "confirmed", "checked_in", "completed", "cancelled"] as const;
@@ -513,7 +595,7 @@ export const MEMBERSHIP_TYPES = ["wash_unlimited", "wash_count", "parking_monthl
 export type MembershipType = typeof MEMBERSHIP_TYPES[number];
 
 // Notification channels
-export const NOTIFICATION_CHANNELS = ["sms", "email", "both"] as const;
+export const NOTIFICATION_CHANNELS = ["sms", "email", "whatsapp", "both"] as const;
 export type NotificationChannel = typeof NOTIFICATION_CHANNELS[number];
 
 // Notification types

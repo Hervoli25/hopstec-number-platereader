@@ -10,7 +10,7 @@ import { CustomerUrlDialog } from "@/components/customer-url-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Camera, Keyboard, Loader2, Car, Sparkles, CircleDot, Star } from "lucide-react";
+import { ArrowLeft, Camera, Keyboard, Loader2, Car, Sparkles, CircleDot, Star, Award, Lightbulb } from "lucide-react";
 import type { CountryHint, ServiceCode } from "@shared/schema";
 import { SERVICE_TYPE_CONFIG, SERVICE_CODES } from "@shared/schema";
 
@@ -26,11 +26,15 @@ export default function ScanCarwash() {
   const [showServiceSelect, setShowServiceSelect] = useState(false);
   const [selectedServiceCode, setSelectedServiceCode] = useState<ServiceCode>("STANDARD");
   const [pendingPlate, setPendingPlate] = useState<{ plate: string; countryHint: CountryHint } | null>(null);
+  const [showMembershipInfo, setShowMembershipInfo] = useState(false);
+  const [customerLookup, setCustomerLookup] = useState<any>(null);
+  const [isLookingUp, setIsLookingUp] = useState(false);
 
   const SERVICE_ICONS: Record<ServiceCode, typeof Car> = {
     STANDARD: Car,
     RIM_ONLY: CircleDot,
     TYRE_SHINE_ONLY: Sparkles,
+    HEADLIGHT_RESTORATION: Lightbulb,
     FULL_VALET: Star,
   };
 
@@ -78,9 +82,32 @@ export default function ScanCarwash() {
     setShowConfirm(true);
   };
 
-  const handleConfirmPlate = (plate: string, countryHint: CountryHint) => {
+  const handleConfirmPlate = async (plate: string, countryHint: CountryHint) => {
     setShowConfirm(false);
     setPendingPlate({ plate, countryHint });
+
+    // Lookup customer membership/loyalty by plate
+    setIsLookingUp(true);
+    try {
+      const res = await fetch(`/api/customer/lookup-by-plate?plate=${encodeURIComponent(plate)}`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCustomerLookup(data);
+        setIsLookingUp(false);
+        setShowMembershipInfo(true);
+        return;
+      }
+    } catch (err) {
+      console.error("Customer lookup failed:", err);
+    }
+    setIsLookingUp(false);
+    setShowServiceSelect(true);
+  };
+
+  const handleMembershipContinue = () => {
+    setShowMembershipInfo(false);
     setShowServiceSelect(true);
   };
 
@@ -220,6 +247,94 @@ export default function ScanCarwash() {
             >
               Cancel
             </Button>
+          </Card>
+        </div>
+      )}
+
+      {/* Membership/Loyalty Info Screen */}
+      {showMembershipInfo && customerLookup && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="p-6 max-w-md w-full">
+            <div className="text-center mb-4">
+              {customerLookup.isRegistered ? (
+                <Badge className="bg-green-500 text-white mb-2">Registered Member</Badge>
+              ) : (
+                <Badge variant="secondary" className="mb-2">New Customer</Badge>
+              )}
+              <h3 className="text-lg font-semibold">
+                {customerLookup.crmCustomer?.customerName || customerLookup.crmMembership?.customerName || "Customer"}
+              </h3>
+              <p className="text-sm text-muted-foreground font-mono">{pendingPlate?.plate}</p>
+            </div>
+
+            {customerLookup.crmMembership && (
+              <div className="bg-muted/50 rounded-lg p-4 mb-4 space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Award className="w-4 h-4 text-amber-500" />
+                  <span className="text-sm font-semibold">Membership</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Member ID</span>
+                  <span className="font-mono font-semibold text-xs">{customerLookup.crmMembership.memberNumber}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Tier</span>
+                  <Badge variant="outline">{customerLookup.crmMembership.tierName}</Badge>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Discount</span>
+                  <span className="font-semibold">{Math.round(customerLookup.crmMembership.discountRate * 100)}%</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Points Balance</span>
+                  <span className="font-bold text-primary">{customerLookup.crmMembership.loyaltyPoints}</span>
+                </div>
+                {customerLookup.crmMembership.loyaltyMultiplier > 1 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Points Multiplier</span>
+                    <Badge className="bg-amber-500 text-white">{customerLookup.crmMembership.loyaltyMultiplier}x</Badge>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {customerLookup.crmSubscription && (
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 mb-4 space-y-2">
+                <p className="text-sm font-semibold text-blue-600 dark:text-blue-400">Active Subscription</p>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Plan</span>
+                  <span>{customerLookup.crmSubscription.planName}</span>
+                </div>
+                {customerLookup.crmSubscription.washesRemaining !== null && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Washes Remaining</span>
+                    <span className="font-semibold">{customerLookup.crmSubscription.washesRemaining}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!customerLookup.crmMembership && !customerLookup.isRegistered && (
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 mb-4">
+                <p className="text-sm text-amber-700 dark:text-amber-400">
+                  Not a registered member — points won't be earned for this wash. Customer can register at the CRM website.
+                </p>
+              </div>
+            )}
+
+            <Button className="w-full" onClick={handleMembershipContinue}>
+              Continue to Service Selection
+            </Button>
+          </Card>
+        </div>
+      )}
+
+      {/* Customer Lookup Loading */}
+      {isLookingUp && (
+        <div className="fixed inset-0 bg-background/80 flex items-center justify-center z-50">
+          <Card className="p-6 flex items-center gap-4">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <span>Looking up customer...</span>
           </Card>
         </div>
       )}

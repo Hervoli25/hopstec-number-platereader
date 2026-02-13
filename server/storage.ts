@@ -6,6 +6,7 @@ import {
   parkingSettings, parkingZones, frequentParkers, parkingReservations,
   businessSettings, servicePackages, customerMemberships, parkingValidations,
   customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts,
+  loyaltyTransactions, pushSubscriptions,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -21,6 +22,8 @@ import {
   type NotificationTemplate, type InsertNotificationTemplate,
   type TechnicianTimeLog, type InsertTechnicianTimeLog,
   type StaffAlert, type InsertStaffAlert,
+  type LoyaltyTransaction,
+  type PushSubscription, type InsertPushSubscription,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -70,6 +73,7 @@ export interface IStorage {
   getWashJobs(filters?: { status?: string; technicianId?: string }): Promise<WashJob[]>;
   updateWashJobStatus(id: string, status: string): Promise<WashJob | undefined>;
   completeWashJob(id: string): Promise<WashJob | undefined>;
+  deleteWashJob(id: string): Promise<boolean>;
 
   // Wash Photos
   addWashPhoto(photo: InsertWashPhoto): Promise<WashPhoto>;
@@ -160,6 +164,13 @@ export interface IStorage {
   findMembershipByPlate(plateNormalized: string): Promise<CustomerMembership | undefined>;
   findMembershipByPhone(phone: string): Promise<CustomerMembership | undefined>;
   findMembershipByEmail(email: string): Promise<CustomerMembership | undefined>;
+
+  // Push Subscriptions
+  savePushSubscription(sub: InsertPushSubscription): Promise<PushSubscription>;
+  getPushSubscriptionsByUser(userId: string): Promise<PushSubscription[]>;
+  getPushSubscriptionsByCustomerToken(customerToken: string): Promise<PushSubscription[]>;
+  getPushSubscriptionsByRole(role: string): Promise<PushSubscription[]>;
+  deletePushSubscription(id: string): Promise<void>;
 
   // Event Logs
   logEvent(event: InsertEventLog): Promise<EventLog>;
@@ -402,6 +413,17 @@ export class DatabaseStorage implements IStorage {
       .where(eq(washJobs.id, id))
       .returning();
     return result;
+  }
+
+  async deleteWashJob(id: string): Promise<boolean> {
+    // Delete related records first, then the job
+    await db.delete(washPhotos).where(eq(washPhotos.washJobId, id));
+    await db.delete(customerJobAccess).where(eq(customerJobAccess.washJobId, id));
+    await db.delete(serviceChecklistItems).where(eq(serviceChecklistItems.washJobId, id));
+    await db.delete(customerConfirmations).where(eq(customerConfirmations.washJobId, id));
+    await db.delete(loyaltyTransactions).where(eq(loyaltyTransactions.washJobId, id));
+    const result = await db.delete(washJobs).where(eq(washJobs.id, id)).returning();
+    return result.length > 0;
   }
 
   // Wash Photos
@@ -1265,6 +1287,177 @@ export class DatabaseStorage implements IStorage {
         gte(customerMemberships.expiryDate, new Date())
       ));
     return membership;
+  }
+
+  // ==========================================
+  // Loyalty Transactions (local audit log — points live in CRM)
+  // ==========================================
+
+  async getLoyaltyTransactions(filters?: {
+    type?: string;
+    limit?: number;
+  }): Promise<LoyaltyTransaction[]> {
+    const conditions: any[] = [];
+    if (filters?.type) {
+      conditions.push(eq(loyaltyTransactions.type, filters.type as any));
+    }
+
+    let query = db.select().from(loyaltyTransactions);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    query = (query as any).orderBy(desc(loyaltyTransactions.createdAt));
+    if (filters?.limit) {
+      query = (query as any).limit(filters.limit);
+    }
+    return query;
+  }
+
+  async logLoyaltyTransaction(data: {
+    crmUserId: string;
+    memberNumber: string;
+    type: "earn_wash" | "earn_bonus" | "adjust";
+    points: number;
+    balanceAfter: number;
+    washJobId?: string;
+    serviceCode?: string;
+    description?: string;
+    createdBy?: string;
+  }): Promise<LoyaltyTransaction> {
+    const [transaction] = await db.insert(loyaltyTransactions).values({
+      loyaltyAccountId: data.crmUserId, // store CRM userId for reference
+      type: data.type,
+      points: data.points,
+      balanceAfter: data.balanceAfter,
+      washJobId: data.washJobId || null,
+      serviceCode: data.serviceCode || null,
+      description: data.description || null,
+      createdBy: data.createdBy || null,
+    }).returning();
+    return transaction;
+  }
+  // ==========================================
+  // Technician Performance (ratings aggregation)
+  // ==========================================
+
+  async getTechnicianPerformance(): Promise<{
+    technicianId: string;
+    technicianName: string;
+    avgRating: number;
+    totalRatings: number;
+    issueCount: number;
+    issuePercent: number;
+    recentFeedback: { rating: number | null; notes: string | null; issueReported: string | null; createdAt: Date | null; plateDisplay: string }[];
+  }[]> {
+    // Get all confirmations joined with wash jobs
+    const results = await db
+      .select({
+        technicianId: washJobs.technicianId,
+        rating: customerConfirmations.rating,
+        notes: customerConfirmations.notes,
+        issueReported: customerConfirmations.issueReported,
+        createdAt: customerConfirmations.createdAt,
+        plateDisplay: washJobs.plateDisplay,
+      })
+      .from(customerConfirmations)
+      .innerJoin(washJobs, eq(customerConfirmations.washJobId, washJobs.id))
+      .where(sql`${washJobs.technicianId} IS NOT NULL`)
+      .orderBy(desc(customerConfirmations.createdAt));
+
+    // Group by technician
+    const techMap = new Map<string, {
+      ratings: number[];
+      issues: number;
+      total: number;
+      feedback: { rating: number | null; notes: string | null; issueReported: string | null; createdAt: Date | null; plateDisplay: string }[];
+    }>();
+
+    for (const row of results) {
+      const techId = row.technicianId!;
+      if (!techMap.has(techId)) {
+        techMap.set(techId, { ratings: [], issues: 0, total: 0, feedback: [] });
+      }
+      const entry = techMap.get(techId)!;
+      entry.total++;
+      if (row.rating) entry.ratings.push(row.rating);
+      if (row.issueReported) entry.issues++;
+      if (entry.feedback.length < 10) {
+        entry.feedback.push({
+          rating: row.rating,
+          notes: row.notes,
+          issueReported: row.issueReported,
+          createdAt: row.createdAt,
+          plateDisplay: row.plateDisplay,
+        });
+      }
+    }
+
+    // Enrich with user names
+    const techIds = Array.from(techMap.keys());
+    const userResults = techIds.length > 0
+      ? await db.select().from(users).where(sql`${users.id} IN (${sql.join(techIds.map(id => sql`${id}`), sql`, `)})`)
+      : [];
+    const nameMap = new Map(userResults.map(u => [u.id, [u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || u.id]));
+
+    return techIds.map(techId => {
+      const entry = techMap.get(techId)!;
+      const avgRating = entry.ratings.length > 0
+        ? Math.round((entry.ratings.reduce((a, b) => a + b, 0) / entry.ratings.length) * 10) / 10
+        : 0;
+      return {
+        technicianId: techId,
+        technicianName: nameMap.get(techId) || techId,
+        avgRating,
+        totalRatings: entry.ratings.length,
+        issueCount: entry.issues,
+        issuePercent: entry.total > 0 ? Math.round((entry.issues / entry.total) * 100) : 0,
+        recentFeedback: entry.feedback,
+      };
+    }).sort((a, b) => b.totalRatings - a.totalRatings);
+  }
+
+  // ==========================================
+  // Push Subscriptions
+  // ==========================================
+
+  async savePushSubscription(sub: InsertPushSubscription): Promise<PushSubscription> {
+    // Upsert by endpoint
+    const [result] = await db
+      .insert(pushSubscriptions)
+      .values(sub)
+      .onConflictDoUpdate({
+        target: pushSubscriptions.endpoint,
+        set: {
+          p256dh: sub.p256dh,
+          auth: sub.auth,
+          userId: sub.userId,
+          customerToken: sub.customerToken,
+        },
+      })
+      .returning();
+    return result;
+  }
+
+  async getPushSubscriptionsByUser(userId: string): Promise<PushSubscription[]> {
+    return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+  }
+
+  async getPushSubscriptionsByCustomerToken(customerToken: string): Promise<PushSubscription[]> {
+    return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.customerToken, customerToken));
+  }
+
+  async getPushSubscriptionsByRole(role: string): Promise<PushSubscription[]> {
+    // Join with userRoles to find subscriptions belonging to users with the given role
+    const results = await db
+      .select({ subscription: pushSubscriptions })
+      .from(pushSubscriptions)
+      .innerJoin(userRoles, eq(pushSubscriptions.userId, userRoles.userId))
+      .where(eq(userRoles.role, role as any));
+    return results.map((r) => r.subscription);
+  }
+
+  async deletePushSubscription(id: string): Promise<void> {
+    await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, id));
   }
 }
 

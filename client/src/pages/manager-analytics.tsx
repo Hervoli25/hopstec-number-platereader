@@ -8,7 +8,7 @@ import { AppHeader } from "@/components/app-header";
 import { useToast } from "@/hooks/use-toast";
 import {
   BarChart3, ClipboardList,
-  Activity, TrendingUp, Clock, Users, Timer, Download
+  Activity, TrendingUp, Clock, Users, Timer, Download, Star, AlertTriangle
 } from "lucide-react";
 
 interface AnalyticsSummary {
@@ -18,6 +18,16 @@ interface AnalyticsSummary {
   avgCycleTimeMinutes: number;
   avgTimePerStage: Record<string, number>;
   technicianStats: { userId: string; name: string; count: number }[];
+}
+
+interface TechPerformance {
+  technicianId: string;
+  technicianName: string;
+  avgRating: number;
+  totalRatings: number;
+  issueCount: number;
+  issuePercent: number;
+  recentFeedback: { rating: number | null; notes: string | null; issueReported: string | null; createdAt: string | null; plateDisplay: string }[];
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -44,6 +54,10 @@ export default function ManagerAnalytics() {
 
   const { data: analytics, isLoading } = useQuery<AnalyticsSummary>({
     queryKey: ["/api/analytics/summary"],
+  });
+
+  const { data: techPerformance, isLoading: isLoadingPerf } = useQuery<TechPerformance[]>({
+    queryKey: ["/api/analytics/technician-performance"],
   });
 
   const navItems = [
@@ -329,6 +343,86 @@ export default function ManagerAnalytics() {
                 )}
               </div>
             </div>
+          </Card>
+          {/* Customer Ratings */}
+          <Card className="p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <Star className="w-5 h-5 text-yellow-500" />
+              <h2 className="text-lg font-semibold">Customer Ratings</h2>
+            </div>
+
+            {isLoadingPerf ? (
+              <div className="space-y-3">
+                <Skeleton className="h-12" />
+                <Skeleton className="h-12" />
+              </div>
+            ) : techPerformance?.length ? (
+              <div className="space-y-4">
+                {techPerformance.map((tech) => (
+                  <div key={tech.technicianId} className="p-4 rounded-lg bg-muted/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-medium">{tech.technicianName}</span>
+                      <div className="flex items-center gap-3">
+                        {tech.avgRating > 0 && (
+                          <div className="flex items-center gap-1">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <Star
+                                key={star}
+                                className={`w-4 h-4 ${
+                                  star <= Math.round(tech.avgRating)
+                                    ? "text-yellow-500 fill-yellow-500"
+                                    : "text-muted-foreground/30"
+                                }`}
+                              />
+                            ))}
+                            <span className="ml-1 text-sm font-semibold">{tech.avgRating}</span>
+                          </div>
+                        )}
+                        <span className="text-sm text-muted-foreground">
+                          {tech.totalRatings} rating{tech.totalRatings !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className={`flex items-center gap-1 ${
+                        tech.issuePercent > 15 ? "text-red-500" :
+                        tech.issuePercent > 5 ? "text-yellow-600" :
+                        "text-green-600"
+                      }`}>
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        {tech.issuePercent}% issues ({tech.issueCount})
+                      </span>
+                    </div>
+
+                    {tech.recentFeedback.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {tech.recentFeedback.slice(0, 3).map((fb, i) => (
+                          <div key={i} className="text-sm pl-3 border-l-2 border-muted-foreground/20">
+                            {fb.rating && (
+                              <span className="text-yellow-600 mr-2">
+                                {"★".repeat(fb.rating)}{"☆".repeat(5 - fb.rating)}
+                              </span>
+                            )}
+                            <span className="text-muted-foreground">{fb.plateDisplay}</span>
+                            {fb.notes && <span className="ml-2">{fb.notes}</span>}
+                            {fb.issueReported && (
+                              <span className="ml-2 text-red-500">Issue: {fb.issueReported}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Star className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                <p>No customer ratings yet</p>
+                <p className="text-xs mt-1">Ratings will appear after customers confirm their wash</p>
+              </div>
+            )}
           </Card>
         </motion.div>
       </main>
