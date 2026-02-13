@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { useAuth } from "@/hooks/use-auth";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Analytics } from "@vercel/analytics/react";
 import type { ReactNode } from "react";
 
 import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
@@ -140,6 +141,7 @@ function App() {
           <AppRouter />
           <PWAInstallPrompt />
           <IOSInstallBanner />
+          <Analytics />
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

@@ -42887,6 +42887,7 @@ __export(schema_exports, {
   PHOTO_RULES: () => PHOTO_RULES,
   RESERVATION_STATUSES: () => RESERVATION_STATUSES,
   SERVICE_CODES: () => SERVICE_CODES,
+  SERVICE_TYPE_CONFIG: () => SERVICE_TYPE_CONFIG,
   SUPPORTED_CURRENCIES: () => SUPPORTED_CURRENCIES,
   WASH_STATUS_ORDER: () => WASH_STATUS_ORDER,
   businessSettings: () => businessSettings,
@@ -42941,7 +42942,7 @@ __export(schema_exports, {
   washStatusEnum: () => washStatusEnum,
   webhookRetries: () => webhookRetries
 });
-var userRoleEnum, washStatusEnum, countryHintEnum, photoRuleEnum, userRoles, washJobs, washPhotos, businessSettings, parkingSettings, parkingZones, parkingSessions, frequentParkers, parkingReservations, eventLogs, webhookRetries, users2, customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules, servicePackages, customerMemberships, parkingValidations, customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts, insertUserRoleSchema, insertWashJobSchema, insertWashPhotoSchema, insertParkingSessionSchema, insertParkingSettingsSchema, insertParkingZoneSchema, insertFrequentParkerSchema, insertParkingReservationSchema, insertEventLogSchema, insertWebhookRetrySchema, insertUserSchema, insertCustomerJobAccessSchema, insertServiceChecklistItemSchema, insertCustomerConfirmationSchema, insertPhotoRuleSchema, insertBusinessSettingsSchema, insertServicePackageSchema, insertCustomerMembershipSchema, insertParkingValidationSchema, insertCustomerNotificationSchema, insertNotificationTemplateSchema, insertTechnicianTimeLogSchema, insertStaffAlertSchema, WASH_STATUS_ORDER, COUNTRY_HINTS, PHOTO_RULES, SERVICE_CODES, RESERVATION_STATUSES, MEMBERSHIP_TYPES, NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, NOTIFICATION_STATUSES, SUPPORTED_CURRENCIES;
+var userRoleEnum, washStatusEnum, countryHintEnum, photoRuleEnum, userRoles, washJobs, washPhotos, businessSettings, parkingSettings, parkingZones, parkingSessions, frequentParkers, parkingReservations, eventLogs, webhookRetries, users2, customerJobAccess, serviceChecklistItems, customerConfirmations, photoRules, servicePackages, customerMemberships, parkingValidations, customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts, insertUserRoleSchema, insertWashJobSchema, insertWashPhotoSchema, insertParkingSessionSchema, insertParkingSettingsSchema, insertParkingZoneSchema, insertFrequentParkerSchema, insertParkingReservationSchema, insertEventLogSchema, insertWebhookRetrySchema, insertUserSchema, insertCustomerJobAccessSchema, insertServiceChecklistItemSchema, insertCustomerConfirmationSchema, insertPhotoRuleSchema, insertBusinessSettingsSchema, insertServicePackageSchema, insertCustomerMembershipSchema, insertParkingValidationSchema, insertCustomerNotificationSchema, insertNotificationTemplateSchema, insertTechnicianTimeLogSchema, insertStaffAlertSchema, WASH_STATUS_ORDER, COUNTRY_HINTS, PHOTO_RULES, SERVICE_CODES, SERVICE_TYPE_CONFIG, RESERVATION_STATUSES, MEMBERSHIP_TYPES, NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, NOTIFICATION_STATUSES, SUPPORTED_CURRENCIES;
 var init_schema2 = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -42950,7 +42951,7 @@ var init_schema2 = __esm({
     init_drizzle_zod();
     init_auth();
     userRoleEnum = pgEnum("user_role", ["technician", "manager", "admin"]);
-    washStatusEnum = pgEnum("wash_status", ["received", "prewash", "foam", "rinse", "dry", "complete"]);
+    washStatusEnum = pgEnum("wash_status", ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"]);
     countryHintEnum = pgEnum("country_hint", ["FR", "ZA", "CD", "OTHER"]);
     photoRuleEnum = pgEnum("photo_rule", ["optional", "required", "disabled"]);
     userRoles = pgTable("user_roles", {
@@ -43338,10 +43339,16 @@ var init_schema2 = __esm({
     insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true, updatedAt: true });
     insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLogs).omit({ id: true, createdAt: true, updatedAt: true });
     insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
-    WASH_STATUS_ORDER = ["received", "prewash", "foam", "rinse", "dry", "complete"];
+    WASH_STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"];
     COUNTRY_HINTS = ["FR", "ZA", "CD", "OTHER"];
     PHOTO_RULES = ["optional", "required", "disabled"];
-    SERVICE_CODES = ["BASIC", "PREMIUM", "DELUXE", "CUSTOM"];
+    SERVICE_CODES = ["STANDARD", "RIM_ONLY", "TYRE_SHINE_ONLY", "FULL_VALET"];
+    SERVICE_TYPE_CONFIG = {
+      STANDARD: { label: "Standard Wash", mode: "steps", description: "Full car wash with all available steps" },
+      RIM_ONLY: { label: "Rim Only", mode: "timer", description: "Rim cleaning service" },
+      TYRE_SHINE_ONLY: { label: "Tyre Shine Only", mode: "timer", description: "Tyre shine service" },
+      FULL_VALET: { label: "Full Valet", mode: "timer", description: "Full valet \u2014 time managed on-site" }
+    };
     RESERVATION_STATUSES = ["pending", "confirmed", "checked_in", "completed", "cancelled"];
     MEMBERSHIP_TYPES = ["wash_unlimited", "wash_count", "parking_monthly", "combo"];
     NOTIFICATION_CHANNELS = ["sms", "email", "both"];
@@ -43551,6 +43558,9 @@ var init_storage = __esm({
         }
         if (filters?.technicianId) {
           conditions.push(eq(washJobs.technicianId, filters.technicianId));
+        }
+        if (filters?.fromDate) {
+          conditions.push(gte(washJobs.createdAt, filters.fromDate));
         }
         if (conditions.length > 0) {
           query = query.where(and(...conditions));
@@ -43842,14 +43852,15 @@ var init_storage = __esm({
         }).from(washJobs).where(eq(washJobs.status, "complete"));
         const completedJobs = await db.select({ stageTimestamps: washJobs.stageTimestamps }).from(washJobs).where(eq(washJobs.status, "complete"));
         const stageTimeKPIs = {};
-        const stages = ["received", "prewash", "foam", "rinse", "dry"];
+        const stages = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment"];
         for (const job of completedJobs) {
           const timestamps = job.stageTimestamps;
           if (!timestamps) continue;
-          for (let i = 0; i < stages.length; i++) {
-            const stage = stages[i];
-            const nextStage = stages[i + 1] || "complete";
-            if (timestamps[stage] && timestamps[nextStage]) {
+          const presentStages = stages.filter((s) => timestamps[s]);
+          for (let i = 0; i < presentStages.length; i++) {
+            const stage = presentStages[i];
+            const nextStage = presentStages[i + 1] || (timestamps["complete"] ? "complete" : null);
+            if (nextStage && timestamps[stage] && timestamps[nextStage]) {
               const duration = (new Date(timestamps[nextStage]).getTime() - new Date(timestamps[stage]).getTime()) / 1e3;
               if (duration > 0) {
                 if (!stageTimeKPIs[stage]) {
@@ -44144,7 +44155,8 @@ var init_storage = __esm({
         if (filters?.technicianId) conditions.push(eq(staffAlerts.technicianId, filters.technicianId));
         let query = db.select().from(staffAlerts);
         if (conditions.length > 0) query = query.where(and(...conditions));
-        return query.orderBy(desc(staffAlerts.createdAt));
+        query = query.orderBy(desc(staffAlerts.createdAt));
+        return await query;
       }
       async acknowledgeStaffAlert(alertId, acknowledgedBy) {
         const [updated] = await db.update(staffAlerts).set({ acknowledged: true, acknowledgedBy, acknowledgedAt: /* @__PURE__ */ new Date() }).where(eq(staffAlerts.id, alertId)).returning();
@@ -55623,7 +55635,7 @@ async function getUpcomingBookings(limit = 20) {
     `, [limit]);
     return result.rows.map((row) => ({
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -55675,7 +55687,7 @@ async function getTodayBookings() {
     `);
     return result.rows.map((row) => ({
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -55732,7 +55744,7 @@ async function findBookingByPlate(licensePlate) {
     const row = result.rows[0];
     return {
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -56217,7 +56229,7 @@ async function getBookingWithMembership(bookingId) {
     const row = bookingResult.rows[0];
     const booking = {
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -56310,7 +56322,7 @@ async function getManagerBookings(filters) {
     if (filters?.customerSearch) {
       const searchTerm = `%${filters.customerSearch}%`;
       query += ` AND (
-        UPPER(SUBSTRING(b.id::text, 1, 8)) ILIKE $${paramIndex} OR
+        UPPER(RIGHT(b.id::text, 8)) ILIKE $${paramIndex} OR
         u.name ILIKE $${paramIndex} OR
         u.email ILIKE $${paramIndex} OR
         u.phone ILIKE $${paramIndex} OR
@@ -56341,7 +56353,7 @@ async function getManagerBookings(filters) {
       const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
       return {
         id: row.id,
-        bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+        bookingReference: row.id.slice(-8).toUpperCase(),
         status: row.status,
         bookingDate: new Date(row.bookingDate),
         timeSlot: row.timeSlot,
@@ -56413,7 +56425,7 @@ async function getBookingById(bookingId) {
     const isWithinOneHour = bookingDateTime <= oneHourFromNow && bookingDateTime >= now;
     return {
       id: row.id,
-      bookingReference: `BKG-${row.id.slice(0, 8).toUpperCase()}`,
+      bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
       bookingDate: new Date(row.bookingDate),
       timeSlot: row.timeSlot,
@@ -56832,7 +56844,8 @@ function getBaseUrl(req) {
 var createWashJobSchema = z.object({
   plateDisplay: z.string().min(1, "Plate is required"),
   countryHint: z.enum(COUNTRY_HINTS).optional().default("OTHER"),
-  photo: z.string().optional()
+  photo: z.string().optional(),
+  serviceCode: z.enum(SERVICE_CODES).optional().default("STANDARD")
 });
 var updateStatusSchema = z.object({
   status: z.enum(WASH_STATUS_ORDER)
@@ -56993,7 +57006,7 @@ async function registerRoutes(httpServer2, app2) {
       if (!result.success) {
         return res.status(400).json({ message: result.error.errors[0].message });
       }
-      const { plateDisplay, countryHint, photo } = result.data;
+      const { plateDisplay, countryHint, photo, serviceCode } = result.data;
       const userId = req.user?.claims?.sub;
       let photoUrl;
       if (photo) {
@@ -57010,6 +57023,7 @@ async function registerRoutes(httpServer2, app2) {
         countryHint,
         technicianId: userId,
         status: "received",
+        serviceCode: serviceCode || "STANDARD",
         startAt: /* @__PURE__ */ new Date()
       });
       const token = generateJobToken();
@@ -57082,6 +57096,20 @@ async function registerRoutes(httpServer2, app2) {
       }
       const { status } = result.data;
       const userId = req.user?.claims?.sub;
+      const currentJob = await storage.getWashJob(req.params.id);
+      if (!currentJob) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+      const svcCode = currentJob.serviceCode || "STANDARD";
+      const svcConfig = SERVICE_TYPE_CONFIG[svcCode];
+      if (svcConfig?.mode === "timer" && status !== "complete") {
+        return res.status(400).json({ message: "This service type only supports marking as complete" });
+      }
+      const currentIdx = WASH_STATUS_ORDER.indexOf(currentJob.status);
+      const newIdx = WASH_STATUS_ORDER.indexOf(status);
+      if (newIdx >= 0 && currentIdx >= 0 && newIdx <= currentIdx) {
+        return res.status(400).json({ message: "Cannot move to a previous or current status" });
+      }
       let job;
       if (status === "complete") {
         job = await storage.completeWashJob(req.params.id);
@@ -57659,7 +57687,16 @@ async function registerRoutes(httpServer2, app2) {
         type,
         limit: limit ? parseInt(limit) : 100
       });
-      res.json(events);
+      const allUsers = await storage.getUsers();
+      const userMap = new Map(allUsers.map((u) => [u.id, u]));
+      const enriched = events.map((event) => {
+        const user = event.userId ? userMap.get(event.userId) : null;
+        return {
+          ...event,
+          userDisplayName: user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email : null
+        };
+      });
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching events:", error);
       res.status(500).json({ message: "Failed to fetch events" });
@@ -57676,14 +57713,16 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.get("/api/queue/stats", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
     try {
-      const activeJobs = await storage.getWashJobs({ status: void 0 });
+      const todayStart = /* @__PURE__ */ new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayJobs = await storage.getWashJobs({ fromDate: todayStart });
       const openParking = await storage.getParkingSessions({ open: true });
       const analytics = await storage.getAnalyticsSummary();
       res.json({
-        activeWashes: activeJobs.filter((j) => j.status !== "complete").length,
+        activeWashes: todayJobs.filter((j) => j.status !== "complete").length,
         parkedVehicles: openParking.length,
         todayWashes: analytics.todayWashes,
-        activeJobs: activeJobs.filter((j) => j.status !== "complete")
+        activeJobs: todayJobs.filter((j) => j.status !== "complete")
       });
     } catch (error) {
       console.error("Error fetching queue stats:", error);
@@ -58397,26 +58436,49 @@ async function registerRoutes(httpServer2, app2) {
       res.status(500).json({ message: "Failed to get active roster" });
     }
   });
+  app2.post("/api/manager/roster/force-clockout/:logId", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+    try {
+      const logId = String(req.params.logId);
+      const managerId = req.user?.claims?.sub;
+      const log = await storage.clockOut(logId);
+      if (!log) {
+        return res.status(404).json({ message: "Time log not found or already clocked out" });
+      }
+      storage.logEvent({
+        type: "force_clock_out",
+        userId: managerId,
+        payloadJson: { logId, technicianId: log.technicianId, totalMinutes: log.totalMinutes }
+      }).catch((err) => console.error("Failed to log force_clock_out event:", err));
+      res.json({ message: "Technician clocked out successfully", log });
+    } catch (error) {
+      console.error("POST /api/manager/roster/force-clockout error:", error);
+      res.status(500).json({ message: "Failed to force clock-out" });
+    }
+  });
   app2.post("/api/time/alert", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user?.claims?.sub;
       const { type, message: message2, estimatedArrival } = req.body;
+      if (!userId) {
+        return res.status(401).json({ message: "User ID not found" });
+      }
       if (!type || !["running_late", "absent", "emergency", "other"].includes(type)) {
         return res.status(400).json({ message: "Invalid alert type" });
       }
       const alert = await storage.createStaffAlert({
-        technicianId: userId,
+        technicianId: String(userId),
         type,
         message: message2 || void 0,
         estimatedArrival: estimatedArrival || void 0
       });
-      await storage.logEvent({
+      storage.logEvent({
         type: "staff_alert",
-        userId,
-        payloadJson: { alertId: alert.id, alertType: type, message: message2 }
-      });
+        userId: String(userId),
+        payloadJson: { alertId: alert.id, alertType: type }
+      }).catch((err) => console.error("Failed to log staff_alert event:", err));
       res.json({ alert });
     } catch (error) {
+      console.error("POST /api/time/alert error:", error);
       res.status(500).json({ message: "Failed to send alert" });
     }
   });
@@ -58434,6 +58496,7 @@ async function registerRoutes(httpServer2, app2) {
       }));
       res.json(enriched);
     } catch (error) {
+      console.error("GET /api/manager/alerts error:", error);
       res.status(500).json({ message: "Failed to get alerts" });
     }
   });
