@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AppFooter } from "@/components/app-footer";
+import { LowStockAlert } from "@/components/low-stock-alert";
 import { useAuth } from "@/hooks/use-auth";
 import { useSSE } from "@/hooks/use-sse";
 import { useToast } from "@/hooks/use-toast";
@@ -46,7 +47,7 @@ import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
   TrendingUp, Calendar, Target, ArrowRight, Zap, Settings,
-  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer, Award
+  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer, Award, Package
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
@@ -304,6 +305,7 @@ export default function ManagerDashboard() {
     { href: "/manager", label: "Live Queue", icon: Activity },
     { href: "/manager/bookings", label: "Bookings", icon: CalendarDays },
     { href: "/manager/roster", label: "Roster", icon: Timer },
+    { href: "/manager/inventory", label: "Inventory", icon: Package },
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
     { href: "/manager/settings", label: "Settings", icon: Settings },
@@ -441,6 +443,9 @@ export default function ManagerDashboard() {
               </div>
             </Card>
           </div>
+
+          {/* Low Stock Alert */}
+          <LowStockAlert />
 
           {/* Daily Target Progress */}
           <Card className="p-4">

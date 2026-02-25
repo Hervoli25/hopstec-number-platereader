@@ -9,10 +9,26 @@ import { PlateConfirmDialog } from "@/components/plate-confirm-dialog";
 import { CustomerUrlDialog } from "@/components/customer-url-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { enqueueRequest } from "@/lib/offline-queue";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Camera, Keyboard, Loader2, Car, Sparkles, CircleDot, Star, Award, Lightbulb } from "lucide-react";
-import type { CountryHint, ServiceCode } from "@shared/schema";
-import { SERVICE_TYPE_CONFIG, SERVICE_CODES } from "@shared/schema";
+import {
+  ArrowLeft, Camera, Keyboard, Loader2, Car, Award,
+  Clock, ChevronRight, CheckCircle2
+} from "lucide-react";
+import type { CountryHint, VehicleSize } from "@shared/schema";
+import { SERVICE_PACKAGES, SERVICE_TIER_COLORS, VEHICLE_SIZES } from "@shared/schema";
+import type { ServiceTier } from "@shared/schema";
+
+const VEHICLE_SIZE_LABELS: Record<VehicleSize, string> = {
+  small: "Small",
+  medium: "Medium",
+  large: "Large",
+};
+
+// Sort packages by price (small vehicle)
+const PACKAGE_ORDER = Object.entries(SERVICE_PACKAGES).sort(
+  ([, a], [, b]) => a.pricing.small - b.pricing.small
+);
 
 export default function ScanCarwash() {
   const [, setLocation] = useLocation();
@@ -24,37 +40,55 @@ export default function ScanCarwash() {
   const [candidates, setCandidates] = useState<{ plate: string; confidence: number }[]>([]);
   const [createdJob, setCreatedJob] = useState<{ id: string; customerUrl: string; plateDisplay: string } | null>(null);
   const [showServiceSelect, setShowServiceSelect] = useState(false);
-  const [selectedServiceCode, setSelectedServiceCode] = useState<ServiceCode>("STANDARD");
+  const [showVehicleSize, setShowVehicleSize] = useState(false);
+  const [selectedPackageCode, setSelectedPackageCode] = useState<string | null>(null);
   const [pendingPlate, setPendingPlate] = useState<{ plate: string; countryHint: CountryHint } | null>(null);
   const [showMembershipInfo, setShowMembershipInfo] = useState(false);
   const [customerLookup, setCustomerLookup] = useState<any>(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
 
-  const SERVICE_ICONS: Record<ServiceCode, typeof Car> = {
-    STANDARD: Car,
-    RIM_ONLY: CircleDot,
-    TYRE_SHINE_ONLY: Sparkles,
-    HEADLIGHT_RESTORATION: Lightbulb,
-    FULL_VALET: Star,
-  };
-
   const createJobMutation = useMutation({
-    mutationFn: async ({ plate, countryHint, photo, serviceCode }: { plate: string; countryHint: CountryHint; photo?: string; serviceCode: ServiceCode }) => {
-      const res = await apiRequest("POST", "/api/wash-jobs", {
-        plateDisplay: plate,
-        countryHint,
-        photo,
-        serviceCode,
-      });
-      return res.json();
+    mutationFn: async ({ plate, countryHint, photo, servicePackageCode, vehicleSize }: {
+      plate: string;
+      countryHint: CountryHint;
+      photo?: string;
+      servicePackageCode: string;
+      vehicleSize: VehicleSize;
+    }) => {
+      const payload = { plateDisplay: plate, countryHint, photo, servicePackageCode, vehicleSize };
+
+      if (!navigator.onLine) {
+        await enqueueRequest("POST", "/api/wash-jobs", payload);
+        return { _queued: true, plateDisplay: plate } as any;
+      }
+
+      try {
+        const res = await apiRequest("POST", "/api/wash-jobs", payload);
+        return res.json();
+      } catch (err) {
+        if (err instanceof TypeError && err.message.includes("fetch")) {
+          await enqueueRequest("POST", "/api/wash-jobs", payload);
+          return { _queued: true, plateDisplay: plate } as any;
+        }
+        throw err;
+      }
     },
     onSuccess: (job) => {
+      if (job._queued) {
+        toast({
+          title: "Queued for sync",
+          description: `Job for ${job.plateDisplay} will be created when back online`,
+        });
+        setLocation("/");
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
       setCreatedJob(job);
       setShowCustomerUrl(true);
+      const pkg = selectedPackageCode ? SERVICE_PACKAGES[selectedPackageCode] : null;
       toast({
         title: "Wash job created",
-        description: `Job started for plate ${job.plateDisplay}`,
+        description: `${pkg?.label || "Job"} started for ${job.plateDisplay}`,
       });
     },
     onError: (error: Error) => {
@@ -69,10 +103,23 @@ export default function ScanCarwash() {
   const handleCapture = async (imageData: string) => {
     setCapturedImage(imageData);
     setShowCamera(false);
-    
-    // Try OCR (in real app, this would call the backend)
-    // For MVP, we'll show empty candidates and let user type
-    setCandidates([]);
+
+    try {
+      const res = await fetch("/api/ocr/plate-candidates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: imageData }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCandidates(data.candidates || []);
+      } else {
+        setCandidates([]);
+      }
+    } catch {
+      setCandidates([]);
+    }
     setShowConfirm(true);
   };
 
@@ -111,15 +158,21 @@ export default function ScanCarwash() {
     setShowServiceSelect(true);
   };
 
-  const handleServiceSelect = (code: ServiceCode) => {
-    setSelectedServiceCode(code);
+  const handlePackageSelect = (code: string) => {
+    setSelectedPackageCode(code);
     setShowServiceSelect(false);
-    if (pendingPlate) {
+    setShowVehicleSize(true);
+  };
+
+  const handleVehicleSizeSelect = (size: VehicleSize) => {
+    setShowVehicleSize(false);
+    if (pendingPlate && selectedPackageCode) {
       createJobMutation.mutate({
         plate: pendingPlate.plate,
         countryHint: pendingPlate.countryHint,
         photo: capturedImage || undefined,
-        serviceCode: code,
+        servicePackageCode: selectedPackageCode,
+        vehicleSize: size,
       });
     }
   };
@@ -132,6 +185,8 @@ export default function ScanCarwash() {
       />
     );
   }
+
+  const selectedPkg = selectedPackageCode ? SERVICE_PACKAGES[selectedPackageCode] : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -157,7 +212,7 @@ export default function ScanCarwash() {
             </p>
           </div>
 
-          <Card 
+          <Card
             className="p-8 text-center hover-elevate active-elevate-2 cursor-pointer border-dashed border-2"
             onClick={() => setShowCamera(true)}
             data-testid="card-open-camera"
@@ -178,8 +233,8 @@ export default function ScanCarwash() {
             </div>
           </div>
 
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             className="w-full h-16 text-lg"
             onClick={handleManualEntry}
             data-testid="button-manual-entry"
@@ -212,40 +267,140 @@ export default function ScanCarwash() {
         />
       )}
 
-      {/* Service Type Selection */}
+      {/* Service Package Selection */}
       {showServiceSelect && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold mb-1">Select Service</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              {pendingPlate?.plate}
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              {SERVICE_CODES.map(code => {
-                const cfg = SERVICE_TYPE_CONFIG[code];
-                const Icon = SERVICE_ICONS[code];
-                return (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 overflow-y-auto">
+          <div className="min-h-full flex items-start justify-center p-4 py-8">
+            <Card className="p-5 max-w-md w-full">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-lg font-semibold">Select Service</h3>
+                <Badge variant="outline" className="font-mono">{pendingPlate?.plate}</Badge>
+              </div>
+              <p className="text-sm text-muted-foreground mb-4">
+                Choose a wash package for this vehicle
+              </p>
+
+              <div className="space-y-2.5">
+                {PACKAGE_ORDER.map(([code, pkg]) => (
                   <Card
                     key={code}
-                    className="p-4 text-center cursor-pointer hover:bg-primary/5 hover:border-primary/30 transition-colors"
-                    onClick={() => handleServiceSelect(code)}
+                    className="p-3.5 cursor-pointer hover:bg-primary/5 hover:border-primary/30 transition-colors active:scale-[0.99]"
+                    onClick={() => handlePackageSelect(code)}
+                    data-testid={`package-${code}`}
                   >
-                    <Icon className="w-8 h-8 mx-auto mb-2 text-primary" />
-                    <p className="font-medium text-sm">{cfg.label}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{cfg.description}</p>
-                    {cfg.mode === "timer" && (
-                      <Badge variant="secondary" className="mt-2 text-xs">Timer</Badge>
-                    )}
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold">{pkg.label}</p>
+                          <Badge className={`${SERVICE_TIER_COLORS[pkg.tier]} text-white text-[10px] px-1.5 py-0`}>
+                            {pkg.tier}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1">
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {pkg.durationMinutes} min
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {pkg.steps.length} steps
+                          </span>
+                          <span className="text-sm font-semibold text-primary">
+                            from R{pkg.pricing.small}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{pkg.description}</p>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {pkg.steps.slice(0, 4).map((step) => (
+                            <span key={step} className="text-[10px] bg-muted px-1.5 py-0.5 rounded">
+                              {step}
+                            </span>
+                          ))}
+                          {pkg.steps.length > 4 && (
+                            <span className="text-[10px] text-muted-foreground px-1.5 py-0.5">
+                              +{pkg.steps.length - 4} more
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-1" />
+                    </div>
                   </Card>
-                );
-              })}
+                ))}
+              </div>
+
+              <Button
+                variant="ghost"
+                className="w-full mt-3"
+                onClick={() => setShowServiceSelect(false)}
+              >
+                Cancel
+              </Button>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle Size Selection */}
+      {showVehicleSize && selectedPkg && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="p-6 max-w-sm w-full">
+            <div className="text-center mb-4">
+              <Badge className={`${SERVICE_TIER_COLORS[selectedPkg.tier]} text-white mb-2`}>
+                {selectedPkg.tier}
+              </Badge>
+              <h3 className="text-lg font-semibold">{selectedPkg.label}</h3>
+              <p className="text-sm text-muted-foreground">{selectedPkg.durationMinutes} min</p>
             </div>
+
+            <p className="text-sm font-medium mb-3 text-center">Select vehicle size</p>
+
+            <div className="space-y-2">
+              {VEHICLE_SIZES.map((size) => (
+                <Card
+                  key={size}
+                  className="p-4 cursor-pointer hover:bg-primary/5 hover:border-primary/30 transition-colors active:scale-[0.98]"
+                  onClick={() => handleVehicleSizeSelect(size)}
+                  data-testid={`size-${size}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Car className={`h-6 w-6 text-primary ${
+                        size === "small" ? "scale-75" : size === "large" ? "scale-110" : ""
+                      }`} />
+                      <span className="font-medium">{VEHICLE_SIZE_LABELS[size]}</span>
+                    </div>
+                    <span className="text-lg font-bold text-primary">
+                      R{selectedPkg.pricing[size]}
+                    </span>
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            {/* Steps preview */}
+            <div className="mt-4 pt-3 border-t">
+              <p className="text-xs font-medium text-muted-foreground mb-2">
+                {selectedPkg.steps.length} steps included:
+              </p>
+              <div className="space-y-1">
+                {selectedPkg.steps.map((step, i) => (
+                  <div key={step} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0" />
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <Button
               variant="ghost"
-              className="w-full mt-3"
-              onClick={() => setShowServiceSelect(false)}
+              className="w-full mt-4"
+              onClick={() => {
+                setShowVehicleSize(false);
+                setShowServiceSelect(true);
+              }}
             >
-              Cancel
+              Back to Services
             </Button>
           </Card>
         </div>
@@ -259,7 +414,7 @@ export default function ScanCarwash() {
               {customerLookup.isRegistered ? (
                 <Badge className="bg-green-500 text-white mb-2">Registered Member</Badge>
               ) : (
-                <Badge variant="secondary" className="mb-2">New Customer</Badge>
+                <Badge variant="secondary" className="mb-2">Walk-in Customer</Badge>
               )}
               <h3 className="text-lg font-semibold">
                 {customerLookup.crmCustomer?.customerName || customerLookup.crmMembership?.customerName || "Customer"}
@@ -317,7 +472,7 @@ export default function ScanCarwash() {
             {!customerLookup.crmMembership && !customerLookup.isRegistered && (
               <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 mb-4">
                 <p className="text-sm text-amber-700 dark:text-amber-400">
-                  Not a registered member — points won't be earned for this wash. Customer can register at the CRM website.
+                  Walk-in customer — not registered. Loyalty points won't be earned. Customer can register at the CRM website.
                 </p>
               </div>
             )}

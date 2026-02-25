@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Car, Camera, CheckCircle2, Clock, Loader2, Star, AlertTriangle,
-  Droplets, Wind, Sparkles, Send, Timer, Bell
+  Droplets, Wind, Sparkles, Send, Timer, Bell, SkipForward, Circle
 } from "lucide-react";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { format } from "date-fns";
@@ -270,11 +270,77 @@ export default function CustomerJob() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">
-                {isTimerMode ? svcConfig.label : "Wash Progress"}
+                {checklist.length > 0
+                  ? (svcConfig?.label || "Service Progress")
+                  : isTimerMode ? svcConfig.label : "Wash Progress"}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {isTimerMode ? (
+              {checklist.length > 0 ? (
+                /* Dynamic checklist-based progress */
+                <div className="relative">
+                  <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-border" />
+                  <div className="space-y-4">
+                    {checklist.map((item, index) => {
+                      const isDone = item.confirmed;
+                      const isSkipped = item.skipped;
+                      const currentIdx = checklist.findIndex(i => !i.confirmed && !i.skipped);
+                      const isCurrent = index === currentIdx && !isComplete;
+
+                      return (
+                        <div key={item.id} className="flex gap-4 relative">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
+                            isDone ? "bg-green-500" : isSkipped ? "bg-muted opacity-50" : isCurrent ? "bg-primary" : "bg-muted"
+                          }`}>
+                            {isDone ? (
+                              <CheckCircle2 className="h-4 w-4 text-white" />
+                            ) : isSkipped ? (
+                              <SkipForward className="h-3.5 w-3.5 text-muted-foreground" />
+                            ) : (
+                              <span className={`text-xs font-bold ${isCurrent ? "text-white" : "text-muted-foreground"}`}>
+                                {index + 1}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-1 pt-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-medium ${
+                                isDone ? "text-green-700 dark:text-green-400" : ""
+                              } ${isSkipped ? "line-through text-muted-foreground" : ""} ${
+                                !isDone && !isSkipped && !isCurrent ? "text-muted-foreground" : ""
+                              }`}>
+                                {item.label}
+                              </span>
+                              {isSkipped && (
+                                <Badge variant="outline" className="text-xs opacity-50">Skipped</Badge>
+                              )}
+                              {isCurrent && (
+                                <Badge className="animate-pulse">Current</Badge>
+                              )}
+                            </div>
+                            {isSkipped && item.skippedReason && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{item.skippedReason}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Completion step */}
+                    <div className="flex gap-4 relative">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
+                        isComplete ? "bg-green-500" : "bg-muted"
+                      }`}>
+                        <CheckCircle2 className={`h-4 w-4 ${isComplete ? "text-white" : "text-muted-foreground"}`} />
+                      </div>
+                      <div className="flex-1 pt-1">
+                        <span className={`font-medium ${isComplete ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}`}>
+                          Complete
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : isTimerMode ? (
                 <div className="text-center py-4">
                   <Badge className="mb-3">{svcConfig.label}</Badge>
                   {isComplete ? (
@@ -307,7 +373,6 @@ export default function CustomerJob() {
                       const isCurrent = index === currentStatusIndex;
                       const Icon = config.icon;
                       const statusPhotos = photos.filter(p => p.statusAtTime === status);
-                      // Check if this step was skipped (no timestamp and it's past)
                       const timestamps = (job.stageTimestamps || {}) as Record<string, string>;
                       const wasSkipped = isPast && !isCurrent && !timestamps[status] && status !== "received";
 
@@ -518,10 +583,10 @@ export default function CustomerJob() {
       <footer className="border-t border-border mt-8 py-6">
         <div className="max-w-lg mx-auto px-4 text-center text-sm text-muted-foreground">
           <p>Made by HOPS-TECH INNOVATION</p>
-          {process.env.PORTFOLIO_URL && (
-            <a 
-              href={process.env.PORTFOLIO_URL} 
-              target="_blank" 
+          {import.meta.env.VITE_PORTFOLIO_URL && (
+            <a
+              href={import.meta.env.VITE_PORTFOLIO_URL}
+              target="_blank"
               rel="noopener noreferrer"
               className="text-primary hover:underline"
             >

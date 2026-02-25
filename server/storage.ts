@@ -7,6 +7,8 @@ import {
   businessSettings, servicePackages, customerMemberships, parkingValidations,
   customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts,
   loyaltyTransactions, pushSubscriptions,
+  suppliers, inventoryItems, inventoryConsumption, purchaseOrders,
+  tenants, branches, webhookRetries,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -24,6 +26,12 @@ import {
   type StaffAlert, type InsertStaffAlert,
   type LoyaltyTransaction,
   type PushSubscription, type InsertPushSubscription,
+  type Supplier, type InsertSupplier,
+  type InventoryItem, type InsertInventoryItem,
+  type InventoryConsumption, type InsertInventoryConsumption,
+  type PurchaseOrder, type InsertPurchaseOrder,
+  type Tenant, type InsertTenant,
+  type Branch, type InsertBranch,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -31,6 +39,7 @@ import {
   type ServiceChecklistItem, type InsertServiceChecklistItem,
   type CustomerConfirmation, type InsertCustomerConfirmation,
   type PhotoRule, type InsertPhotoRule,
+  type WebhookRetry, type InsertWebhookRetry,
   WASH_STATUS_ORDER
 } from "@shared/schema";
 import { normalizePlate } from "./lib/plate-utils";
@@ -58,6 +67,7 @@ export interface IStorage {
   getServiceChecklistItems(washJobId: string): Promise<ServiceChecklistItem[]>;
   updateChecklistItemConfirmed(id: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined>;
   updateChecklistItemConfirmedForJob(id: string, washJobId: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined>;
+  skipChecklistItem(id: string, washJobId: string, reason?: string): Promise<ServiceChecklistItem | undefined>;
 
   // Customer confirmations
   createCustomerConfirmation(confirmation: InsertCustomerConfirmation): Promise<CustomerConfirmation>;
@@ -172,9 +182,65 @@ export interface IStorage {
   getPushSubscriptionsByRole(role: string): Promise<PushSubscription[]>;
   deletePushSubscription(id: string): Promise<void>;
 
+  // Suppliers
+  createSupplier(supplier: InsertSupplier): Promise<Supplier>;
+  getSuppliers(activeOnly?: boolean): Promise<Supplier[]>;
+  getSupplier(id: string): Promise<Supplier | undefined>;
+  updateSupplier(id: string, data: Partial<InsertSupplier>): Promise<Supplier | undefined>;
+
+  // Inventory Items
+  createInventoryItem(item: InsertInventoryItem): Promise<InventoryItem>;
+  getInventoryItems(filters?: { category?: string; lowStock?: boolean; active?: boolean }): Promise<InventoryItem[]>;
+  getInventoryItem(id: string): Promise<InventoryItem | undefined>;
+  updateInventoryItem(id: string, data: Partial<InsertInventoryItem>): Promise<InventoryItem | undefined>;
+  adjustInventoryStock(id: string, quantityChange: number): Promise<InventoryItem | undefined>;
+
+  // Inventory Consumption
+  logInventoryConsumption(consumption: InsertInventoryConsumption): Promise<InventoryConsumption>;
+  getInventoryConsumption(filters?: { itemId?: string; fromDate?: Date; toDate?: Date }): Promise<InventoryConsumption[]>;
+  autoConsumeForWashJob(washJobId: string, serviceCode: string, createdBy: string): Promise<void>;
+
+  // Purchase Orders
+  createPurchaseOrder(order: InsertPurchaseOrder): Promise<PurchaseOrder>;
+  getPurchaseOrders(filters?: { status?: string; supplierId?: string }): Promise<PurchaseOrder[]>;
+  getPurchaseOrder(id: string): Promise<PurchaseOrder | undefined>;
+  updatePurchaseOrder(id: string, data: Partial<InsertPurchaseOrder>): Promise<PurchaseOrder | undefined>;
+  receivePurchaseOrder(id: string): Promise<PurchaseOrder | undefined>;
+
+  // Inventory Analytics
+  getInventoryAnalytics(): Promise<{
+    totalItems: number;
+    lowStockItems: number;
+    totalStockValue: number;
+    topConsumedItems: { itemId: string; itemName: string; totalQuantity: number }[];
+    monthlyConsumptionCost: number;
+    profitMarginByService: { serviceCode: string; avgCost: number; avgRevenue: number; margin: number }[];
+  }>;
+  getLowStockItems(): Promise<InventoryItem[]>;
+
+  // Tenants
+  createTenant(tenant: InsertTenant): Promise<Tenant>;
+  getTenants(): Promise<Tenant[]>;
+  getTenant(id: string): Promise<Tenant | undefined>;
+  getTenantBySlug(slug: string): Promise<Tenant | undefined>;
+  updateTenant(id: string, data: Partial<InsertTenant>): Promise<Tenant | undefined>;
+
+  // Branches
+  createBranch(branch: InsertBranch): Promise<Branch>;
+  getBranches(tenantId: string): Promise<Branch[]>;
+  getBranch(id: string): Promise<Branch | undefined>;
+  updateBranch(id: string, data: Partial<InsertBranch>): Promise<Branch | undefined>;
+
   // Event Logs
   logEvent(event: InsertEventLog): Promise<EventLog>;
   getEvents(filters?: { plate?: string; type?: string; limit?: number }): Promise<EventLog[]>;
+
+  // Webhook Retries
+  createWebhookRetry(retry: InsertWebhookRetry): Promise<WebhookRetry>;
+  getPendingWebhookRetries(limit?: number): Promise<WebhookRetry[]>;
+  updateWebhookRetry(id: string, data: Partial<{ attempts: number; lastError: string | null; nextRetryAt: Date | null }>): Promise<WebhookRetry | undefined>;
+  deleteWebhookRetry(id: string): Promise<boolean>;
+  getWebhookRetries(limit?: number): Promise<WebhookRetry[]>;
 
   // Analytics
   getAnalyticsSummary(): Promise<{
@@ -297,6 +363,18 @@ export class DatabaseStorage implements IStorage {
     const [result] = await db
       .update(serviceChecklistItems)
       .set({ confirmed, confirmedAt: confirmed ? new Date() : null })
+      .where(and(
+        eq(serviceChecklistItems.id, id),
+        eq(serviceChecklistItems.washJobId, washJobId)
+      ))
+      .returning();
+    return result;
+  }
+
+  async skipChecklistItem(id: string, washJobId: string, reason?: string): Promise<ServiceChecklistItem | undefined> {
+    const [result] = await db
+      .update(serviceChecklistItems)
+      .set({ skipped: true, skippedReason: reason || null })
       .where(and(
         eq(serviceChecklistItems.id, id),
         eq(serviceChecklistItems.washJobId, washJobId)
@@ -796,6 +874,51 @@ export class DatabaseStorage implements IStorage {
     }
     
     return query;
+  }
+
+  // Webhook Retries
+  async createWebhookRetry(retry: InsertWebhookRetry): Promise<WebhookRetry> {
+    const [result] = await db.insert(webhookRetries).values(retry).returning();
+    return result;
+  }
+
+  async getPendingWebhookRetries(limit = 20): Promise<WebhookRetry[]> {
+    return db
+      .select()
+      .from(webhookRetries)
+      .where(
+        and(
+          lte(webhookRetries.nextRetryAt, new Date()),
+          sql`${webhookRetries.attempts} < 10`
+        )
+      )
+      .orderBy(asc(webhookRetries.nextRetryAt))
+      .limit(limit);
+  }
+
+  async updateWebhookRetry(
+    id: string,
+    data: Partial<{ attempts: number; lastError: string | null; nextRetryAt: Date | null }>
+  ): Promise<WebhookRetry | undefined> {
+    const [result] = await db
+      .update(webhookRetries)
+      .set(data)
+      .where(eq(webhookRetries.id, id))
+      .returning();
+    return result;
+  }
+
+  async deleteWebhookRetry(id: string): Promise<boolean> {
+    const result = await db.delete(webhookRetries).where(eq(webhookRetries.id, id));
+    return true;
+  }
+
+  async getWebhookRetries(limit = 50): Promise<WebhookRetry[]> {
+    return db
+      .select()
+      .from(webhookRetries)
+      .orderBy(desc(webhookRetries.createdAt))
+      .limit(limit);
   }
 
   // Analytics
@@ -1458,6 +1581,274 @@ export class DatabaseStorage implements IStorage {
 
   async deletePushSubscription(id: string): Promise<void> {
     await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, id));
+  }
+
+  // ─── Suppliers ────────────────────────────────────────────────────────
+
+  async createSupplier(supplier: InsertSupplier): Promise<Supplier> {
+    const [result] = await db.insert(suppliers).values(supplier).returning();
+    return result;
+  }
+
+  async getSuppliers(activeOnly?: boolean): Promise<Supplier[]> {
+    if (activeOnly) {
+      return db.select().from(suppliers).where(eq(suppliers.isActive, true)).orderBy(asc(suppliers.name));
+    }
+    return db.select().from(suppliers).orderBy(asc(suppliers.name));
+  }
+
+  async getSupplier(id: string): Promise<Supplier | undefined> {
+    const [result] = await db.select().from(suppliers).where(eq(suppliers.id, id));
+    return result;
+  }
+
+  async updateSupplier(id: string, data: Partial<InsertSupplier>): Promise<Supplier | undefined> {
+    const [result] = await db.update(suppliers).set({ ...data, updatedAt: new Date() }).where(eq(suppliers.id, id)).returning();
+    return result;
+  }
+
+  // ─── Inventory Items ──────────────────────────────────────────────────
+
+  async createInventoryItem(item: InsertInventoryItem): Promise<InventoryItem> {
+    const [result] = await db.insert(inventoryItems).values(item).returning();
+    return result;
+  }
+
+  async getInventoryItems(filters?: { category?: string; lowStock?: boolean; active?: boolean }): Promise<InventoryItem[]> {
+    const conditions = [];
+    if (filters?.category) conditions.push(eq(inventoryItems.category, filters.category as any));
+    if (filters?.active !== undefined) conditions.push(eq(inventoryItems.isActive, filters.active));
+    if (filters?.lowStock) {
+      conditions.push(sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`);
+    }
+    if (conditions.length > 0) {
+      return db.select().from(inventoryItems).where(and(...conditions)).orderBy(asc(inventoryItems.name));
+    }
+    return db.select().from(inventoryItems).orderBy(asc(inventoryItems.name));
+  }
+
+  async getInventoryItem(id: string): Promise<InventoryItem | undefined> {
+    const [result] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+    return result;
+  }
+
+  async updateInventoryItem(id: string, data: Partial<InsertInventoryItem>): Promise<InventoryItem | undefined> {
+    const [result] = await db.update(inventoryItems).set({ ...data, updatedAt: new Date() }).where(eq(inventoryItems.id, id)).returning();
+    return result;
+  }
+
+  async adjustInventoryStock(id: string, quantityChange: number): Promise<InventoryItem | undefined> {
+    const [result] = await db
+      .update(inventoryItems)
+      .set({
+        currentStock: sql`${inventoryItems.currentStock} + ${quantityChange}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(inventoryItems.id, id))
+      .returning();
+    return result;
+  }
+
+  // ─── Inventory Consumption ────────────────────────────────────────────
+
+  async logInventoryConsumption(consumption: InsertInventoryConsumption): Promise<InventoryConsumption> {
+    const [result] = await db.insert(inventoryConsumption).values(consumption).returning();
+    // Decrement stock
+    await this.adjustInventoryStock(consumption.inventoryItemId, -consumption.quantity);
+    return result;
+  }
+
+  async getInventoryConsumption(filters?: { itemId?: string; fromDate?: Date; toDate?: Date }): Promise<InventoryConsumption[]> {
+    const conditions = [];
+    if (filters?.itemId) conditions.push(eq(inventoryConsumption.inventoryItemId, filters.itemId));
+    if (filters?.fromDate) conditions.push(gte(inventoryConsumption.createdAt, filters.fromDate));
+    if (filters?.toDate) conditions.push(lte(inventoryConsumption.createdAt, filters.toDate));
+    if (conditions.length > 0) {
+      return db.select().from(inventoryConsumption).where(and(...conditions)).orderBy(desc(inventoryConsumption.createdAt));
+    }
+    return db.select().from(inventoryConsumption).orderBy(desc(inventoryConsumption.createdAt));
+  }
+
+  async autoConsumeForWashJob(washJobId: string, serviceCode: string, createdBy: string): Promise<void> {
+    // Find all active inventory items that have a consumption mapping for this service code
+    const items = await db.select().from(inventoryItems).where(
+      and(eq(inventoryItems.isActive, true), sql`${inventoryItems.consumptionMap} IS NOT NULL`)
+    );
+
+    for (const item of items) {
+      const map = item.consumptionMap as Record<string, number> | null;
+      if (!map || !map[serviceCode]) continue;
+      const quantity = map[serviceCode];
+      await this.logInventoryConsumption({
+        inventoryItemId: item.id,
+        washJobId,
+        quantity,
+        costAtTime: item.costPerUnit ?? 0,
+        createdBy,
+      });
+    }
+  }
+
+  // ─── Purchase Orders ──────────────────────────────────────────────────
+
+  async createPurchaseOrder(order: InsertPurchaseOrder): Promise<PurchaseOrder> {
+    const [result] = await db.insert(purchaseOrders).values(order as any).returning();
+    return result;
+  }
+
+  async getPurchaseOrders(filters?: { status?: string; supplierId?: string }): Promise<PurchaseOrder[]> {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
+    if (filters?.supplierId) conditions.push(eq(purchaseOrders.supplierId, filters.supplierId));
+    if (conditions.length > 0) {
+      return db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt));
+    }
+    return db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt));
+  }
+
+  async getPurchaseOrder(id: string): Promise<PurchaseOrder | undefined> {
+    const [result] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, id));
+    return result;
+  }
+
+  async updatePurchaseOrder(id: string, data: Partial<InsertPurchaseOrder>): Promise<PurchaseOrder | undefined> {
+    const [result] = await db.update(purchaseOrders).set({ ...data, updatedAt: new Date() } as any).where(eq(purchaseOrders.id, id)).returning();
+    return result;
+  }
+
+  async receivePurchaseOrder(id: string): Promise<PurchaseOrder | undefined> {
+    const po = await this.getPurchaseOrder(id);
+    if (!po) return undefined;
+
+    // Mark as received
+    const [result] = await db
+      .update(purchaseOrders)
+      .set({ status: "received", receivedAt: new Date(), updatedAt: new Date() })
+      .where(eq(purchaseOrders.id, id))
+      .returning();
+
+    // Increment stock for each line item
+    const items = (po.items || []) as Array<{ inventoryItemId: string; quantity: number }>;
+    for (const lineItem of items) {
+      await this.adjustInventoryStock(lineItem.inventoryItemId, lineItem.quantity * 100); // convert to hundredths
+    }
+
+    return result;
+  }
+
+  // ─── Inventory Analytics ──────────────────────────────────────────────
+
+  async getInventoryAnalytics(): Promise<{
+    totalItems: number;
+    lowStockItems: number;
+    totalStockValue: number;
+    topConsumedItems: { itemId: string; itemName: string; totalQuantity: number }[];
+    monthlyConsumptionCost: number;
+    profitMarginByService: { serviceCode: string; avgCost: number; avgRevenue: number; margin: number }[];
+  }> {
+    // Total active items
+    const [totalResult] = await db.select({ count: sql<number>`count(*)::int` }).from(inventoryItems).where(eq(inventoryItems.isActive, true));
+    const totalItems = totalResult?.count || 0;
+
+    // Low stock items
+    const [lowResult] = await db.select({ count: sql<number>`count(*)::int` }).from(inventoryItems).where(
+      and(eq(inventoryItems.isActive, true), sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`)
+    );
+    const lowStockItems = lowResult?.count || 0;
+
+    // Total stock value (sum of currentStock/100 * costPerUnit)
+    const [valueResult] = await db.select({
+      total: sql<number>`coalesce(sum((${inventoryItems.currentStock}::numeric / 100) * ${inventoryItems.costPerUnit}), 0)::int`
+    }).from(inventoryItems).where(eq(inventoryItems.isActive, true));
+    const totalStockValue = valueResult?.total || 0;
+
+    // Top consumed items (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const topConsumed = await db
+      .select({
+        itemId: inventoryConsumption.inventoryItemId,
+        itemName: inventoryItems.name,
+        totalQuantity: sql<number>`sum(${inventoryConsumption.quantity})::int`,
+      })
+      .from(inventoryConsumption)
+      .innerJoin(inventoryItems, eq(inventoryConsumption.inventoryItemId, inventoryItems.id))
+      .where(gte(inventoryConsumption.createdAt, thirtyDaysAgo))
+      .groupBy(inventoryConsumption.inventoryItemId, inventoryItems.name)
+      .orderBy(sql`sum(${inventoryConsumption.quantity}) desc`)
+      .limit(10);
+
+    // Monthly consumption cost
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const [costResult] = await db.select({
+      total: sql<number>`coalesce(sum((${inventoryConsumption.quantity}::numeric / 100) * ${inventoryConsumption.costAtTime}), 0)::int`
+    }).from(inventoryConsumption).where(gte(inventoryConsumption.createdAt, startOfMonth));
+    const monthlyConsumptionCost = costResult?.total || 0;
+
+    return {
+      totalItems,
+      lowStockItems,
+      totalStockValue,
+      topConsumedItems: topConsumed.map(t => ({ itemId: t.itemId, itemName: t.itemName ?? "", totalQuantity: t.totalQuantity })),
+      monthlyConsumptionCost,
+      profitMarginByService: [], // Requires wash revenue data - populated later
+    };
+  }
+
+  async getLowStockItems(): Promise<InventoryItem[]> {
+    return db.select().from(inventoryItems).where(
+      and(
+        eq(inventoryItems.isActive, true),
+        sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`,
+        sql`${inventoryItems.minimumStock} > 0`
+      )
+    ).orderBy(sql`${inventoryItems.currentStock}::numeric / GREATEST(${inventoryItems.minimumStock}, 1) asc`);
+  }
+
+  // ─── Tenants ──────────────────────────────────────────────────────────
+
+  async createTenant(tenant: InsertTenant): Promise<Tenant> {
+    const [result] = await db.insert(tenants).values(tenant).returning();
+    return result;
+  }
+
+  async getTenants(): Promise<Tenant[]> {
+    return db.select().from(tenants).orderBy(asc(tenants.name));
+  }
+
+  async getTenant(id: string): Promise<Tenant | undefined> {
+    const [result] = await db.select().from(tenants).where(eq(tenants.id, id));
+    return result;
+  }
+
+  async getTenantBySlug(slug: string): Promise<Tenant | undefined> {
+    const [result] = await db.select().from(tenants).where(eq(tenants.slug, slug));
+    return result;
+  }
+
+  async updateTenant(id: string, data: Partial<InsertTenant>): Promise<Tenant | undefined> {
+    const [result] = await db.update(tenants).set({ ...data, updatedAt: new Date() }).where(eq(tenants.id, id)).returning();
+    return result;
+  }
+
+  // ─── Branches ─────────────────────────────────────────────────────────
+
+  async createBranch(branch: InsertBranch): Promise<Branch> {
+    const [result] = await db.insert(branches).values(branch).returning();
+    return result;
+  }
+
+  async getBranches(tenantId: string): Promise<Branch[]> {
+    return db.select().from(branches).where(eq(branches.tenantId, tenantId)).orderBy(asc(branches.name));
+  }
+
+  async getBranch(id: string): Promise<Branch | undefined> {
+    const [result] = await db.select().from(branches).where(eq(branches.id, id));
+    return result;
+  }
+
+  async updateBranch(id: string, data: Partial<InsertBranch>): Promise<Branch | undefined> {
+    const [result] = await db.update(branches).set({ ...data, updatedAt: new Date() }).where(eq(branches.id, id)).returning();
+    return result;
   }
 }
 

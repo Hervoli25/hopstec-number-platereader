@@ -93,7 +93,24 @@ export default function ScanParking() {
   const handleCapture = async (imageData: string) => {
     setCapturedImage(imageData);
     setShowCamera(false);
-    setCandidates([]);
+
+    // Try OCR plate recognition
+    try {
+      const res = await fetch("/api/ocr/plate-candidates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: imageData }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCandidates(data.candidates || []);
+      } else {
+        setCandidates([]);
+      }
+    } catch {
+      setCandidates([]);
+    }
     setShowConfirm(true);
   };
 

@@ -1,9 +1,17 @@
 // HOPSVOIR Service Worker
-const CACHE_NAME = 'hopsvoir-v1';
+const CACHE_NAME = 'hopsvoir-v2';
+const API_CACHE_NAME = 'hopsvoir-api-v1';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
   '/favicon.png'
+];
+
+// API GET endpoints to cache for offline reads
+const CACHEABLE_API_PATTERNS = [
+  '/api/wash-jobs',
+  '/api/queue/stats',
+  '/api/parking/sessions',
 ];
 
 // Install event - cache static assets
@@ -18,11 +26,12 @@ self.addEventListener('install', (event) => {
 
 // Activate event - clean old caches
 self.addEventListener('activate', (event) => {
+  const keepCaches = [CACHE_NAME, API_CACHE_NAME];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((name) => name !== CACHE_NAME)
+          .filter((name) => !keepCaches.includes(name))
           .map((name) => caches.delete(name))
       );
     })
@@ -79,16 +88,38 @@ self.addEventListener('notificationclick', (event) => {
 
 // Fetch event - network first, fallback to cache
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests
+  // Skip non-GET requests (mutations are handled by IndexedDB offline queue)
   if (event.request.method !== 'GET') return;
 
-  // Skip API requests - always fetch from network
-  if (event.request.url.includes('/api/')) return;
+  const url = new URL(event.request.url);
 
+  // Cacheable API endpoints — network first, stale fallback for offline reads
+  if (url.pathname.startsWith('/api/') && CACHEABLE_API_PATTERNS.some((p) => url.pathname.startsWith(p))) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.status === 200) {
+            const responseClone = response.clone();
+            caches.open(API_CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // Skip other API requests (auth, SSE, etc.) — always network only
+  if (url.pathname.startsWith('/api/')) return;
+
+  // Static assets — network first, cache fallback
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Cache successful responses
         if (response.status === 200) {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -98,8 +129,13 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => {
-        // Fallback to cache
-        return caches.match(event.request);
+        return caches.match(event.request).then((cached) => {
+          // For navigation requests, return the cached index.html (SPA fallback)
+          if (!cached && event.request.mode === 'navigate') {
+            return caches.match('/');
+          }
+          return cached;
+        });
       })
   );
 });

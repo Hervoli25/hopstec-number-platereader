@@ -13,10 +13,44 @@ export const countryHintEnum = pgEnum("country_hint", ["FR", "ZA", "CD", "OTHER"
 export const photoRuleEnum = pgEnum("photo_rule", ["optional", "required", "disabled"]);
 export const loyaltyTransactionTypeEnum = pgEnum("loyalty_transaction_type", ["earn_wash", "earn_bonus", "redeem", "expire", "adjust"]);
 export const loyaltyTierEnum = pgEnum("loyalty_tier", ["basic", "premium"]);
+export const inventoryCategoryEnum = pgEnum("inventory_category", ["chemicals", "cloths_towels", "wax_polish", "equipment", "packaging", "other"]);
+export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", ["draft", "submitted", "received", "cancelled"]);
+export const tenantPlanEnum = pgEnum("tenant_plan", ["free", "basic", "pro", "enterprise"]);
+
+// Tenants (multi-tenancy)
+export const tenants = pgTable("tenants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  slug: varchar("slug", { length: 100 }).notNull().unique(),
+  plan: tenantPlanEnum("plan").notNull().default("free"),
+  isActive: boolean("is_active").default(true),
+  primaryColor: varchar("primary_color", { length: 20 }),
+  secondaryColor: varchar("secondary_color", { length: 20 }),
+  logoUrl: text("logo_url"),
+  faviconUrl: text("favicon_url"),
+  customDomain: varchar("custom_domain", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Branches (under tenant)
+export const branches = pgTable("branches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  name: varchar("name", { length: 255 }).notNull(),
+  address: text("address"),
+  phone: varchar("phone", { length: 50 }),
+  email: varchar("email", { length: 255 }),
+  timezone: varchar("timezone", { length: 50 }).default("Africa/Johannesburg"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 // User roles table (extends base users from auth)
 export const userRoles = pgTable("user_roles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
   userId: varchar("user_id").notNull(),
   role: userRoleEnum("role").notNull().default("technician"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -25,6 +59,8 @@ export const userRoles = pgTable("user_roles", {
 // Wash Jobs
 export const washJobs = pgTable("wash_jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
   plateNormalized: varchar("plate_normalized", { length: 50 }).notNull(),
   countryHint: countryHintEnum("country_hint").default("OTHER"),
@@ -43,6 +79,8 @@ export const washJobs = pgTable("wash_jobs", {
 // Wash Photos
 export const washPhotos = pgTable("wash_photos", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   washJobId: varchar("wash_job_id").notNull(),
   url: text("url").notNull(),
   statusAtTime: washStatusEnum("status_at_time").notNull(),
@@ -53,6 +91,8 @@ export const washPhotos = pgTable("wash_photos", {
 // Business Settings (for white-labeling and multi-tenancy)
 export const businessSettings = pgTable("business_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   businessName: varchar("business_name", { length: 255 }).default("ParkWash Pro"),
   businessLogo: text("business_logo"), // URL or base64
   businessAddress: text("business_address"),
@@ -73,6 +113,8 @@ export const businessSettings = pgTable("business_settings", {
 // Parking Settings (configurable rates and capacity)
 export const parkingSettings = pgTable("parking_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   // Base rates (in smallest currency unit - cents, centimes, etc.)
   hourlyRate: integer("hourly_rate").default(500),
   firstHourRate: integer("first_hour_rate"), // If set, first hour has different rate
@@ -101,6 +143,8 @@ export const parkingSettings = pgTable("parking_settings", {
 // Parking Zones
 export const parkingZones = pgTable("parking_zones", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   name: varchar("name", { length: 100 }).notNull(),
   code: varchar("code", { length: 20 }).notNull().unique(),
   capacity: integer("capacity").default(10),
@@ -114,6 +158,8 @@ export const parkingZones = pgTable("parking_zones", {
 // Parking Sessions
 export const parkingSessions = pgTable("parking_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
   plateNormalized: varchar("plate_normalized", { length: 50 }).notNull(),
   countryHint: countryHintEnum("country_hint").default("OTHER"),
@@ -136,6 +182,8 @@ export const parkingSessions = pgTable("parking_sessions", {
 // Frequent Parkers (VIP recognition)
 export const frequentParkers = pgTable("frequent_parkers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   plateNormalized: varchar("plate_normalized", { length: 50 }).notNull().unique(),
   plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
   customerName: varchar("customer_name", { length: 255 }),
@@ -154,6 +202,8 @@ export const frequentParkers = pgTable("frequent_parkers", {
 // Parking Reservations (pre-booking)
 export const parkingReservations = pgTable("parking_reservations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   plateDisplay: varchar("plate_display", { length: 50 }),
   plateNormalized: varchar("plate_normalized", { length: 50 }),
   customerName: varchar("customer_name", { length: 255 }).notNull(),
@@ -174,6 +224,8 @@ export const parkingReservations = pgTable("parking_reservations", {
 // Event Log (append-only audit trail)
 export const eventLogs = pgTable("event_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   type: varchar("type", { length: 50 }).notNull(),
   plateDisplay: varchar("plate_display", { length: 50 }),
   plateNormalized: varchar("plate_normalized", { length: 50 }),
@@ -188,6 +240,7 @@ export const eventLogs = pgTable("event_logs", {
 // Webhook Retry Queue
 export const webhookRetries = pgTable("webhook_retries", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
   targetUrl: text("target_url").notNull(),
   payloadJson: jsonb("payload_json").notNull(),
   attempts: integer("attempts").default(0),
@@ -199,6 +252,7 @@ export const webhookRetries = pgTable("webhook_retries", {
 // Users table (extends Replit auth users with credentials support)
 export const users = pgTable("users", {
   id: varchar("id").primaryKey(),
+  tenantId: varchar("tenant_id").notNull().default("default"),
   email: varchar("email", { length: 255 }),
   firstName: varchar("first_name", { length: 255 }),
   lastName: varchar("last_name", { length: 255 }),
@@ -213,6 +267,8 @@ export const users = pgTable("users", {
 // Customer job access tokens
 export const customerJobAccess = pgTable("customer_job_access", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   washJobId: varchar("wash_job_id").notNull(),
   token: varchar("token", { length: 64 }).notNull().unique(),
   customerName: varchar("customer_name", { length: 255 }),
@@ -225,18 +281,24 @@ export const customerJobAccess = pgTable("customer_job_access", {
 // Service checklist items
 export const serviceChecklistItems = pgTable("service_checklist_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   washJobId: varchar("wash_job_id").notNull(),
   label: varchar("label", { length: 255 }).notNull(),
   orderIndex: integer("order_index").default(0),
   expected: boolean("expected").default(true),
   confirmed: boolean("confirmed").default(false),
   confirmedAt: timestamp("confirmed_at"),
+  skipped: boolean("skipped").default(false),
+  skippedReason: varchar("skipped_reason", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Customer confirmations
 export const customerConfirmations = pgTable("customer_confirmations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   washJobId: varchar("wash_job_id").notNull(),
   accessToken: varchar("access_token", { length: 64 }).notNull(),
   rating: integer("rating"),
@@ -249,6 +311,8 @@ export const customerConfirmations = pgTable("customer_confirmations", {
 // Photo rules configuration (manager can set per step)
 export const photoRules = pgTable("photo_rules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   step: washStatusEnum("step").notNull().unique(),
   rule: photoRuleEnum("rule").notNull().default("optional"),
   updatedBy: varchar("updated_by"),
@@ -259,12 +323,15 @@ export const photoRules = pgTable("photo_rules", {
 // Service Packages (for carwash packages/bundles)
 export const servicePackages = pgTable("service_packages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   name: varchar("name", { length: 100 }).notNull(),
   code: varchar("code", { length: 20 }).notNull().unique(),
   description: text("description"),
   price: integer("price").notNull(), // in smallest currency unit
   durationMinutes: integer("duration_minutes").default(30), // estimated time
   services: jsonb("services").$type<string[]>().default([]), // list of included services
+  steps: jsonb("steps").$type<string[]>().default([]), // ordered wash steps for this package
   isActive: boolean("is_active").default(true),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),
@@ -274,6 +341,8 @@ export const servicePackages = pgTable("service_packages", {
 // Customer Memberships (for recurring customers)
 export const customerMemberships = pgTable("customer_memberships", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   customerName: varchar("customer_name", { length: 255 }).notNull(),
   customerPhone: varchar("customer_phone", { length: 50 }),
   customerEmail: varchar("customer_email", { length: 255 }),
@@ -296,6 +365,8 @@ export const customerMemberships = pgTable("customer_memberships", {
 // Loyalty Accounts (one per plate/customer)
 export const loyaltyAccounts = pgTable("loyalty_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   plateNormalized: varchar("plate_normalized", { length: 50 }).notNull().unique(),
   plateDisplay: varchar("plate_display", { length: 50 }).notNull(),
   customerName: varchar("customer_name", { length: 255 }),
@@ -314,6 +385,8 @@ export const loyaltyAccounts = pgTable("loyalty_accounts", {
 // Loyalty Transactions (append-only audit log)
 export const loyaltyTransactions = pgTable("loyalty_transactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   loyaltyAccountId: varchar("loyalty_account_id").notNull(),
   type: loyaltyTransactionTypeEnum("type").notNull(),
   points: integer("points").notNull(),
@@ -328,6 +401,8 @@ export const loyaltyTransactions = pgTable("loyalty_transactions", {
 // Parking Validations (for mall/store validations)
 export const parkingValidations = pgTable("parking_validations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   parkingSessionId: varchar("parking_session_id").notNull(),
   validatorName: varchar("validator_name", { length: 255 }).notNull(), // Store name
   validatorCode: varchar("validator_code", { length: 50 }).notNull(), // Store code
@@ -342,6 +417,8 @@ export const parkingValidations = pgTable("parking_validations", {
 // Customer Notifications (SMS/Email queue)
 export const customerNotifications = pgTable("customer_notifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   // Customer info
   customerName: varchar("customer_name", { length: 255 }),
   customerPhone: varchar("customer_phone", { length: 50 }),
@@ -375,6 +452,8 @@ export const customerNotifications = pgTable("customer_notifications", {
 // Notification Templates (for customizable messages)
 export const notificationTemplates = pgTable("notification_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   code: varchar("code", { length: 50 }).notNull().unique(), // wash_ready, wash_complete, etc.
   name: varchar("name", { length: 100 }).notNull(),
   channel: varchar("channel", { length: 20 }).notNull(), // sms, email
@@ -388,6 +467,8 @@ export const notificationTemplates = pgTable("notification_templates", {
 // Technician Time Logs (clock in/out, breaks, absences)
 export const technicianTimeLogs = pgTable("technician_time_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   technicianId: varchar("technician_id").notNull(),
   clockInAt: timestamp("clock_in_at").notNull(),
   clockOutAt: timestamp("clock_out_at"),
@@ -407,6 +488,8 @@ export const technicianTimeLogs = pgTable("technician_time_logs", {
 // Staff Alerts (running late, absent, etc. sent by technicians to management)
 export const staffAlerts = pgTable("staff_alerts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
   technicianId: varchar("technician_id").notNull(),
   type: varchar("type").notNull().$type<"running_late" | "absent" | "emergency" | "other">(),
   message: text("message"),
@@ -420,12 +503,124 @@ export const staffAlerts = pgTable("staff_alerts", {
 // Push Subscriptions (Web Push notifications)
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
   endpoint: text("endpoint").notNull().unique(),
   p256dh: text("p256dh").notNull(),
   auth: text("auth").notNull(),
   userId: varchar("user_id"),       // for staff (technician/manager/admin)
   customerToken: varchar("customer_token", { length: 64 }), // for customer tracking pages
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Suppliers
+export const suppliers = pgTable("suppliers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  name: varchar("name", { length: 255 }).notNull(),
+  contactName: varchar("contact_name", { length: 255 }),
+  phone: varchar("phone", { length: 50 }),
+  email: varchar("email", { length: 255 }),
+  address: text("address"),
+  notes: text("notes"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Inventory Items
+export const inventoryItems = pgTable("inventory_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  name: varchar("name", { length: 255 }).notNull(),
+  sku: varchar("sku", { length: 100 }),
+  category: inventoryCategoryEnum("category").notNull().default("other"),
+  unit: varchar("unit", { length: 50 }).notNull().default("units"),
+  costPerUnit: integer("cost_per_unit").default(0), // in cents
+  sellingPricePerUnit: integer("selling_price_per_unit").default(0), // in cents
+  currentStock: integer("current_stock").default(0), // in hundredths (e.g. 150 = 1.50 units)
+  minimumStock: integer("minimum_stock").default(0), // in hundredths
+  supplierId: varchar("supplier_id"),
+  consumptionMap: jsonb("consumption_map").$type<Record<string, number>>(), // ServiceCode → quantity per wash (hundredths)
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Inventory Consumption (tracks usage per wash job)
+export const inventoryConsumption = pgTable("inventory_consumption", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  inventoryItemId: varchar("inventory_item_id").notNull(),
+  washJobId: varchar("wash_job_id"),
+  quantity: integer("quantity").notNull(), // in hundredths
+  costAtTime: integer("cost_at_time").default(0), // cost per unit at time of consumption, in cents
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Purchase Orders
+export const purchaseOrders = pgTable("purchase_orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  supplierId: varchar("supplier_id").notNull(),
+  status: purchaseOrderStatusEnum("status").notNull().default("draft"),
+  items: jsonb("items").$type<Array<{
+    inventoryItemId: string;
+    itemName: string;
+    quantity: number;
+    unitCost: number;
+    totalCost: number;
+  }>>().default([]),
+  totalCost: integer("total_cost").default(0), // in cents
+  notes: text("notes"),
+  orderedAt: timestamp("ordered_at"),
+  receivedAt: timestamp("received_at"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Billing Snapshots (monthly usage per tenant)
+export const billingSnapshots = pgTable("billing_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  month: varchar("month", { length: 7 }).notNull(), // "2026-02"
+  washCount: integer("wash_count").default(0),
+  parkingSessionCount: integer("parking_session_count").default(0),
+  activeUserCount: integer("active_user_count").default(0),
+  branchCount: integer("branch_count").default(0),
+  storageUsedMb: integer("storage_used_mb").default(0),
+  estimatedAmount: integer("estimated_amount").default(0), // in cents
+  planAtTime: varchar("plan_at_time", { length: 20 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Feature Flags (global definitions)
+export const featureFlags = pgTable("feature_flags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 50 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  defaultEnabled: boolean("default_enabled").default(false),
+  enabledForPlans: jsonb("enabled_for_plans").$type<string[]>().default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Tenant Feature Overrides (per-tenant toggles)
+export const tenantFeatureOverrides = pgTable("tenant_feature_overrides", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  featureCode: varchar("feature_code", { length: 50 }).notNull(),
+  enabled: boolean("enabled").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Insert schemas
@@ -455,6 +650,15 @@ export const insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLo
 export const insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
 export const insertLoyaltyAccountSchema = createInsertSchema(loyaltyAccounts).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertLoyaltyTransactionSchema = createInsertSchema(loyaltyTransactions).omit({ id: true, createdAt: true });
+export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertInventoryConsumptionSchema = createInsertSchema(inventoryConsumption).omit({ id: true, createdAt: true });
+export const insertPurchaseOrderSchema = createInsertSchema(purchaseOrders).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertTenantSchema = createInsertSchema(tenants).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBillingSnapshotSchema = createInsertSchema(billingSnapshots).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertFeatureFlagSchema = createInsertSchema(featureFlags).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertTenantFeatureOverrideSchema = createInsertSchema(tenantFeatureOverrides).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -535,6 +739,33 @@ export type InsertLoyaltyAccount = z.infer<typeof insertLoyaltyAccountSchema>;
 export type LoyaltyTransaction = typeof loyaltyTransactions.$inferSelect;
 export type InsertLoyaltyTransaction = z.infer<typeof insertLoyaltyTransactionSchema>;
 
+export type Supplier = typeof suppliers.$inferSelect;
+export type InsertSupplier = z.infer<typeof insertSupplierSchema>;
+
+export type InventoryItem = typeof inventoryItems.$inferSelect;
+export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
+
+export type InventoryConsumption = typeof inventoryConsumption.$inferSelect;
+export type InsertInventoryConsumption = z.infer<typeof insertInventoryConsumptionSchema>;
+
+export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
+export type InsertPurchaseOrder = z.infer<typeof insertPurchaseOrderSchema>;
+
+export type Tenant = typeof tenants.$inferSelect;
+export type InsertTenant = z.infer<typeof insertTenantSchema>;
+
+export type Branch = typeof branches.$inferSelect;
+export type InsertBranch = z.infer<typeof insertBranchSchema>;
+
+export type BillingSnapshot = typeof billingSnapshots.$inferSelect;
+export type InsertBillingSnapshot = z.infer<typeof insertBillingSnapshotSchema>;
+
+export type FeatureFlag = typeof featureFlags.$inferSelect;
+export type InsertFeatureFlag = z.infer<typeof insertFeatureFlagSchema>;
+
+export type TenantFeatureOverride = typeof tenantFeatureOverrides.$inferSelect;
+export type InsertTenantFeatureOverride = z.infer<typeof insertTenantFeatureOverrideSchema>;
+
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
@@ -556,12 +787,150 @@ export const SERVICE_TYPE_CONFIG: Record<ServiceCode, {
   label: string;
   mode: "steps" | "timer";
   description: string;
+  durationMinutes: number;
+  steps: string[];
 }> = {
-  STANDARD: { label: "Standard Wash", mode: "steps", description: "Full car wash with all available steps" },
-  RIM_ONLY: { label: "Rim Only", mode: "timer", description: "Rim cleaning service" },
-  TYRE_SHINE_ONLY: { label: "Tyre Shine Only", mode: "timer", description: "Tyre shine service" },
-  HEADLIGHT_RESTORATION: { label: "Headlight Restoration", mode: "timer", description: "Headlight cleaning & restoration" },
-  FULL_VALET: { label: "Full Valet", mode: "timer", description: "Full valet — time managed on-site" },
+  STANDARD: {
+    label: "Standard Wash",
+    mode: "steps",
+    description: "Full car wash with all available steps",
+    durationMinutes: 30,
+    steps: ["Pre-rinse", "Soap wash", "High-pressure rinse", "Hand dry", "Interior vacuum", "Tyre shine", "Window cleaning"],
+  },
+  RIM_ONLY: {
+    label: "Rim Only",
+    mode: "steps",
+    description: "Rim cleaning service",
+    durationMinutes: 15,
+    steps: ["Wheel spray", "Brush agitation", "Rinse", "Rim polish"],
+  },
+  TYRE_SHINE_ONLY: {
+    label: "Tyre Shine Only",
+    mode: "steps",
+    description: "Tyre shine service",
+    durationMinutes: 10,
+    steps: ["Tyre cleaning", "Tyre dressing", "Shine application"],
+  },
+  HEADLIGHT_RESTORATION: {
+    label: "Headlight Restoration",
+    mode: "steps",
+    description: "Headlight cleaning & restoration",
+    durationMinutes: 20,
+    steps: ["Masking tape surround", "Wet sanding", "Compound polish", "UV sealant application"],
+  },
+  FULL_VALET: {
+    label: "Full Valet",
+    mode: "steps",
+    description: "Full valet — complete interior & exterior detail",
+    durationMinutes: 60,
+    steps: ["Exterior pre-rinse", "Foam wash", "High-pressure rinse", "Clay bar treatment", "Hand dry", "Interior vacuum", "Dashboard & trim clean", "Seat shampooing", "Liquid wax", "Tyre shine", "Window cleaning", "Final inspection"],
+  },
+};
+
+// Vehicle sizes for pricing tiers
+export const VEHICLE_SIZES = ["small", "medium", "large"] as const;
+export type VehicleSize = typeof VEHICLE_SIZES[number];
+
+// Service tiers
+export const SERVICE_TIERS = ["BASIC", "STANDARD", "PREMIUM", "DELUXE", "EXECUTIVE"] as const;
+export type ServiceTier = typeof SERVICE_TIERS[number];
+
+// Named service packages (matched to CRM services)
+export interface ServicePackageConfig {
+  label: string;
+  description: string;
+  tier: ServiceTier;
+  durationMinutes: number;
+  steps: string[];
+  pricing: Record<VehicleSize, number>; // price in ZAR (whole numbers)
+  serviceCode: ServiceCode; // maps to legacy service code for loyalty/priority
+}
+
+export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
+  VAMOS: {
+    label: "Vamos",
+    description: "Quick vacuum service for a clean interior. Perfect for regular maintenance between washes.",
+    tier: "BASIC",
+    durationMinutes: 15,
+    serviceCode: "STANDARD",
+    pricing: { small: 80, medium: 100, large: 120 },
+    steps: ["Interior vacuum", "Floor mats cleaning", "Seat vacuuming", "Trunk vacuuming"],
+  },
+  VAGABUNDO: {
+    label: "Vagabundo",
+    description: "Exterior wash only service. Get your car sparkling clean on the outside.",
+    tier: "BASIC",
+    durationMinutes: 20,
+    serviceCode: "STANDARD",
+    pricing: { small: 120, medium: 140, large: 160 },
+    steps: ["Pre-rinse", "Soap application", "High-pressure wash", "Spot-free rinse", "Hand dry", "Tire shine"],
+  },
+  LE_RACONTEUR: {
+    label: "Le Raconteur",
+    description: "Complete wash and vacuum service. The perfect combination for a clean car inside and out.",
+    tier: "STANDARD",
+    durationMinutes: 30,
+    serviceCode: "STANDARD",
+    pricing: { small: 150, medium: 170, large: 200 },
+    steps: ["Exterior wash", "Pre-rinse", "Soap application", "High-pressure wash", "Hand dry", "Interior vacuum", "Tire shine"],
+  },
+  LA_OBRA: {
+    label: "La Obra",
+    description: "Wash, vacuum and liquid express wax. Enhanced protection and shine for your vehicle.",
+    tier: "PREMIUM",
+    durationMinutes: 40,
+    serviceCode: "FULL_VALET",
+    pricing: { small: 180, medium: 200, large: 230 },
+    steps: ["Complete exterior wash", "Interior vacuum", "Liquid express wax", "Enhanced shine", "Paint protection", "Tire shine", "Window cleaning"],
+  },
+  MAMACITA: {
+    label: "Mamacita",
+    description: "Wash, vacuum and high definition wax. Premium protection with superior shine and durability.",
+    tier: "PREMIUM",
+    durationMinutes: 50,
+    serviceCode: "FULL_VALET",
+    pricing: { small: 250, medium: 280, large: 300 },
+    steps: ["Complete exterior wash", "Interior vacuum", "High definition wax", "Superior paint protection", "Enhanced gloss finish", "Tire shine treatment", "Window cleaning inside & out", "Dashboard wipe"],
+  },
+  THE_JL_SPECIAL: {
+    label: "The JL Special",
+    description: "Wash, vacuum plus liquid clay treatment and high definition wax. Professional detailing for exceptional results.",
+    tier: "DELUXE",
+    durationMinutes: 75,
+    serviceCode: "FULL_VALET",
+    pricing: { small: 450, medium: 470, large: 500 },
+    steps: ["Complete exterior wash", "Interior vacuum", "Liquid clay treatment", "High definition wax", "Professional paint correction", "Enhanced gloss finish", "Tire shine treatment", "Window cleaning inside & out", "Dashboard & trim detail"],
+  },
+  THE_GUNNER: {
+    label: "The Gunner",
+    description: "Wash, vacuum, and fabric/leather interior deep clean. Complete interior and exterior transformation.",
+    tier: "DELUXE",
+    durationMinutes: 90,
+    serviceCode: "FULL_VALET",
+    pricing: { small: 650, medium: 700, large: 800 },
+    steps: ["Complete exterior wash", "Interior deep vacuum", "Fabric/leather deep clean", "Stain removal treatment", "Interior sanitization", "Dashboard & trim restoration", "High definition wax", "Tire shine treatment", "Window cleaning inside & out"],
+  },
+  THE_BIG_KAHUNA: {
+    label: "The Big Kahuna",
+    description: "Full valet service. The ultimate complete car care experience with attention to every detail.",
+    tier: "EXECUTIVE",
+    durationMinutes: 150,
+    serviceCode: "FULL_VALET",
+    pricing: { small: 1000, medium: 1200, large: 1400 },
+    steps: ["Complete exterior wash", "Clay bar treatment", "Machine polishing", "Paint correction", "Ceramic sealant application", "Interior deep vacuum", "Fabric/leather deep clean", "Dashboard & trim restoration", "Engine bay cleaning", "Tire shine treatment", "Window cleaning inside & out", "Final inspection"],
+  },
+};
+
+// Service package codes for validation
+export const SERVICE_PACKAGE_CODES = Object.keys(SERVICE_PACKAGES) as string[];
+
+// Tier colors for UI display
+export const SERVICE_TIER_COLORS: Record<ServiceTier, string> = {
+  BASIC: "bg-slate-500",
+  STANDARD: "bg-blue-500",
+  PREMIUM: "bg-purple-500",
+  DELUXE: "bg-amber-500",
+  EXECUTIVE: "bg-rose-500",
 };
 
 // Loyalty points earned per service type
@@ -597,6 +966,29 @@ export type MembershipType = typeof MEMBERSHIP_TYPES[number];
 // Notification channels
 export const NOTIFICATION_CHANNELS = ["sms", "email", "whatsapp", "both"] as const;
 export type NotificationChannel = typeof NOTIFICATION_CHANNELS[number];
+
+// Inventory categories (car-wash optimized)
+export const INVENTORY_CATEGORIES = [
+  "chemicals", "cloths_towels", "wax_polish", "brushes_sponges",
+  "air_fresheners", "interior_care", "tire_wheel_care",
+  "sealants_coatings", "safety_gear", "equipment", "packaging", "other",
+] as const;
+export type InventoryCategory = typeof INVENTORY_CATEGORIES[number];
+
+// Inventory units of measurement
+export const INVENTORY_UNITS = [
+  "liters", "ml", "units", "kg", "grams",
+  "rolls", "packs", "bottles", "pairs", "sheets", "sets",
+] as const;
+export type InventoryUnit = typeof INVENTORY_UNITS[number];
+
+// Purchase order statuses
+export const PURCHASE_ORDER_STATUSES = ["draft", "submitted", "received", "cancelled"] as const;
+export type PurchaseOrderStatus = typeof PURCHASE_ORDER_STATUSES[number];
+
+// Tenant plans
+export const TENANT_PLANS = ["free", "basic", "pro", "enterprise"] as const;
+export type TenantPlan = typeof TENANT_PLANS[number];
 
 // Notification types
 export const NOTIFICATION_TYPES = [

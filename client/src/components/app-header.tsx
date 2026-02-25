@@ -14,7 +14,8 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import {
   Home, LogOut, ClipboardList, BarChart3,
-  Info, ChevronDown, Users, HelpCircle
+  Info, ChevronDown, Users, HelpCircle,
+  Building2, CreditCard, Shield, Activity
 } from "lucide-react";
 import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
 
@@ -75,12 +76,41 @@ export function AppHeader({ title }: AppHeaderProps) {
               </Link>
             )}
             {isAdmin && (
-              <Link href="/admin/users">
-                <Button variant="ghost" size="sm" data-testid="nav-admin">
-                  <Users className="h-4 w-4 mr-2" />
-                  Admin
-                </Button>
-              </Link>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" data-testid="nav-admin">
+                    <Shield className="h-4 w-4 mr-2" />
+                    Admin
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <Link href="/admin/users">
+                    <DropdownMenuItem className="cursor-pointer">
+                      <Users className="h-4 w-4 mr-2" />
+                      Users
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/tenants">
+                    <DropdownMenuItem className="cursor-pointer">
+                      <Building2 className="h-4 w-4 mr-2" />
+                      Tenants
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/billing">
+                    <DropdownMenuItem className="cursor-pointer">
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Billing
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/analytics">
+                    <DropdownMenuItem className="cursor-pointer">
+                      <Activity className="h-4 w-4 mr-2" />
+                      Analytics
+                    </DropdownMenuItem>
+                  </Link>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
 
@@ -128,12 +158,32 @@ export function AppHeader({ title }: AppHeaderProps) {
                 </Link>
               )}
               {isAdmin && (
-                <Link href="/admin/users">
-                  <DropdownMenuItem className="cursor-pointer sm:hidden" data-testid="menu-admin">
-                    <Users className="h-4 w-4 mr-2" />
-                    User Management
-                  </DropdownMenuItem>
-                </Link>
+                <>
+                  <Link href="/admin/users">
+                    <DropdownMenuItem className="cursor-pointer sm:hidden" data-testid="menu-admin">
+                      <Users className="h-4 w-4 mr-2" />
+                      User Management
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/tenants">
+                    <DropdownMenuItem className="cursor-pointer sm:hidden">
+                      <Building2 className="h-4 w-4 mr-2" />
+                      Tenants
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/billing">
+                    <DropdownMenuItem className="cursor-pointer sm:hidden">
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Billing
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/analytics">
+                    <DropdownMenuItem className="cursor-pointer sm:hidden">
+                      <Activity className="h-4 w-4 mr-2" />
+                      Analytics
+                    </DropdownMenuItem>
+                  </Link>
+                </>
               )}
               <DropdownMenuSeparator className="sm:hidden" />
               

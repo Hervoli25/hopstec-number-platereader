@@ -56,6 +56,28 @@ export function requireRole(...allowedRoles: UserRoleType[]): RequestHandler {
   };
 }
 
+// Middleware: requires super admin access (must be called after requireRole or isAuthenticated)
+export function requireSuperAdminMiddleware(): RequestHandler {
+  return async (req: any, res, next) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    let userEmail: string | null = null;
+    if (req.user?.authType === "credentials") {
+      userEmail = req.user.email;
+    } else {
+      userEmail = req.user?.claims?.email || null;
+    }
+
+    if (!isSuperAdmin(userEmail)) {
+      return res.status(403).json({ message: "Super admin access required" });
+    }
+
+    req.user.isSuperAdmin = true;
+    next();
+  };
+}
+
 // Auto-assign role for new users (defaults to technician)
 export async function ensureUserRole(userId: string): Promise<void> {
   const existing = await storage.getUserRole(userId);

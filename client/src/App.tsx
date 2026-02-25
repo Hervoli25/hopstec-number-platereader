@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 
 import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
 import { IOSInstallBanner } from "@/components/ios-install-banner";
+import { OfflineIndicator } from "@/components/offline-indicator";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import Login from "@/pages/login";
@@ -24,7 +25,14 @@ import ManagerAnalytics from "@/pages/manager-analytics";
 import ManagerAudit from "@/pages/manager-audit";
 import ManagerBookings from "@/pages/manager-bookings";
 import ManagerRoster from "@/pages/manager-roster";
+import ManagerInventory from "@/pages/manager-inventory";
+import ManagerBranding from "@/pages/manager-branding";
+import ManagerBranches from "@/pages/manager-branches";
 import AdminUsers from "@/pages/admin-users";
+import AdminTenants from "@/pages/admin-tenants";
+import AdminBilling from "@/pages/admin-billing";
+import AdminAnalytics from "@/pages/admin-analytics";
+import TenantBilling from "@/pages/tenant-billing";
 import CustomerJob from "@/pages/customer-job";
 import About from "@/pages/about";
 import ParkingDashboard from "@/pages/parking-dashboard";
@@ -123,8 +131,15 @@ function AppRouter() {
         <Route path="/manager/audit" component={ManagerAudit} />
         <Route path="/manager/bookings" component={ManagerBookings} />
         <Route path="/manager/roster" component={ManagerRoster} />
+        <Route path="/manager/inventory" component={ManagerInventory} />
+        <Route path="/manager/branding" component={ManagerBranding} />
+        <Route path="/manager/branches" component={ManagerBranches} />
+        <Route path="/manager/billing" component={TenantBilling} />
         <Route path="/manager/settings" component={BusinessSettings} />
         <Route path="/admin/users" component={AdminUsers} />
+        <Route path="/admin/tenants" component={AdminTenants} />
+        <Route path="/admin/billing" component={AdminBilling} />
+        <Route path="/admin/analytics" component={AdminAnalytics} />
         <Route component={NotFound} />
       </Switch>
     </ProtectedRoute>
@@ -137,6 +152,7 @@ function App() {
       <ThemeProvider>
         <TooltipProvider>
           <Toaster />
+          <OfflineIndicator />
           <AppRouter />
           <PWAInstallPrompt />
           <IOSInstallBanner />

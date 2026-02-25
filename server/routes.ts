@@ -5,7 +5,7 @@ import path from "path";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { normalizePlate, displayPlate } from "./lib/plate-utils";
-import { requireRole, ensureUserRole, isSuperAdmin } from "./lib/roles";
+import { requireRole, ensureUserRole, isSuperAdmin, requireSuperAdminMiddleware } from "./lib/roles";
 import { savePhoto } from "./lib/photo-storage";
 import {
   queueBookingNotification,
@@ -15,9 +15,12 @@ import {
   type BookingNotificationType,
 } from "./lib/notification-service";
 import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/credentials-auth";
+import { extractTenantContext } from "./lib/tenant-context";
+import { getEnabledFeatures, seedFeatureFlags, requireFeature } from "./lib/feature-flags";
+import { generateBillingSnapshot, generateAllSnapshots } from "./lib/billing-snapshot";
 import { z } from "zod";
-import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE } from "@shared/schema";
-import type { ServiceCode, WashStatus } from "@shared/schema";
+import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE, SERVICE_PACKAGES, VEHICLE_SIZES } from "@shared/schema";
+import type { ServiceCode, WashStatus, VehicleSize } from "@shared/schema";
 import {
   getUpcomingBookings,
   getTodayBookings,
@@ -55,6 +58,8 @@ import {
 import { startNotificationProcessor } from "./lib/notification-processor";
 import { getVapidPublicKey, sendPushToCustomer, sendPushToAllManagers } from "./lib/web-push-service";
 import { calculateJobPriority } from "./lib/priority-calculator";
+import { fireWebhook } from "./lib/webhook-service";
+import { startWebhookProcessor } from "./lib/webhook-processor";
 import { getQueuePosition } from "./lib/eta-calculator";
 
 // SSE clients for real-time updates
@@ -96,6 +101,9 @@ const createWashJobSchema = z.object({
   countryHint: z.enum(COUNTRY_HINTS).optional().default("OTHER"),
   photo: z.string().optional(),
   serviceCode: z.enum(SERVICE_CODES).optional().default("STANDARD"),
+  servicePackageCode: z.string().optional(), // Named package (e.g. "VAMOS", "LA_OBRA")
+  vehicleSize: z.enum(VEHICLE_SIZES).optional(), // small/medium/large for pricing
+  customSteps: z.array(z.string()).optional(), // Custom step list override
 });
 
 const updateStatusSchema = z.object({
@@ -121,6 +129,12 @@ export async function registerRoutes(
 
   // Start notification delivery processor (Twilio SMS/WhatsApp)
   startNotificationProcessor();
+
+  // Start webhook retry processor (CRM webhook exponential backoff)
+  startWebhookProcessor();
+
+  // Multi-tenancy context middleware
+  app.use("/api", extractTenantContext());
 
   // Serve uploaded files
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
@@ -316,7 +330,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: result.error.errors[0].message });
       }
 
-      const { plateDisplay, countryHint, photo, serviceCode } = result.data;
+      const { plateDisplay, countryHint, photo, serviceCode, servicePackageCode, vehicleSize, customSteps } = result.data;
       const userId = req.user?.claims?.sub;
 
       // Save photo if provided
@@ -330,13 +344,33 @@ export async function registerRoutes(
         }
       }
 
+      // Resolve service steps: customSteps > named package > service type config
+      let resolvedSteps: string[] = [];
+      let resolvedServiceCode = serviceCode || "STANDARD";
+      let resolvedPackageName: string | null = null;
+      let resolvedPrice: number | null = null;
+      if (customSteps && customSteps.length > 0) {
+        resolvedSteps = customSteps;
+      } else if (servicePackageCode && SERVICE_PACKAGES[servicePackageCode]) {
+        const pkg = SERVICE_PACKAGES[servicePackageCode];
+        resolvedSteps = pkg.steps;
+        resolvedServiceCode = pkg.serviceCode;
+        resolvedPackageName = pkg.label;
+        if (vehicleSize && pkg.pricing[vehicleSize]) {
+          resolvedPrice = pkg.pricing[vehicleSize];
+        }
+      } else {
+        const cfg = SERVICE_TYPE_CONFIG[resolvedServiceCode as ServiceCode];
+        resolvedSteps = cfg?.steps || [];
+      }
+
       const job = await storage.createWashJob({
         plateDisplay: displayPlate(plateDisplay),
         plateNormalized: normalizePlate(plateDisplay),
         countryHint,
         technicianId: userId,
         status: "received",
-        serviceCode: serviceCode || "STANDARD",
+        serviceCode: resolvedServiceCode,
         startAt: new Date(),
       });
 
@@ -347,8 +381,21 @@ export async function registerRoutes(
         token,
         customerName: null,
         customerEmail: null,
-        serviceCode: null,
+        serviceCode: resolvedPackageName || servicePackageCode || resolvedServiceCode,
       });
+
+      // Auto-populate service checklist items based on resolved steps
+      if (resolvedSteps.length > 0) {
+        await storage.createServiceChecklistItems(
+          resolvedSteps.map((label, index) => ({
+            washJobId: job.id,
+            label,
+            orderIndex: index,
+            expected: true,
+            confirmed: false,
+          }))
+        );
+      }
 
       // Save initial photo if provided
       if (photoUrl) {
@@ -373,6 +420,9 @@ export async function registerRoutes(
       // Broadcast to SSE clients
       broadcastEvent({ type: "wash_created", job });
 
+      // Fire CRM webhook (non-blocking)
+      fireWebhook("wash_created", { jobId: job.id, plate: job.plateDisplay, plateNormalized: job.plateNormalized, serviceCode: job.serviceCode, status: job.status }).catch(() => {});
+
       // Push notification to managers about new job
       try {
         await sendPushToAllManagers({
@@ -383,12 +433,15 @@ export async function registerRoutes(
         });
       } catch (_pushErr) { /* non-blocking */ }
 
-      // Return job with customer tracking URL
+      // Return job with customer tracking URL and service info
       const baseUrl = getBaseUrl(req);
       res.json({
         ...job,
         customerUrl: `${baseUrl}/customer/job/${token}`,
         customerToken: token,
+        packageName: resolvedPackageName,
+        vehicleSize: vehicleSize || null,
+        price: resolvedPrice,
       });
     } catch (error) {
       console.error("Error creating wash job:", error);
@@ -421,7 +474,9 @@ export async function registerRoutes(
       if (!job) {
         return res.status(404).json({ message: "Job not found" });
       }
-      res.json(job);
+      // Include checklist items in the response
+      const checklist = await storage.getServiceChecklistItems(job.id);
+      res.json({ ...job, checklist });
     } catch (error) {
       console.error("Error fetching wash job:", error);
       res.status(500).json({ message: "Failed to fetch wash job" });
@@ -485,6 +540,9 @@ export async function registerRoutes(
 
       // Broadcast update
       broadcastEvent({ type: "wash_status_update", job });
+
+      // Fire CRM webhook (non-blocking)
+      fireWebhook("wash_status_update", { jobId: job.id, plate: job.plateDisplay, plateNormalized: job.plateNormalized, status, serviceCode: job.serviceCode }).catch(() => {});
 
       // === AUTO-CREDIT LOYALTY POINTS ON COMPLETION (CRM) ===
       if (status === "complete" && job) {
@@ -589,6 +647,14 @@ export async function registerRoutes(
             });
           }
         } catch (_pushErr) { /* non-blocking */ }
+
+        // === AUTO-CONSUME INVENTORY ON WASH COMPLETION ===
+        try {
+          const svcCode = (job.serviceCode || "STANDARD") as string;
+          await storage.autoConsumeForWashJob(job.id, svcCode, userId);
+        } catch (_invErr) {
+          console.error("Inventory auto-consumption failed (non-blocking):", _invErr);
+        }
       }
 
       res.json(job);
@@ -811,8 +877,116 @@ export async function registerRoutes(
   });
 
   // =====================
+  // WASH JOB CHECKLIST
+  // =====================
+
+  // Get checklist items for a wash job
+  app.get("/api/wash-jobs/:id/checklist", isAuthenticated, async (req: any, res) => {
+    try {
+      const items = await storage.getServiceChecklistItems(req.params.id);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching checklist:", error);
+      res.status(500).json({ message: "Failed to fetch checklist" });
+    }
+  });
+
+  // Confirm/unconfirm a checklist item (technician marks step done)
+  app.patch("/api/wash-jobs/:id/checklist/:itemId/confirm", isAuthenticated, async (req: any, res) => {
+    try {
+      const { confirmed } = req.body;
+      const item = await storage.updateChecklistItemConfirmedForJob(
+        req.params.itemId,
+        req.params.id,
+        confirmed !== false
+      );
+      if (!item) {
+        return res.status(404).json({ message: "Checklist item not found" });
+      }
+      // Broadcast update to SSE clients
+      const job = await storage.getWashJob(req.params.id);
+      if (job) broadcastEvent({ type: "checklist_updated", jobId: job.id, item });
+      res.json(item);
+    } catch (error) {
+      console.error("Error confirming checklist item:", error);
+      res.status(500).json({ message: "Failed to confirm checklist item" });
+    }
+  });
+
+  // Skip a checklist item with optional reason
+  app.patch("/api/wash-jobs/:id/checklist/:itemId/skip", isAuthenticated, async (req: any, res) => {
+    try {
+      const { reason } = req.body;
+      const item = await storage.skipChecklistItem(
+        req.params.itemId,
+        req.params.id,
+        reason
+      );
+      if (!item) {
+        return res.status(404).json({ message: "Checklist item not found" });
+      }
+      const job = await storage.getWashJob(req.params.id);
+      if (job) broadcastEvent({ type: "checklist_updated", jobId: job.id, item });
+      res.json(item);
+    } catch (error) {
+      console.error("Error skipping checklist item:", error);
+      res.status(500).json({ message: "Failed to skip checklist item" });
+    }
+  });
+
+  // Get available service packages (for service selection UI)
+  app.get("/api/service-packages", isAuthenticated, async (req: any, res) => {
+    try {
+      // Return both custom tenant packages from DB and built-in packages
+      const dbPackages = await storage.getServicePackages(true);
+      const builtIn = Object.entries(SERVICE_PACKAGES).map(([code, pkg]) => ({
+        code,
+        name: pkg.label,
+        description: pkg.description,
+        tier: pkg.tier,
+        durationMinutes: pkg.durationMinutes,
+        steps: pkg.steps,
+        pricing: pkg.pricing,
+        serviceCode: pkg.serviceCode,
+        isBuiltIn: true,
+      }));
+      res.json({ packages: dbPackages, builtInPackages: builtIn });
+    } catch (error) {
+      console.error("Error fetching service packages:", error);
+      res.status(500).json({ message: "Failed to fetch service packages" });
+    }
+  });
+
+  // Get steps for a specific service code (for preview)
+  app.get("/api/service-steps/:code", async (req, res) => {
+    const { code } = req.params;
+    // Check named packages first
+    if (SERVICE_PACKAGES[code]) {
+      return res.json({
+        code,
+        label: SERVICE_PACKAGES[code].label,
+        steps: SERVICE_PACKAGES[code].steps,
+        durationMinutes: SERVICE_PACKAGES[code].durationMinutes,
+      });
+    }
+    // Check service type config
+    const cfg = SERVICE_TYPE_CONFIG[code as ServiceCode];
+    if (cfg) {
+      return res.json({
+        code,
+        label: cfg.label,
+        steps: cfg.steps,
+        durationMinutes: cfg.durationMinutes,
+      });
+    }
+    res.status(404).json({ message: "Service not found" });
+  });
+
+  // =====================
   // PARKING
   // =====================
+  // Feature gate: all parking endpoints require "parking" feature
+  app.use("/api/parking", requireFeature("parking"));
 
   // Parking entry
   app.post("/api/parking/entry", isAuthenticated, async (req: any, res) => {
@@ -868,6 +1042,9 @@ export async function registerRoutes(
 
       broadcastEvent({ type: "parking_entry", session });
 
+      // Fire CRM webhook (non-blocking)
+      fireWebhook("parking_entry", { sessionId: session.id, plate: session.plateDisplay, plateNormalized: session.plateNormalized }).catch(() => {});
+
       res.json(session);
     } catch (error) {
       console.error("Error creating parking entry:", error);
@@ -914,6 +1091,9 @@ export async function registerRoutes(
       const feeResult = calculateParkingFee(session, settings || null, parker, businessSettings, validations);
 
       const closedSession = await storage.closeParkingSession(session.id, exitPhotoUrl, feeResult.finalFee);
+      if (!closedSession) {
+        return res.status(500).json({ message: "Failed to close parking session" });
+      }
 
       // Update frequent parker stats
       if (parker) {
@@ -936,6 +1116,9 @@ export async function registerRoutes(
       });
 
       broadcastEvent({ type: "parking_exit", session: closedSession });
+
+      // Fire CRM webhook (non-blocking)
+      fireWebhook("parking_exit", { sessionId: closedSession.id, plate: closedSession.plateDisplay, plateNormalized: closedSession.plateNormalized, fee: feeResult.finalFee, durationMinutes: feeResult.durationMinutes }).catch(() => {});
 
       res.json({
         ...closedSession,
@@ -1042,6 +1225,8 @@ export async function registerRoutes(
         // Return defaults
         settings = {
           id: "",
+          tenantId: "default",
+          branchId: null,
           hourlyRate: 500,
           firstHourRate: null,
           dailyMaxRate: 3000,
@@ -1116,6 +1301,8 @@ export async function registerRoutes(
         // Return defaults
         settings = {
           id: "",
+          tenantId: "default",
+          branchId: null,
           businessName: "ParkWash Pro",
           businessLogo: null,
           businessAddress: null,
@@ -2837,6 +3024,7 @@ export async function registerRoutes(
     customerName: z.string().optional(),
     customerEmail: z.string().email().optional(),
     serviceCode: z.string().optional(),
+    servicePackageCode: z.string().optional(), // Named package (e.g. "VAMOS", "LA_OBRA")
     serviceChecklist: z.array(z.string()).optional(),
   });
 
@@ -2853,7 +3041,20 @@ export async function registerRoutes(
         return res.status(400).json({ message: result.error.errors[0].message });
       }
 
-      const { plateDisplay, customerName, customerEmail, serviceCode, serviceChecklist } = result.data;
+      const { plateDisplay, customerName, customerEmail, serviceCode, servicePackageCode, serviceChecklist } = result.data;
+
+      // Resolve steps: explicit checklist > named package > service type config > fallback
+      let resolvedSteps: string[] = [];
+      let resolvedServiceCode = serviceCode || "STANDARD";
+      if (serviceChecklist && serviceChecklist.length > 0) {
+        resolvedSteps = serviceChecklist;
+      } else if (servicePackageCode && SERVICE_PACKAGES[servicePackageCode]) {
+        const pkg = SERVICE_PACKAGES[servicePackageCode];
+        resolvedSteps = pkg.steps;
+        resolvedServiceCode = pkg.serviceCode;
+      } else if (resolvedServiceCode && SERVICE_TYPE_CONFIG[resolvedServiceCode as ServiceCode]) {
+        resolvedSteps = SERVICE_TYPE_CONFIG[resolvedServiceCode as ServiceCode].steps;
+      }
 
       // Create wash job
       const job = await storage.createWashJob({
@@ -2862,6 +3063,7 @@ export async function registerRoutes(
         countryHint: "OTHER",
         technicianId: "integration",
         status: "received",
+        serviceCode: resolvedServiceCode,
         startAt: new Date(),
       });
 
@@ -2872,11 +3074,11 @@ export async function registerRoutes(
         token,
         customerName: customerName || null,
         customerEmail: customerEmail || null,
-        serviceCode: serviceCode || null,
+        serviceCode: servicePackageCode || resolvedServiceCode || null,
       });
 
-      // Create service checklist items
-      const checklistItems = serviceChecklist || WASH_STATUS_ORDER.filter(s => s !== "received");
+      // Create service checklist items from resolved steps
+      const checklistItems = resolvedSteps.length > 0 ? resolvedSteps : WASH_STATUS_ORDER.filter(s => s !== "received");
       await storage.createServiceChecklistItems(
         checklistItems.map((label, index) => ({
           washJobId: job.id,
@@ -2899,6 +3101,9 @@ export async function registerRoutes(
       // Broadcast update
       broadcastEvent({ type: "wash_created", job });
 
+      // Fire CRM webhook (non-blocking)
+      fireWebhook("wash_created", { jobId: job.id, plate: job.plateDisplay, plateNormalized: job.plateNormalized, serviceCode: job.serviceCode, status: job.status, source: "integration" }).catch(() => {});
+
       const baseUrl = getBaseUrl(req);
       res.json({
         job,
@@ -2912,17 +3117,642 @@ export async function registerRoutes(
   });
 
   // =====================
-  // OCR (Placeholder)
+  // TENANTS & BRANCHES (Multi-tenancy)
+  // =====================
+
+  // --- Tenant Branding (public for login page) ---
+  app.get("/api/public/branding/:slug", async (req, res) => {
+    try {
+      const tenant = await storage.getTenantBySlug(req.params.slug as string);
+      if (!tenant || !tenant.isActive) return res.status(404).json({ message: "Tenant not found" });
+      res.json({
+        name: tenant.name,
+        primaryColor: tenant.primaryColor,
+        secondaryColor: tenant.secondaryColor,
+        logoUrl: tenant.logoUrl,
+        faviconUrl: tenant.faviconUrl,
+      });
+    } catch (error) {
+      console.error("Error fetching public branding:", error);
+      res.status(500).json({ message: "Failed to fetch branding" });
+    }
+  });
+
+  // --- Tenant Branding (authenticated) ---
+  app.get("/api/tenant/branding", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const tenant = await storage.getTenant(tenantId);
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+      res.json(tenant);
+    } catch (error) {
+      console.error("Error fetching tenant branding:", error);
+      res.status(500).json({ message: "Failed to fetch branding" });
+    }
+  });
+
+  app.put("/api/tenant/branding", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const { primaryColor, secondaryColor, logoUrl, faviconUrl, customDomain } = req.body;
+      const tenant = await storage.updateTenant(tenantId, { primaryColor, secondaryColor, logoUrl, faviconUrl, customDomain });
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+      res.json(tenant);
+    } catch (error) {
+      console.error("Error updating tenant branding:", error);
+      res.status(500).json({ message: "Failed to update branding" });
+    }
+  });
+
+  // --- Branches ---
+  app.get("/api/branches", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const result = await storage.getBranches(tenantId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching branches:", error);
+      res.status(500).json({ message: "Failed to fetch branches" });
+    }
+  });
+
+  app.post("/api/branches", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const branch = await storage.createBranch({ ...req.body, tenantId });
+      res.status(201).json(branch);
+    } catch (error) {
+      console.error("Error creating branch:", error);
+      res.status(500).json({ message: "Failed to create branch" });
+    }
+  });
+
+  app.get("/api/branches/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const branch = await storage.getBranch(req.params.id as string);
+      if (!branch) return res.status(404).json({ message: "Branch not found" });
+      res.json(branch);
+    } catch (error) {
+      console.error("Error fetching branch:", error);
+      res.status(500).json({ message: "Failed to fetch branch" });
+    }
+  });
+
+  app.patch("/api/branches/:id", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const branch = await storage.updateBranch(req.params.id as string, req.body);
+      if (!branch) return res.status(404).json({ message: "Branch not found" });
+      res.json(branch);
+    } catch (error) {
+      console.error("Error updating branch:", error);
+      res.status(500).json({ message: "Failed to update branch" });
+    }
+  });
+
+  // --- Admin Tenant Management (Super Admin) ---
+  app.get("/api/admin/tenants", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const result = await storage.getTenants();
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching tenants:", error);
+      res.status(500).json({ message: "Failed to fetch tenants" });
+    }
+  });
+
+  app.post("/api/admin/tenants", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { name, slug, plan } = req.body;
+      if (!name || !slug) return res.status(400).json({ message: "name and slug are required" });
+      // Check slug uniqueness
+      const existing = await storage.getTenantBySlug(slug);
+      if (existing) return res.status(409).json({ message: "Slug already in use" });
+      const tenant = await storage.createTenant({ name, slug, plan: plan || "free" });
+      // Create a default branch for the new tenant
+      const branch = await storage.createBranch({ tenantId: tenant.id, name: "Main Branch" });
+      res.status(201).json({ tenant, branch });
+    } catch (error) {
+      console.error("Error creating tenant:", error);
+      res.status(500).json({ message: "Failed to create tenant" });
+    }
+  });
+
+  app.get("/api/admin/tenants/:id", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const tenant = await storage.getTenant(req.params.id as string);
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+      const tenantBranches = await storage.getBranches(tenant.id);
+      res.json({ ...tenant, branches: tenantBranches });
+    } catch (error) {
+      console.error("Error fetching tenant:", error);
+      res.status(500).json({ message: "Failed to fetch tenant" });
+    }
+  });
+
+  app.patch("/api/admin/tenants/:id", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const tenant = await storage.updateTenant(req.params.id as string, req.body);
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+      res.json(tenant);
+    } catch (error) {
+      console.error("Error updating tenant:", error);
+      res.status(500).json({ message: "Failed to update tenant" });
+    }
+  });
+
+  app.delete("/api/admin/tenants/:id", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      // Soft delete: set isActive = false
+      const tenant = await storage.updateTenant(req.params.id as string, { isActive: false });
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+      res.json({ message: "Tenant deactivated", tenant });
+    } catch (error) {
+      console.error("Error deactivating tenant:", error);
+      res.status(500).json({ message: "Failed to deactivate tenant" });
+    }
+  });
+
+  // =====================
+  // INVENTORY
+  // =====================
+  // Feature gate: all inventory endpoints require "inventory" feature
+  app.use("/api/inventory", requireFeature("inventory"));
+
+  // --- Inventory Items ---
+  app.get("/api/inventory/items", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const { category, lowStock, active } = req.query;
+      const items = await storage.getInventoryItems({
+        category: category as string | undefined,
+        lowStock: lowStock === "true",
+        active: active !== undefined ? active === "true" : undefined,
+      });
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching inventory items:", error);
+      res.status(500).json({ message: "Failed to fetch inventory items" });
+    }
+  });
+
+  app.post("/api/inventory/items", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const item = await storage.createInventoryItem(req.body);
+      res.status(201).json(item);
+    } catch (error) {
+      console.error("Error creating inventory item:", error);
+      res.status(500).json({ message: "Failed to create inventory item" });
+    }
+  });
+
+  app.get("/api/inventory/items/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const item = await storage.getInventoryItem(req.params.id as string);
+      if (!item) return res.status(404).json({ message: "Item not found" });
+      res.json(item);
+    } catch (error) {
+      console.error("Error fetching inventory item:", error);
+      res.status(500).json({ message: "Failed to fetch inventory item" });
+    }
+  });
+
+  app.patch("/api/inventory/items/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const item = await storage.updateInventoryItem(req.params.id as string, req.body);
+      if (!item) return res.status(404).json({ message: "Item not found" });
+      res.json(item);
+    } catch (error) {
+      console.error("Error updating inventory item:", error);
+      res.status(500).json({ message: "Failed to update inventory item" });
+    }
+  });
+
+  app.post("/api/inventory/items/:id/adjust", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const { quantity, notes } = req.body;
+      if (typeof quantity !== "number") return res.status(400).json({ message: "quantity is required" });
+      const item = await storage.adjustInventoryStock(req.params.id as string, quantity);
+      if (!item) return res.status(404).json({ message: "Item not found" });
+      // Log the manual adjustment as a consumption record for audit trail
+      if (quantity !== 0) {
+        await storage.logEvent({
+          type: "inventory_adjustment",
+          userId: req.user?.id,
+          payloadJson: { itemId: req.params.id, quantity, notes, itemName: item.name },
+        });
+      }
+      res.json(item);
+    } catch (error) {
+      console.error("Error adjusting inventory stock:", error);
+      res.status(500).json({ message: "Failed to adjust stock" });
+    }
+  });
+
+  // --- Suppliers ---
+  app.get("/api/inventory/suppliers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const activeOnly = req.query.active === "true";
+      const result = await storage.getSuppliers(activeOnly || undefined);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching suppliers:", error);
+      res.status(500).json({ message: "Failed to fetch suppliers" });
+    }
+  });
+
+  app.post("/api/inventory/suppliers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const supplier = await storage.createSupplier(req.body);
+      res.status(201).json(supplier);
+    } catch (error) {
+      console.error("Error creating supplier:", error);
+      res.status(500).json({ message: "Failed to create supplier" });
+    }
+  });
+
+  app.get("/api/inventory/suppliers/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const supplier = await storage.getSupplier(req.params.id as string);
+      if (!supplier) return res.status(404).json({ message: "Supplier not found" });
+      res.json(supplier);
+    } catch (error) {
+      console.error("Error fetching supplier:", error);
+      res.status(500).json({ message: "Failed to fetch supplier" });
+    }
+  });
+
+  app.patch("/api/inventory/suppliers/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const supplier = await storage.updateSupplier(req.params.id as string, req.body);
+      if (!supplier) return res.status(404).json({ message: "Supplier not found" });
+      res.json(supplier);
+    } catch (error) {
+      console.error("Error updating supplier:", error);
+      res.status(500).json({ message: "Failed to update supplier" });
+    }
+  });
+
+  // --- Inventory Consumption ---
+  app.get("/api/inventory/consumption", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const { itemId, fromDate, toDate } = req.query;
+      const result = await storage.getInventoryConsumption({
+        itemId: itemId as string | undefined,
+        fromDate: fromDate ? new Date(fromDate as string) : undefined,
+        toDate: toDate ? new Date(toDate as string) : undefined,
+      });
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching consumption:", error);
+      res.status(500).json({ message: "Failed to fetch consumption records" });
+    }
+  });
+
+  app.post("/api/inventory/consumption", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const record = await storage.logInventoryConsumption({
+        ...req.body,
+        createdBy: req.user?.id,
+      });
+      res.status(201).json(record);
+    } catch (error) {
+      console.error("Error logging consumption:", error);
+      res.status(500).json({ message: "Failed to log consumption" });
+    }
+  });
+
+  // --- Purchase Orders ---
+  app.get("/api/inventory/purchase-orders", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const { status, supplierId } = req.query;
+      const result = await storage.getPurchaseOrders({
+        status: status as string | undefined,
+        supplierId: supplierId as string | undefined,
+      });
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching purchase orders:", error);
+      res.status(500).json({ message: "Failed to fetch purchase orders" });
+    }
+  });
+
+  app.post("/api/inventory/purchase-orders", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const order = await storage.createPurchaseOrder({
+        ...req.body,
+        createdBy: req.user?.id,
+      });
+      res.status(201).json(order);
+    } catch (error) {
+      console.error("Error creating purchase order:", error);
+      res.status(500).json({ message: "Failed to create purchase order" });
+    }
+  });
+
+  app.get("/api/inventory/purchase-orders/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const order = await storage.getPurchaseOrder(req.params.id as string);
+      if (!order) return res.status(404).json({ message: "Purchase order not found" });
+      res.json(order);
+    } catch (error) {
+      console.error("Error fetching purchase order:", error);
+      res.status(500).json({ message: "Failed to fetch purchase order" });
+    }
+  });
+
+  app.patch("/api/inventory/purchase-orders/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const order = await storage.updatePurchaseOrder(req.params.id as string, req.body);
+      if (!order) return res.status(404).json({ message: "Purchase order not found" });
+      res.json(order);
+    } catch (error) {
+      console.error("Error updating purchase order:", error);
+      res.status(500).json({ message: "Failed to update purchase order" });
+    }
+  });
+
+  app.post("/api/inventory/purchase-orders/:id/receive", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const order = await storage.receivePurchaseOrder(req.params.id as string);
+      if (!order) return res.status(404).json({ message: "Purchase order not found" });
+      await storage.logEvent({
+        type: "purchase_order_received",
+        userId: req.user?.id,
+        payloadJson: { orderId: order.id, supplierId: order.supplierId, totalCost: order.totalCost },
+      });
+      res.json(order);
+    } catch (error) {
+      console.error("Error receiving purchase order:", error);
+      res.status(500).json({ message: "Failed to receive purchase order" });
+    }
+  });
+
+  // --- Inventory Analytics & Alerts ---
+  app.get("/api/inventory/analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const analytics = await storage.getInventoryAnalytics();
+      res.json(analytics);
+    } catch (error) {
+      console.error("Error fetching inventory analytics:", error);
+      res.status(500).json({ message: "Failed to fetch inventory analytics" });
+    }
+  });
+
+  app.get("/api/inventory/low-stock", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const items = await storage.getLowStockItems();
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching low-stock items:", error);
+      res.status(500).json({ message: "Failed to fetch low-stock items" });
+    }
+  });
+
+  // =====================
+  // BILLING
+  // =====================
+
+  // Tenant admin: own billing usage
+  app.get("/api/tenant/billing/usage", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const tenant = await storage.getTenant(tenantId);
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+
+      // Get current month usage in real-time
+      const { db: dbRef } = await import("./db");
+      const { washJobs, parkingSessions, users: usersTable, branches: branchesTable } = await import("@shared/schema");
+      const { eq, and, gte, sql: sqlFn } = await import("drizzle-orm");
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const [washCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(washJobs).where(and(eq(washJobs.tenantId, tenantId), gte(washJobs.createdAt, startOfMonth)));
+      const [parkingCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(parkingSessions).where(and(eq(parkingSessions.tenantId, tenantId), gte(parkingSessions.createdAt, startOfMonth)));
+      const [userCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(usersTable).where(and(eq(usersTable.tenantId, tenantId), eq(usersTable.isActive, true)));
+      const [branchCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(branchesTable).where(and(eq(branchesTable.tenantId, tenantId), eq(branchesTable.isActive, true)));
+
+      res.json({
+        plan: tenant.plan,
+        washCount: washCount?.count || 0,
+        parkingSessionCount: parkingCount?.count || 0,
+        activeUserCount: userCount?.count || 0,
+        branchCount: branchCount?.count || 0,
+      });
+    } catch (error) {
+      console.error("Error fetching billing usage:", error);
+      res.status(500).json({ message: "Failed to fetch usage" });
+    }
+  });
+
+  // Super admin: all tenants billing overview
+  app.get("/api/admin/billing", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { db: dbRef } = await import("./db");
+      const { billingSnapshots } = await import("@shared/schema");
+      const { desc } = await import("drizzle-orm");
+      const snapshots = await dbRef.select().from(billingSnapshots).orderBy(desc(billingSnapshots.month));
+      res.json(snapshots);
+    } catch (error) {
+      console.error("Error fetching billing:", error);
+      res.status(500).json({ message: "Failed to fetch billing" });
+    }
+  });
+
+  // Super admin: trigger snapshot generation
+  app.post("/api/admin/billing/snapshot", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const month = req.body.month || new Date().toISOString().slice(0, 7);
+      const count = await generateAllSnapshots(month);
+      res.json({ message: `Generated snapshots for ${count} tenants`, month });
+    } catch (error) {
+      console.error("Error generating snapshots:", error);
+      res.status(500).json({ message: "Failed to generate snapshots" });
+    }
+  });
+
+  // =====================
+  // FEATURE FLAGS
+  // =====================
+
+  // Get current tenant's enabled features
+  app.get("/api/features", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const features = await getEnabledFeatures(tenantId);
+      res.json({ features });
+    } catch (error) {
+      console.error("Error fetching features:", error);
+      res.status(500).json({ message: "Failed to fetch features" });
+    }
+  });
+
+  // Super admin: list all feature flags
+  app.get("/api/admin/features", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { db: dbRef } = await import("./db");
+      const { featureFlags } = await import("@shared/schema");
+      const flags = await dbRef.select().from(featureFlags);
+      res.json(flags);
+    } catch (error) {
+      console.error("Error fetching feature flags:", error);
+      res.status(500).json({ message: "Failed to fetch feature flags" });
+    }
+  });
+
+  // Super admin: seed default feature flags
+  app.post("/api/admin/features/seed", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      await seedFeatureFlags();
+      res.json({ message: "Feature flags seeded" });
+    } catch (error) {
+      console.error("Error seeding features:", error);
+      res.status(500).json({ message: "Failed to seed features" });
+    }
+  });
+
+  // Super admin: set feature overrides for a tenant
+  app.put("/api/admin/tenants/:id/features", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const tenantId = req.params.id as string;
+      const { overrides } = req.body; // [{ featureCode: string, enabled: boolean }]
+      if (!Array.isArray(overrides)) return res.status(400).json({ message: "overrides array required" });
+
+      const { db: dbRef } = await import("./db");
+      const { tenantFeatureOverrides } = await import("@shared/schema");
+      const { eq, and } = await import("drizzle-orm");
+
+      for (const override of overrides) {
+        const [existing] = await dbRef.select().from(tenantFeatureOverrides).where(
+          and(eq(tenantFeatureOverrides.tenantId, tenantId), eq(tenantFeatureOverrides.featureCode, override.featureCode))
+        );
+        if (existing) {
+          await dbRef.update(tenantFeatureOverrides).set({ enabled: override.enabled, updatedAt: new Date() }).where(eq(tenantFeatureOverrides.id, existing.id));
+        } else {
+          await dbRef.insert(tenantFeatureOverrides).values({ tenantId, featureCode: override.featureCode, enabled: override.enabled });
+        }
+      }
+
+      const features = await getEnabledFeatures(tenantId);
+      res.json({ features });
+    } catch (error) {
+      console.error("Error setting feature overrides:", error);
+      res.status(500).json({ message: "Failed to set feature overrides" });
+    }
+  });
+
+  // =====================
+  // GLOBAL ANALYTICS (Super Admin)
+  // =====================
+
+  app.get("/api/admin/analytics/global", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { db: dbRef } = await import("./db");
+      const { tenants: tenantsTable, washJobs: wjTable, parkingSessions: psTable } = await import("@shared/schema");
+      const { sql: sqlFn, eq, gte } = await import("drizzle-orm");
+
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      // Total tenants
+      const [tenantCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(tenantsTable);
+
+      // Total washes this month
+      const [washCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(wjTable).where(gte(wjTable.createdAt, startOfMonth));
+
+      // Total parking sessions this month
+      const [parkCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(psTable).where(gte(psTable.createdAt, startOfMonth));
+
+      // Top tenants by wash count
+      const topTenants = await dbRef
+        .select({
+          tenantId: wjTable.tenantId,
+          tenantName: tenantsTable.name,
+          washCount: sqlFn<number>`count(*)::int`,
+        })
+        .from(wjTable)
+        .leftJoin(tenantsTable, eq(wjTable.tenantId, tenantsTable.id))
+        .where(gte(wjTable.createdAt, startOfMonth))
+        .groupBy(wjTable.tenantId, tenantsTable.name)
+        .orderBy(sqlFn`count(*) desc`)
+        .limit(10);
+
+      // Plan distribution
+      const planDist = await dbRef
+        .select({ plan: tenantsTable.plan, count: sqlFn<number>`count(*)::int` })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.isActive, true))
+        .groupBy(tenantsTable.plan);
+
+      res.json({
+        totalTenants: tenantCount?.count || 0,
+        monthlyWashes: washCount?.count || 0,
+        monthlyParkingSessions: parkCount?.count || 0,
+        topTenants,
+        planDistribution: planDist,
+      });
+    } catch (error) {
+      console.error("Error fetching global analytics:", error);
+      res.status(500).json({ message: "Failed to fetch global analytics" });
+    }
+  });
+
+  app.get("/api/admin/analytics/trends", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { db: dbRef } = await import("./db");
+      const { washJobs: wjTable, tenants: tenantsTable } = await import("@shared/schema");
+      const { sql: sqlFn, gte } = await import("drizzle-orm");
+
+      const months = parseInt(req.query.months as string) || 6;
+      const startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - months);
+
+      // Monthly wash counts
+      const monthlyWashes = await dbRef
+        .select({
+          month: sqlFn<string>`to_char(${wjTable.createdAt}, 'YYYY-MM')`,
+          count: sqlFn<number>`count(*)::int`,
+        })
+        .from(wjTable)
+        .where(gte(wjTable.createdAt, startDate))
+        .groupBy(sqlFn`to_char(${wjTable.createdAt}, 'YYYY-MM')`)
+        .orderBy(sqlFn`to_char(${wjTable.createdAt}, 'YYYY-MM')`);
+
+      // Monthly new tenants
+      const monthlyTenants = await dbRef
+        .select({
+          month: sqlFn<string>`to_char(${tenantsTable.createdAt}, 'YYYY-MM')`,
+          count: sqlFn<number>`count(*)::int`,
+        })
+        .from(tenantsTable)
+        .where(gte(tenantsTable.createdAt, startDate))
+        .groupBy(sqlFn`to_char(${tenantsTable.createdAt}, 'YYYY-MM')`)
+        .orderBy(sqlFn`to_char(${tenantsTable.createdAt}, 'YYYY-MM')`);
+
+      res.json({ monthlyWashes, monthlyTenants });
+    } catch (error) {
+      console.error("Error fetching trends:", error);
+      res.status(500).json({ message: "Failed to fetch trends" });
+    }
+  });
+
+  // =====================
+  // OCR — plate candidate extraction
   // =====================
 
   app.post("/api/ocr/plate-candidates", isAuthenticated, async (req, res) => {
-    // MVP: Return empty candidates, user must enter manually
-    // This endpoint is designed to be replaced with real OCR later
-    res.json({
-      candidates: [],
-      confidence: [],
-      message: "OCR not available in MVP. Please enter plate manually."
-    });
+    try {
+      const { image } = req.body;
+      if (!image || typeof image !== "string") {
+        return res.status(400).json({ message: "Missing base64 image data" });
+      }
+
+      const { recognizePlate } = await import("./lib/ocr-service");
+      const candidates = await recognizePlate(image);
+
+      res.json({ candidates });
+    } catch (error) {
+      console.error("OCR error:", error);
+      res.json({ candidates: [], message: "OCR processing failed" });
+    }
   });
 
   return httpServer;
