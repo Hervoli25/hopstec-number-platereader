@@ -73,8 +73,8 @@ function broadcastEvent(data: any) {
   });
   
   // Also notify customer clients watching specific jobs
-  if (data.job?.id || data.washJobId) {
-    const jobId = data.job?.id || data.washJobId;
+  const jobId = data.job?.id || data.washJobId || data.jobId;
+  if (jobId) {
     customerSseClients.forEach(client => {
       if (client.washJobId === jobId) {
         client.res.write(message);
@@ -903,8 +903,13 @@ export async function registerRoutes(
       if (!item) {
         return res.status(404).json({ message: "Checklist item not found" });
       }
-      // Broadcast update to SSE clients
-      const job = await storage.getWashJob(req.params.id);
+      // Auto-advance job from "received" to "prewash" on first checklist action
+      let job = await storage.getWashJob(req.params.id);
+      if (job && job.status === "received") {
+        job = await storage.updateWashJobStatus(req.params.id, "prewash") || job;
+        broadcastEvent({ type: "wash_status_update", job });
+      }
+      // Broadcast checklist update to SSE clients
       if (job) broadcastEvent({ type: "checklist_updated", jobId: job.id, item });
       res.json(item);
     } catch (error) {
@@ -925,7 +930,13 @@ export async function registerRoutes(
       if (!item) {
         return res.status(404).json({ message: "Checklist item not found" });
       }
-      const job = await storage.getWashJob(req.params.id);
+      // Auto-advance job from "received" to "prewash" on first checklist action
+      let job = await storage.getWashJob(req.params.id);
+      if (job && job.status === "received") {
+        job = await storage.updateWashJobStatus(req.params.id, "prewash") || job;
+        broadcastEvent({ type: "wash_status_update", job });
+      }
+      // Broadcast checklist update to SSE clients
       if (job) broadcastEvent({ type: "checklist_updated", jobId: job.id, item });
       res.json(item);
     } catch (error) {
@@ -1679,9 +1690,27 @@ export async function registerRoutes(
         activeJobs.map(async (job) => {
           try {
             const { score, factors } = await calculateJobPriority(job);
-            return { ...job, priority: score, priorityFactors: factors };
+            // Include checklist progress for live queue display
+            const checklist = await storage.getServiceChecklistItems(job.id);
+            const totalSteps = checklist.length;
+            const doneSteps = checklist.filter(i => i.confirmed || i.skipped).length;
+            // Find current step name (first unfinished step)
+            const currentStep = checklist.find(i => !i.confirmed && !i.skipped);
+            const currentStepLabel = currentStep?.label || null;
+
+            // Auto-fix: if job is still "received" but has confirmed/skipped steps, advance to "prewash"
+            let updatedJob = job;
+            if (job.status === "received" && doneSteps > 0) {
+              const advanced = await storage.updateWashJobStatus(job.id, "prewash");
+              if (advanced) {
+                updatedJob = advanced;
+                broadcastEvent({ type: "wash_status_update", job: advanced });
+              }
+            }
+
+            return { ...updatedJob, priority: score, priorityFactors: factors, checklistTotal: totalSteps, checklistDone: doneSteps, currentStepLabel };
           } catch {
-            return { ...job, priority: 0, priorityFactors: {} };
+            return { ...job, priority: 0, priorityFactors: {}, checklistTotal: 0, checklistDone: 0, currentStepLabel: null };
           }
         })
       );

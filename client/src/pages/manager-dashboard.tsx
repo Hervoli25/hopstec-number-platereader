@@ -57,7 +57,7 @@ interface QueueStats {
   activeWashes: number;
   parkedVehicles: number;
   todayWashes: number;
-  activeJobs: (WashJob & { priority?: number; priorityFactors?: Record<string, number> })[];
+  activeJobs: (WashJob & { priority?: number; priorityFactors?: Record<string, number>; checklistTotal?: number; checklistDone?: number; currentStepLabel?: string | null })[];
 }
 
 interface CRMBooking {
@@ -123,7 +123,7 @@ export default function ManagerDashboard() {
 
   const { data: stats, isLoading, isFetching, refetch } = useQuery<QueueStats>({
     queryKey: ["/api/queue/stats"],
-    refetchInterval: 30000,
+    refetchInterval: 10000, // 10s for live feel
   });
 
   const { data: analytics } = useQuery<AnalyticsSummary>({
@@ -495,80 +495,112 @@ export default function ManagerDashboard() {
                 </div>
               ) : stats?.activeJobs?.length ? (
                 <div className="space-y-3">
-                  {stats.activeJobs.slice(0, 5).map((job, index) => (
+                  {stats.activeJobs.slice(0, 5).map((job, index) => {
+                    const hasChecklist = (job.checklistTotal ?? 0) > 0;
+                    const progressPct = hasChecklist ? Math.round(((job.checklistDone ?? 0) / job.checklistTotal!) * 100) : 0;
+                    const isWaiting = (job.checklistDone ?? 0) === 0;
+                    const progressColor = isWaiting ? "bg-blue-500" : progressPct >= 100 ? "bg-green-500" : "bg-amber-500";
+
+                    return (
                     <motion.div
                       key={job.id}
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className={`flex items-center justify-between p-3 rounded-lg cursor-pointer hover:bg-muted transition-colors ${
-                        (job.priority || 0) > 80 ? "bg-red-500/10 border border-red-500/30" :
-                        (job.priority || 0) > 50 ? "bg-amber-500/10 border border-amber-500/30" :
-                        "bg-muted/50"
+                      className={`p-3 rounded-lg cursor-pointer hover:bg-muted/80 transition-colors border ${
+                        (job.priority || 0) > 80 ? "bg-red-500/10 border-red-500/30" :
+                        (job.priority || 0) > 50 ? "bg-amber-500/10 border-amber-500/30" :
+                        "bg-muted/50 border-transparent"
                       }`}
                       onClick={() => setLocation(`/wash-job/${job.id}`)}
                       data-testid={`queue-job-${job.id}`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      {/* Top row: plate + actions */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
                           <Car className="w-4 h-4 text-primary" />
+                          <p className="font-mono font-semibold text-sm">{job.plateDisplay}</p>
+                          {job.priorityFactors?.vipBonus && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-yellow-500 text-yellow-600">
+                              <Award className="w-3 h-3 mr-0.5" /> VIP
+                            </Badge>
+                          )}
+                          {(job.priority || 0) > 0 && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              (job.priority || 0) > 80 ? "bg-red-500/20 text-red-600" :
+                              (job.priority || 0) > 50 ? "bg-amber-500/20 text-amber-600" :
+                              "bg-muted text-muted-foreground"
+                            }`}>
+                              P{job.priority}
+                            </span>
+                          )}
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-mono font-semibold text-sm">{job.plateDisplay}</p>
-                            {job.priorityFactors?.vipBonus && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-yellow-500 text-yellow-600">
-                                <Award className="w-3 h-3 mr-0.5" /> VIP
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <Clock className="w-3 h-3" />
-                            {job.startAt ? formatDistanceToNow(new Date(job.startAt), { addSuffix: true }) : "N/A"}
-                          </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-muted-foreground">
+                            {job.startAt ? formatDistanceToNow(new Date(job.startAt), { addSuffix: true }) : ""}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const result = await Swal.fire({
+                                title: 'Remove from queue?',
+                                text: `Remove ${job.plateDisplay} from the queue?`,
+                                icon: 'warning',
+                                showCancelButton: true,
+                                confirmButtonColor: '#ef4444',
+                                cancelButtonColor: '#6b7280',
+                                confirmButtonText: 'Yes, remove it',
+                                cancelButtonText: 'Cancel',
+                              });
+                              if (result.isConfirmed) {
+                                deleteJobMutation.mutate(job.id);
+                              }
+                            }}
+                            disabled={deleteJobMutation.isPending}
+                            data-testid={`delete-job-${job.id}`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {(job.priority || 0) > 0 && (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                            (job.priority || 0) > 80 ? "bg-red-500/20 text-red-600" :
-                            (job.priority || 0) > 50 ? "bg-amber-500/20 text-amber-600" :
-                            "bg-muted text-muted-foreground"
-                          }`}>
-                            P{job.priority}
-                          </span>
-                        )}
+
+                      {/* Progress section */}
+                      {hasChecklist ? (
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium truncate max-w-[60%]">
+                              {isWaiting ? (
+                                <span className="text-blue-500">Waiting to start</span>
+                              ) : progressPct >= 100 ? (
+                                <span className="text-green-500">All steps done</span>
+                              ) : (
+                                <span className="text-amber-500">{job.currentStepLabel || "In progress"}</span>
+                              )}
+                            </span>
+                            <span className="text-[10px] font-bold text-muted-foreground">
+                              {job.checklistDone}/{job.checklistTotal}
+                            </span>
+                          </div>
+                          <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                            <motion.div
+                              className={`h-full rounded-full ${progressColor}`}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${Math.max(progressPct, isWaiting ? 0 : 5)}%` }}
+                              transition={{ duration: 0.5, ease: "easeOut" }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
                         <Badge className={`${STATUS_COLORS[job.status as WashStatus] || "bg-gray-500"} text-white text-xs`}>
                           {STATUS_LABELS[job.status as WashStatus] || job.status}
                         </Badge>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            const result = await Swal.fire({
-                              title: 'Remove from queue?',
-                              text: `Remove ${job.plateDisplay} from the queue?`,
-                              icon: 'warning',
-                              showCancelButton: true,
-                              confirmButtonColor: '#ef4444',
-                              cancelButtonColor: '#6b7280',
-                              confirmButtonText: 'Yes, remove it',
-                              cancelButtonText: 'Cancel',
-                            });
-                            if (result.isConfirmed) {
-                              deleteJobMutation.mutate(job.id);
-                            }
-                          }}
-                          disabled={deleteJobMutation.isPending}
-                          data-testid={`delete-job-${job.id}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
+                      )}
                     </motion.div>
-                  ))}
+                    );
+                  })}
                   {stats.activeJobs.length > 5 && (
                     <p className="text-xs text-center text-muted-foreground pt-2">
                       +{stats.activeJobs.length - 5} more in queue

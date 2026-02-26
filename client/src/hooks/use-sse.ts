@@ -15,6 +15,7 @@ export function useSSE(onEvent?: SSEEventHandler) {
         switch (data.type) {
           case "wash_created":
           case "wash_status_update":
+          case "checklist_updated":
             queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
             queryClient.invalidateQueries({ queryKey: ["/api/queue/stats"] });
             break;
