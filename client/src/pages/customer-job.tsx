@@ -22,17 +22,16 @@ import { SERVICE_TYPE_CONFIG } from "@shared/schema";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
   received: { label: "Received", icon: Car, color: "bg-blue-500" },
-  prewash: { label: "Pre-Wash", icon: Droplets, color: "bg-cyan-500" },
-  rinse: { label: "Rinse", icon: Droplets, color: "bg-teal-500" },
-  dry_vacuum: { label: "Dry & Vacuum", icon: Wind, color: "bg-amber-500" },
-  simple_polish: { label: "Simple Polish", icon: Sparkles, color: "bg-purple-500" },
-  detailing_polish: { label: "Detailing Polish", icon: Sparkles, color: "bg-indigo-500" },
+  high_pressure_wash: { label: "High Pressure Wash", icon: Droplets, color: "bg-cyan-500" },
+  foam_application: { label: "Foam Application", icon: Droplets, color: "bg-teal-500" },
+  rinse: { label: "Rinse", icon: Droplets, color: "bg-sky-500" },
+  hand_dry_vacuum: { label: "Hand Dry & Vacuum", icon: Wind, color: "bg-amber-500" },
   tyre_shine: { label: "Tyre Shine", icon: Sparkles, color: "bg-pink-500" },
-  clay_treatment: { label: "Clay Treatment", icon: Sparkles, color: "bg-rose-500" },
+  quality_check: { label: "Quality Check", icon: CheckCircle2, color: "bg-purple-500" },
   complete: { label: "Complete", icon: CheckCircle2, color: "bg-green-500" },
 };
 
-const STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"];
+const STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"];
 
 interface CustomerJobData {
   job: WashJob;

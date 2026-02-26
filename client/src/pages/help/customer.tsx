@@ -29,8 +29,8 @@ export default function CustomerGuide() {
         "See your vehicle's license plate and wash package",
         "View current wash stage with color-coded status",
         "See photos taken at each stage (if available)",
-        "Track progress through: Received → Pre-Wash → Rinse → Dry & Vacuum → Polish → Tyre Shine → Clay Treatment → Complete",
-        "Page updates automatically - no need to refresh"
+        "Track progress through: Receive Car → High Pressure Wash → Foam Application → Rinse → Hand Dry & Vacuum → Tyre Shine → Quality Check → Complete",
+        "Page updates automatically — no need to refresh"
       ]
     },
     {
@@ -38,15 +38,14 @@ export default function CustomerGuide() {
       title: "Understanding Wash Stages",
       steps: [
         "Received (Blue): Your vehicle has been checked in",
-        "Pre-Wash (Cyan): Initial rinse and preparation",
-        "Rinse (Teal): Thorough water rinse",
-        "Dry & Vacuum (Amber): Drying and vacuuming",
-        "Simple Polish (Purple): Basic polish application",
-        "Detailing Polish (Indigo): Detailed polishing",
+        "High Pressure Wash (Cyan): Initial high pressure rinse",
+        "Foam Application (Teal): Foam cleaning applied",
+        "Rinse (Sky): Thorough water rinse",
+        "Hand Dry & Vacuum (Amber): Drying and vacuuming",
         "Tyre Shine (Pink): Tyre cleaning and shine",
-        "Clay Treatment (Rose): Clay bar surface treatment",
+        "Quality Check (Purple): Final inspection before handover",
         "Complete (Green): Your vehicle is ready for pickup!",
-        "Note: Some steps may be skipped depending on your service package"
+        "Note: Some steps may vary depending on your service package"
       ]
     },
     {

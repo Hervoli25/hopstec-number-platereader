@@ -8,12 +8,12 @@ export * from "./models/auth";
 
 // Enums
 export const userRoleEnum = pgEnum("user_role", ["technician", "manager", "admin"]);
-export const washStatusEnum = pgEnum("wash_status", ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"]);
+export const washStatusEnum = pgEnum("wash_status", ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"]);
 export const countryHintEnum = pgEnum("country_hint", ["FR", "ZA", "CD", "OTHER"]);
 export const photoRuleEnum = pgEnum("photo_rule", ["optional", "required", "disabled"]);
 export const loyaltyTransactionTypeEnum = pgEnum("loyalty_transaction_type", ["earn_wash", "earn_bonus", "redeem", "expire", "adjust"]);
 export const loyaltyTierEnum = pgEnum("loyalty_tier", ["basic", "premium"]);
-export const inventoryCategoryEnum = pgEnum("inventory_category", ["chemicals", "cloths_towels", "wax_polish", "equipment", "packaging", "other"]);
+export const inventoryCategoryEnum = pgEnum("inventory_category", ["chemicals", "cloths_towels", "wax_polish", "brushes_sponges", "air_fresheners", "interior_care", "tire_wheel_care", "sealants_coatings", "safety_gear", "equipment", "packaging", "other"]);
 export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", ["draft", "submitted", "received", "cancelled"]);
 export const tenantPlanEnum = pgEnum("tenant_plan", ["free", "basic", "pro", "enterprise"]);
 
@@ -767,7 +767,7 @@ export type TenantFeatureOverride = typeof tenantFeatureOverrides.$inferSelect;
 export type InsertTenantFeatureOverride = z.infer<typeof insertTenantFeatureOverrideSchema>;
 
 // Status flow for wash jobs
-export const WASH_STATUS_ORDER = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment", "complete"] as const;
+export const WASH_STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"] as const;
 export type WashStatus = typeof WASH_STATUS_ORDER[number];
 
 // Country hints
@@ -793,37 +793,37 @@ export const SERVICE_TYPE_CONFIG: Record<ServiceCode, {
   STANDARD: {
     label: "Standard Wash",
     mode: "steps",
-    description: "Full car wash with all available steps",
+    description: "Full car wash with all standard steps",
     durationMinutes: 30,
-    steps: ["Pre-rinse", "Soap wash", "High-pressure rinse", "Hand dry", "Interior vacuum", "Tyre shine", "Window cleaning"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "Tyre Shine", "Quality Check"],
   },
   RIM_ONLY: {
     label: "Rim Only",
     mode: "steps",
     description: "Rim cleaning service",
     durationMinutes: 15,
-    steps: ["Wheel spray", "Brush agitation", "Rinse", "Rim polish"],
+    steps: ["Receive Car", "Wheel Spray", "Brush Agitation", "Rinse", "Rim Polish", "Quality Check"],
   },
   TYRE_SHINE_ONLY: {
     label: "Tyre Shine Only",
     mode: "steps",
     description: "Tyre shine service",
     durationMinutes: 10,
-    steps: ["Tyre cleaning", "Tyre dressing", "Shine application"],
+    steps: ["Receive Car", "Tyre Cleaning", "Tyre Dressing", "Shine Application", "Quality Check"],
   },
   HEADLIGHT_RESTORATION: {
     label: "Headlight Restoration",
     mode: "steps",
     description: "Headlight cleaning & restoration",
     durationMinutes: 20,
-    steps: ["Masking tape surround", "Wet sanding", "Compound polish", "UV sealant application"],
+    steps: ["Receive Car", "Masking Tape Surround", "Wet Sanding", "Compound Polish", "UV Sealant Application", "Quality Check"],
   },
   FULL_VALET: {
     label: "Full Valet",
     mode: "steps",
     description: "Full valet — complete interior & exterior detail",
     durationMinutes: 60,
-    steps: ["Exterior pre-rinse", "Foam wash", "High-pressure rinse", "Clay bar treatment", "Hand dry", "Interior vacuum", "Dashboard & trim clean", "Seat shampooing", "Liquid wax", "Tyre shine", "Window cleaning", "Final inspection"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Clay Bar Treatment", "Hand Dry & Vacuum", "Interior Deep Clean", "Dashboard & Trim Clean", "Seat Shampooing", "Tyre Shine", "Quality Check"],
   },
 };
 
@@ -854,7 +854,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 15,
     serviceCode: "STANDARD",
     pricing: { small: 80, medium: 100, large: 120 },
-    steps: ["Interior vacuum", "Floor mats cleaning", "Seat vacuuming", "Trunk vacuuming"],
+    steps: ["Receive Car", "Interior Vacuum", "Floor Mats Cleaning", "Seat Vacuuming", "Trunk Vacuuming", "Quality Check"],
   },
   VAGABUNDO: {
     label: "Vagabundo",
@@ -863,7 +863,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 20,
     serviceCode: "STANDARD",
     pricing: { small: 120, medium: 140, large: 160 },
-    steps: ["Pre-rinse", "Soap application", "High-pressure wash", "Spot-free rinse", "Hand dry", "Tire shine"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "Tyre Shine", "Quality Check"],
   },
   LE_RACONTEUR: {
     label: "Le Raconteur",
@@ -872,7 +872,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 30,
     serviceCode: "STANDARD",
     pricing: { small: 150, medium: 170, large: 200 },
-    steps: ["Exterior wash", "Pre-rinse", "Soap application", "High-pressure wash", "Hand dry", "Interior vacuum", "Tire shine"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "Interior Vacuum", "Tyre Shine", "Quality Check"],
   },
   LA_OBRA: {
     label: "La Obra",
@@ -881,7 +881,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 40,
     serviceCode: "FULL_VALET",
     pricing: { small: 180, medium: 200, large: 230 },
-    steps: ["Complete exterior wash", "Interior vacuum", "Liquid express wax", "Enhanced shine", "Paint protection", "Tire shine", "Window cleaning"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "Liquid Express Wax", "Tyre Shine", "Window Cleaning", "Quality Check"],
   },
   MAMACITA: {
     label: "Mamacita",
@@ -890,7 +890,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 50,
     serviceCode: "FULL_VALET",
     pricing: { small: 250, medium: 280, large: 300 },
-    steps: ["Complete exterior wash", "Interior vacuum", "High definition wax", "Superior paint protection", "Enhanced gloss finish", "Tire shine treatment", "Window cleaning inside & out", "Dashboard wipe"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "High Definition Wax", "Tyre Shine", "Window Cleaning", "Dashboard Wipe", "Quality Check"],
   },
   THE_JL_SPECIAL: {
     label: "The JL Special",
@@ -899,7 +899,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 75,
     serviceCode: "FULL_VALET",
     pricing: { small: 450, medium: 470, large: 500 },
-    steps: ["Complete exterior wash", "Interior vacuum", "Liquid clay treatment", "High definition wax", "Professional paint correction", "Enhanced gloss finish", "Tire shine treatment", "Window cleaning inside & out", "Dashboard & trim detail"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Liquid Clay Treatment", "Hand Dry & Vacuum", "High Definition Wax", "Tyre Shine", "Window Cleaning", "Dashboard & Trim Detail", "Quality Check"],
   },
   THE_GUNNER: {
     label: "The Gunner",
@@ -908,7 +908,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 90,
     serviceCode: "FULL_VALET",
     pricing: { small: 650, medium: 700, large: 800 },
-    steps: ["Complete exterior wash", "Interior deep vacuum", "Fabric/leather deep clean", "Stain removal treatment", "Interior sanitization", "Dashboard & trim restoration", "High definition wax", "Tire shine treatment", "Window cleaning inside & out"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "Interior Deep Clean", "Fabric & Leather Clean", "Stain Removal Treatment", "Interior Sanitisation", "Dashboard & Trim Restoration", "Tyre Shine", "Quality Check"],
   },
   THE_BIG_KAHUNA: {
     label: "The Big Kahuna",
@@ -917,7 +917,7 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     durationMinutes: 150,
     serviceCode: "FULL_VALET",
     pricing: { small: 1000, medium: 1200, large: 1400 },
-    steps: ["Complete exterior wash", "Clay bar treatment", "Machine polishing", "Paint correction", "Ceramic sealant application", "Interior deep vacuum", "Fabric/leather deep clean", "Dashboard & trim restoration", "Engine bay cleaning", "Tire shine treatment", "Window cleaning inside & out", "Final inspection"],
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Clay Bar Treatment", "Hand Dry & Vacuum", "Machine Polishing", "Paint Correction", "Ceramic Sealant Application", "Interior Deep Clean", "Fabric & Leather Clean", "Dashboard & Trim Restoration", "Engine Bay Cleaning", "Tyre Shine", "Window Cleaning", "Quality Check"],
   },
 };
 

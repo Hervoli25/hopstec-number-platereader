@@ -961,7 +961,7 @@ export class DatabaseStorage implements IStorage {
 
     // Calculate average time per stage
     const stageTimeKPIs: Record<string, { avgSeconds: number; count: number }> = {};
-    const stages = ["received", "prewash", "rinse", "dry_vacuum", "simple_polish", "detailing_polish", "tyre_shine", "clay_treatment"];
+    const stages = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check"];
 
     for (const job of completedJobs) {
       const timestamps = job.stageTimestamps as Record<string, string> | null;

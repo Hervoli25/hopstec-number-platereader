@@ -32,13 +32,12 @@ interface TechPerformance {
 
 const STAGE_LABELS: Record<string, string> = {
   received: "Receiving",
-  prewash: "Pre-Wash",
+  high_pressure_wash: "High Pressure Wash",
+  foam_application: "Foam Application",
   rinse: "Rinse",
-  dry_vacuum: "Dry & Vacuum",
-  simple_polish: "Simple Polish",
-  detailing_polish: "Detail Polish",
+  hand_dry_vacuum: "Hand Dry & Vacuum",
   tyre_shine: "Tyre Shine",
-  clay_treatment: "Clay Treatment",
+  quality_check: "Quality Check",
 };
 
 function formatDuration(seconds: number): string {

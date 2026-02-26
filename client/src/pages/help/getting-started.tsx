@@ -53,7 +53,7 @@ export default function GettingStarted() {
       details: [
         "Open the active job from 'My Jobs'",
         "Tap the camera button to capture photos at each stage",
-        "Tap the status button to advance: Received → Pre-Wash → Foam → Rinse → Dry → Complete",
+        "Confirm each checklist step: Receive Car → High Pressure Wash → Foam Application → Rinse → Hand Dry & Vacuum → Tyre Shine → Quality Check → Complete",
         "Photos and timestamps are saved automatically",
         "Share the tracking link with customers for transparency"
       ]

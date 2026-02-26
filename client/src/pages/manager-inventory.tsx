@@ -144,7 +144,7 @@ const CATEGORY_META: Record<string, { icon: LucideIcon; color: string; label: st
   brushes_sponges: { icon: Brush, color: "bg-teal-500/15 text-teal-700 dark:text-teal-400 border-teal-500/30", label: "Brushes & Sponges" },
   air_fresheners: { icon: Wind, color: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30", label: "Air Fresheners" },
   interior_care: { icon: CircleDot, color: "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30", label: "Interior Care" },
-  tire_wheel_care: { icon: Disc, color: "bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30", label: "Tire & Wheel Care" },
+  tire_wheel_care: { icon: Disc, color: "bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30", label: "Tyre & Wheel Care" },
   sealants_coatings: { icon: ShieldCheck, color: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border-indigo-500/30", label: "Sealants & Coatings" },
   safety_gear: { icon: ShieldCheck, color: "bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30", label: "Safety Gear" },
   equipment: { icon: Wrench, color: "bg-gray-500/15 text-gray-700 dark:text-gray-400 border-gray-500/30", label: "Equipment" },
@@ -249,6 +249,14 @@ export default function ManagerInventory() {
   const [adjustingItem, setAdjustingItem] = useState<InventoryItem | null>(null);
   const [adjustQuantity, setAdjustQuantity] = useState("");
   const [adjustNotes, setAdjustNotes] = useState("");
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkRows, setBulkRows] = useState<Array<{
+    name: string;
+    category: string;
+    unit: string;
+    initialStock: string;
+    minimumStock: string;
+  }>>([{ name: "", category: "chemicals", unit: "liters", initialStock: "", minimumStock: "" }]);
 
   // Item form state
   const [itemForm, setItemForm] = useState({
@@ -256,7 +264,7 @@ export default function ManagerInventory() {
     sku: "",
     category: "chemicals" as (typeof INVENTORY_CATEGORIES)[number],
     unit: "liters" as string,
-    costPerUnit: "",
+    initialStock: "",
     sellingPricePerUnit: "",
     minimumStock: "",
     supplierId: "none",
@@ -444,6 +452,26 @@ export default function ManagerInventory() {
       toast({ title: err.message || "Failed to adjust stock", variant: "destructive" }),
   });
 
+  const bulkCreateMutation = useMutation({
+    mutationFn: async (items: Array<Record<string, unknown>>) => {
+      const results = [];
+      for (const item of items) {
+        const res = await apiRequest("POST", "/api/inventory/items", item);
+        results.push(await res.json());
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      toast({ title: `${results.length} item${results.length > 1 ? "s" : ""} created successfully` });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/analytics"] });
+      setBulkDialogOpen(false);
+      setBulkRows([{ name: "", category: "chemicals", unit: "liters", initialStock: "", minimumStock: "" }]);
+    },
+    onError: (err: Error) =>
+      toast({ title: err.message || "Failed to create items", variant: "destructive" }),
+  });
+
   // -- Suppliers --
 
   const createSupplierMutation = useMutation({
@@ -545,7 +573,7 @@ export default function ManagerInventory() {
       sku: "",
       category: "chemicals",
       unit: "liters",
-      costPerUnit: "",
+      initialStock: "",
       sellingPricePerUnit: "",
       minimumStock: "",
       supplierId: "none",
@@ -591,10 +619,10 @@ export default function ManagerInventory() {
       sku: item.sku || "",
       category: item.category,
       unit: item.unit,
-      costPerUnit: item.costPerUnit != null ? (item.costPerUnit / 100).toFixed(2) : "",
+      initialStock: item.currentStock != null ? String(item.currentStock / 100) : "",
       sellingPricePerUnit:
         item.sellingPricePerUnit != null ? (item.sellingPricePerUnit / 100).toFixed(2) : "",
-      minimumStock: item.minimumStock != null ? String(item.minimumStock) : "",
+      minimumStock: item.minimumStock != null ? String(item.minimumStock / 100) : "",
       supplierId: item.supplierId || "none",
       consumptionMap: consMap,
     });
@@ -613,11 +641,11 @@ export default function ManagerInventory() {
       sku: itemForm.sku || null,
       category: itemForm.category,
       unit: itemForm.unit,
-      costPerUnit: itemForm.costPerUnit ? Math.round(parseFloat(itemForm.costPerUnit) * 100) : null,
+      currentStock: itemForm.initialStock ? Math.round(parseFloat(itemForm.initialStock) * 100) : 0,
       sellingPricePerUnit: itemForm.sellingPricePerUnit
         ? Math.round(parseFloat(itemForm.sellingPricePerUnit) * 100)
         : null,
-      minimumStock: itemForm.minimumStock ? parseInt(itemForm.minimumStock, 10) : null,
+      minimumStock: itemForm.minimumStock ? Math.round(parseFloat(itemForm.minimumStock) * 100) : null,
       supplierId: itemForm.supplierId && itemForm.supplierId !== "none" ? itemForm.supplierId : null,
       consumptionMap: Object.keys(consumptionMap).length > 0 ? consumptionMap : null,
     };
@@ -631,12 +659,14 @@ export default function ManagerInventory() {
 
   function handleAdjustSubmit() {
     if (!adjustingItem) return;
-    const qty = parseInt(adjustQuantity, 10);
+    const qty = parseFloat(adjustQuantity);
     if (isNaN(qty) || qty === 0) {
       toast({ title: "Please enter a valid non-zero quantity", variant: "destructive" });
       return;
     }
-    adjustStockMutation.mutate({ id: adjustingItem.id, quantity: qty, notes: adjustNotes });
+    // Convert user-friendly units to hundredths for storage
+    const hundredths = Math.round(qty * 100);
+    adjustStockMutation.mutate({ id: adjustingItem.id, quantity: hundredths, notes: adjustNotes });
   }
 
   function openCreateSupplier() {
@@ -947,6 +977,15 @@ export default function ManagerInventory() {
                   <Button size="sm" onClick={openCreateItem} className="shrink-0">
                     <Plus className="w-4 h-4 mr-1" />
                     Add Item
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setBulkDialogOpen(true)}
+                    className="shrink-0"
+                  >
+                    <Boxes className="w-4 h-4 mr-1" />
+                    Bulk Add
                   </Button>
                 </div>
               </CardContent>
@@ -1643,16 +1682,16 @@ export default function ManagerInventory() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label>Cost per Unit ({currencySymbol})</Label>
+                <Label>Qty Received ({itemForm.unit})</Label>
                 <Input
                   type="number"
                   step="0.01"
                   min="0"
-                  value={itemForm.costPerUnit}
+                  value={itemForm.initialStock}
                   onChange={(e) =>
-                    setItemForm((f) => ({ ...f, costPerUnit: e.target.value }))
+                    setItemForm((f) => ({ ...f, initialStock: e.target.value }))
                   }
-                  placeholder="0.00"
+                  placeholder="e.g. 5 or 25"
                 />
               </div>
               <div className="space-y-1">
@@ -1672,10 +1711,11 @@ export default function ManagerInventory() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Minimum Stock Level</Label>
+                <Label>Minimum Stock Level ({itemForm.unit})</Label>
                 <Input
                   type="number"
                   min="0"
+                  step="0.01"
                   value={itemForm.minimumStock}
                   onChange={(e) =>
                     setItemForm((f) => ({
@@ -1683,7 +1723,7 @@ export default function ManagerInventory() {
                       minimumStock: e.target.value,
                     }))
                   }
-                  placeholder="e.g. 500 (in hundredths)"
+                  placeholder="e.g. 1.5 or 25"
                 />
               </div>
               <div className="space-y-1">
@@ -1803,16 +1843,14 @@ export default function ManagerInventory() {
 
           <div className="space-y-4">
             <div className="space-y-1">
-              <Label>Quantity (+ to add, - to remove)</Label>
+              <Label>Quantity (+ to add, - to remove){adjustingItem ? ` in ${adjustingItem.unit}` : ""}</Label>
               <Input
                 type="number"
+                step="0.01"
                 value={adjustQuantity}
                 onChange={(e) => setAdjustQuantity(e.target.value)}
-                placeholder="e.g. 500 or -200"
+                placeholder="e.g. 1.5 or -2"
               />
-              <p className="text-xs text-muted-foreground">
-                Values are in hundredths. E.g. 500 = 5.00 units.
-              </p>
             </div>
             <div className="space-y-1">
               <Label>Notes</Label>
@@ -2161,6 +2199,168 @@ export default function ManagerInventory() {
                 <Plus className="w-4 h-4 mr-1" />
               )}
               Create Purchase Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================================= */}
+      {/*  BULK ADD DIALOG                                               */}
+      {/* ============================================================= */}
+      <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bulk Add Items</DialogTitle>
+            <DialogDescription>
+              Add multiple inventory items at once. Fill in the rows and click Create All.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {bulkRows.map((row, idx) => (
+              <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+                <div className="col-span-12 sm:col-span-3 space-y-1">
+                  {idx === 0 && <Label className="text-xs">Name *</Label>}
+                  <Input
+                    className="h-8 text-xs"
+                    value={row.name}
+                    onChange={(e) => {
+                      const updated = [...bulkRows];
+                      updated[idx] = { ...updated[idx], name: e.target.value };
+                      setBulkRows(updated);
+                    }}
+                    placeholder="Item name"
+                  />
+                </div>
+                <div className="col-span-6 sm:col-span-2 space-y-1">
+                  {idx === 0 && <Label className="text-xs">Category</Label>}
+                  <Select
+                    value={row.category}
+                    onValueChange={(val) => {
+                      const updated = [...bulkRows];
+                      updated[idx] = { ...updated[idx], category: val };
+                      setBulkRows(updated);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INVENTORY_CATEGORIES.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {categoryLabel(cat)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-6 sm:col-span-2 space-y-1">
+                  {idx === 0 && <Label className="text-xs">Unit</Label>}
+                  <Select
+                    value={row.unit}
+                    onValueChange={(val) => {
+                      const updated = [...bulkRows];
+                      updated[idx] = { ...updated[idx], unit: val };
+                      setBulkRows(updated);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INVENTORY_UNITS.map((u) => (
+                        <SelectItem key={u} value={u}>{u}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-5 sm:col-span-2 space-y-1">
+                  {idx === 0 && <Label className="text-xs">Qty Received</Label>}
+                  <Input
+                    className="h-8 text-xs"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={row.initialStock}
+                    onChange={(e) => {
+                      const updated = [...bulkRows];
+                      updated[idx] = { ...updated[idx], initialStock: e.target.value };
+                      setBulkRows(updated);
+                    }}
+                    placeholder="e.g. 5 or 25"
+                  />
+                </div>
+                <div className="col-span-5 sm:col-span-2 space-y-1">
+                  {idx === 0 && <Label className="text-xs">Min Stock</Label>}
+                  <Input
+                    className="h-8 text-xs"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={row.minimumStock}
+                    onChange={(e) => {
+                      const updated = [...bulkRows];
+                      updated[idx] = { ...updated[idx], minimumStock: e.target.value };
+                      setBulkRows(updated);
+                    }}
+                    placeholder="e.g. 1.5"
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1 flex items-end">
+                  {bulkRows.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      onClick={() => setBulkRows(bulkRows.filter((_, i) => i !== idx))}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setBulkRows([...bulkRows, { name: "", category: "chemicals", unit: "liters", initialStock: "", minimumStock: "" }])
+              }
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Add Row
+            </Button>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setBulkDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const validRows = bulkRows.filter((r) => r.name.trim());
+                if (validRows.length === 0) {
+                  toast({ title: "Please fill in at least one item name", variant: "destructive" });
+                  return;
+                }
+                const payloads = validRows.map((r) => ({
+                  name: r.name.trim(),
+                  category: r.category,
+                  unit: r.unit,
+                  currentStock: r.initialStock ? Math.round(parseFloat(r.initialStock) * 100) : 0,
+                  minimumStock: r.minimumStock ? Math.round(parseFloat(r.minimumStock) * 100) : null,
+                }));
+                bulkCreateMutation.mutate(payloads);
+              }}
+              disabled={bulkCreateMutation.isPending || bulkRows.every((r) => !r.name.trim())}
+            >
+              {bulkCreateMutation.isPending ? (
+                <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+              ) : (
+                <PackageCheck className="w-4 h-4 mr-1" />
+              )}
+              Create {bulkRows.filter((r) => r.name.trim()).length} Item{bulkRows.filter((r) => r.name.trim()).length !== 1 ? "s" : ""}
             </Button>
           </DialogFooter>
         </DialogContent>

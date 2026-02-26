@@ -31,25 +31,23 @@ interface CRMBooking {
 
 const STATUS_COLORS: Record<WashStatus, string> = {
   received: "bg-blue-500",
-  prewash: "bg-cyan-500",
-  rinse: "bg-teal-500",
-  dry_vacuum: "bg-amber-500",
-  simple_polish: "bg-purple-500",
-  detailing_polish: "bg-indigo-500",
+  high_pressure_wash: "bg-cyan-500",
+  foam_application: "bg-teal-500",
+  rinse: "bg-sky-500",
+  hand_dry_vacuum: "bg-amber-500",
   tyre_shine: "bg-pink-500",
-  clay_treatment: "bg-rose-500",
+  quality_check: "bg-purple-500",
   complete: "bg-green-500",
 };
 
 const STATUS_LABELS: Record<WashStatus, string> = {
   received: "Received",
-  prewash: "Pre-Wash",
+  high_pressure_wash: "High Pressure Wash",
+  foam_application: "Foam Application",
   rinse: "Rinse",
-  dry_vacuum: "Dry & Vacuum",
-  simple_polish: "Simple Polish",
-  detailing_polish: "Detail Polish",
+  hand_dry_vacuum: "Hand Dry & Vacuum",
   tyre_shine: "Tyre Shine",
-  clay_treatment: "Clay Treatment",
+  quality_check: "Quality Check",
   complete: "Complete",
 };
 

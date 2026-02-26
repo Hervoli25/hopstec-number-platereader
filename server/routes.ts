@@ -903,10 +903,10 @@ export async function registerRoutes(
       if (!item) {
         return res.status(404).json({ message: "Checklist item not found" });
       }
-      // Auto-advance job from "received" to "prewash" on first checklist action
+      // Auto-advance job from "received" to "high_pressure_wash" on first checklist action
       let job = await storage.getWashJob(req.params.id);
       if (job && job.status === "received") {
-        job = await storage.updateWashJobStatus(req.params.id, "prewash") || job;
+        job = await storage.updateWashJobStatus(req.params.id, "high_pressure_wash") || job;
         broadcastEvent({ type: "wash_status_update", job });
       }
       // Broadcast checklist update to SSE clients
@@ -930,10 +930,10 @@ export async function registerRoutes(
       if (!item) {
         return res.status(404).json({ message: "Checklist item not found" });
       }
-      // Auto-advance job from "received" to "prewash" on first checklist action
+      // Auto-advance job from "received" to "high_pressure_wash" on first checklist action
       let job = await storage.getWashJob(req.params.id);
       if (job && job.status === "received") {
-        job = await storage.updateWashJobStatus(req.params.id, "prewash") || job;
+        job = await storage.updateWashJobStatus(req.params.id, "high_pressure_wash") || job;
         broadcastEvent({ type: "wash_status_update", job });
       }
       // Broadcast checklist update to SSE clients
@@ -1698,10 +1698,10 @@ export async function registerRoutes(
             const currentStep = checklist.find(i => !i.confirmed && !i.skipped);
             const currentStepLabel = currentStep?.label || null;
 
-            // Auto-fix: if job is still "received" but has confirmed/skipped steps, advance to "prewash"
+            // Auto-fix: if job is still "received" but has confirmed/skipped steps, advance to "high_pressure_wash"
             let updatedJob = job;
             if (job.status === "received" && doneSteps > 0) {
-              const advanced = await storage.updateWashJobStatus(job.id, "prewash");
+              const advanced = await storage.updateWashJobStatus(job.id, "high_pressure_wash");
               if (advanced) {
                 updatedJob = advanced;
                 broadcastEvent({ type: "wash_status_update", job: advanced });
