@@ -14,6 +14,7 @@ import type { Request, Response, NextFunction } from "express";
 // ---------------------------------------------------------------------------
 
 const HOPSTECH_URL = process.env.HOPSTECH_URL || "";
+const HOPSTECH_API_KEY = process.env.HOPSTECH_API_KEY || "";
 
 /** How many failed logins before we report as brute force */
 const BRUTE_FORCE_THRESHOLD = 5;
@@ -55,7 +56,15 @@ let lastBlockedRefresh = 0;
 // ---------------------------------------------------------------------------
 
 function isEnabled(): boolean {
-  return HOPSTECH_URL.length > 0 && HOPSTECH_URL.startsWith("http");
+  return HOPSTECH_URL.length > 0 && HOPSTECH_URL.startsWith("http") && HOPSTECH_API_KEY.length > 0;
+}
+
+/** Build common auth headers for OVERSEER API calls. */
+function authHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${HOPSTECH_API_KEY}`,
+  };
 }
 
 function getClientIp(req: Request): string {
@@ -66,7 +75,7 @@ function getClientIp(req: Request): string {
 }
 
 /**
- * Fire-and-forget POST to the OVERSEER /api/threats endpoint.
+ * Fire-and-forget POST to the OVERSEER /api/v1/ingest endpoint.
  * Never throws — errors are silently logged.
  */
 async function reportThreat(payload: {
@@ -80,9 +89,9 @@ async function reportThreat(payload: {
 }): Promise<void> {
   if (!isEnabled()) return;
   try {
-    await fetch(`${HOPSTECH_URL}/api/threats`, {
+    await fetch(`${HOPSTECH_URL}/api/v1/ingest`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify(payload),
     });
   } catch (err) {
@@ -96,7 +105,9 @@ async function refreshBlockedIps(): Promise<void> {
   if (!isEnabled()) return;
   if (Date.now() - lastBlockedRefresh < BLOCKED_IP_REFRESH_MS) return;
   try {
-    const res = await fetch(`${HOPSTECH_URL}/api/blocked-ips`);
+    const res = await fetch(`${HOPSTECH_URL}/api/v1/blocked-ips`, {
+      headers: authHeaders(),
+    });
     if (res.ok) {
       const list: Array<{ ipAddress: string }> = await res.json();
       blockedIps = new Set(list.map((b) => b.ipAddress));
