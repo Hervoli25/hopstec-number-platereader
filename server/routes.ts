@@ -18,6 +18,7 @@ import { authenticateWithCredentials, seedUsers, generateJobToken } from "./lib/
 import { extractTenantContext } from "./lib/tenant-context";
 import { getEnabledFeatures, seedFeatureFlags, requireFeature } from "./lib/feature-flags";
 import { generateBillingSnapshot, generateAllSnapshots } from "./lib/billing-snapshot";
+import { overseerRequestScanner, trackFailedLogin, clearFailedLogins, getClientIp } from "./lib/overseer-security";
 import { z } from "zod";
 import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE, SERVICE_PACKAGES, VEHICLE_SIZES } from "@shared/schema";
 import type { ServiceCode, WashStatus, VehicleSize } from "@shared/schema";
@@ -133,6 +134,9 @@ export async function registerRoutes(
   // Start webhook retry processor (CRM webhook exponential backoff)
   startWebhookProcessor();
 
+  // HOPSTECH-OVERSEER security scanner (SQL injection, XSS, etc.)
+  app.use("/api", overseerRequestScanner());
+
   // Multi-tenancy context middleware
   app.use("/api", extractTenantContext());
 
@@ -191,11 +195,16 @@ export async function registerRoutes(
       const authResult = await authenticateWithCredentials(email, password);
 
       if (!authResult.success || !authResult.user) {
+        // Track failed login for brute-force detection
+        trackFailedLogin(getClientIp(req));
         return res.status(401).json({ message: authResult.error || "Authentication failed" });
       }
 
       const user = authResult.user;
-      
+
+      // Clear failed-login counter on success
+      clearFailedLogins(getClientIp(req));
+
       // Set up passport session for credentials user
       req.login({
         claims: { sub: user.id },
@@ -208,7 +217,7 @@ export async function registerRoutes(
           console.error("Login error:", err);
           return res.status(500).json({ message: "Login failed" });
         }
-        res.json({ 
+        res.json({
           message: "Login successful",
           user: {
             id: user.id,
