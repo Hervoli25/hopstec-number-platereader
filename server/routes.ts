@@ -3385,6 +3385,77 @@ export async function registerRoutes(
     }
   });
 
+  // --- Stock Take (bulk adjust) ---
+  app.post("/api/inventory/stock-take", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const { adjustments, notes } = req.body;
+      if (!Array.isArray(adjustments) || adjustments.length === 0) {
+        return res.status(400).json({ message: "No adjustments provided" });
+      }
+
+      const results: Array<{
+        itemId: string;
+        itemName: string;
+        unit: string;
+        previousStock: number;
+        newStock: number;
+        difference: number;
+        isLowStock: boolean;
+        minimumStock: number;
+      }> = [];
+
+      for (const adj of adjustments) {
+        if (!adj.itemId || typeof adj.newStock !== "number") continue;
+        const item = await storage.getInventoryItem(adj.itemId);
+        if (!item) continue;
+        const currentStock = item.currentStock ?? 0;
+        const delta = adj.newStock - currentStock;
+        if (delta === 0) continue;
+        const updated = await storage.adjustInventoryStock(adj.itemId, delta);
+        if (updated) {
+          results.push({
+            itemId: adj.itemId,
+            itemName: updated.name,
+            unit: updated.unit,
+            previousStock: currentStock,
+            newStock: adj.newStock,
+            difference: delta,
+            isLowStock: adj.newStock <= (updated.minimumStock ?? 0),
+            minimumStock: updated.minimumStock ?? 0,
+          });
+        }
+      }
+
+      const dateStr = new Date().toISOString().split("T")[0];
+      await storage.logEvent({
+        type: "stock_take",
+        userId: req.user?.id,
+        payloadJson: {
+          date: dateStr,
+          notes: notes || `Stock take - ${dateStr}`,
+          itemCount: results.length,
+          adjustments: results.map((r) => ({
+            itemId: r.itemId,
+            itemName: r.itemName,
+            previousStock: r.previousStock,
+            newStock: r.newStock,
+            difference: r.difference,
+          })),
+        },
+      });
+
+      res.json({
+        success: true,
+        adjustedCount: results.length,
+        results,
+        lowStockItems: results.filter((r) => r.isLowStock),
+      });
+    } catch (error) {
+      console.error("Error performing stock take:", error);
+      res.status(500).json({ message: "Failed to complete stock take" });
+    }
+  });
+
   // --- Suppliers ---
   app.get("/api/inventory/suppliers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {

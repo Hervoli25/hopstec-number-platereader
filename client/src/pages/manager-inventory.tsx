@@ -56,6 +56,8 @@ import {
   CircleDot,
   Disc,
   Layers,
+  ClipboardCheck,
+  ChevronLeft,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -255,8 +257,27 @@ export default function ManagerInventory() {
     category: string;
     unit: string;
     initialStock: string;
+    costPerUnit: string;
     minimumStock: string;
-  }>>([{ name: "", category: "chemicals", unit: "liters", initialStock: "", minimumStock: "" }]);
+  }>>([{ name: "", category: "chemicals", unit: "liters", initialStock: "", costPerUnit: "", minimumStock: "" }]);
+
+  // Stock take state
+  const [stockTakeDialogOpen, setStockTakeDialogOpen] = useState(false);
+  const [stockTakePhase, setStockTakePhase] = useState<"input" | "confirm" | "results">("input");
+  const [stockTakeCounts, setStockTakeCounts] = useState<Record<string, string>>({});
+  const [stockTakeSearch, setStockTakeSearch] = useState("");
+  const [stockTakeCategoryFilter, setStockTakeCategoryFilter] = useState<string>("all");
+  const [stockTakeShowFilter, setStockTakeShowFilter] = useState<"all" | "changed">("all");
+  const [stockTakeResults, setStockTakeResults] = useState<Array<{
+    itemId: string;
+    itemName: string;
+    unit: string;
+    previousStock: number;
+    newStock: number;
+    difference: number;
+    isLowStock: boolean;
+    minimumStock: number;
+  }>>([]);
 
   // Item form state
   const [itemForm, setItemForm] = useState({
@@ -265,6 +286,7 @@ export default function ManagerInventory() {
     category: "chemicals" as (typeof INVENTORY_CATEGORIES)[number],
     unit: "liters" as string,
     initialStock: "",
+    costPerUnit: "",
     sellingPricePerUnit: "",
     minimumStock: "",
     supplierId: "none",
@@ -394,6 +416,29 @@ export default function ManagerInventory() {
     return map;
   }, [items]);
 
+  const stockTakeChangedItems = useMemo(() => {
+    if (!items) return [];
+    return items
+      .filter((item) => {
+        const countedStr = stockTakeCounts[item.id];
+        if (!countedStr || countedStr.trim() === "") return false;
+        const counted = parseFloat(countedStr);
+        if (isNaN(counted)) return false;
+        return Math.round(counted * 100) !== (item.currentStock ?? 0);
+      })
+      .map((item) => {
+        const counted = parseFloat(stockTakeCounts[item.id]);
+        const countedHundredths = Math.round(counted * 100);
+        const currentHundredths = item.currentStock ?? 0;
+        return {
+          item,
+          countedHundredths,
+          diff: countedHundredths - currentHundredths,
+          isLowStock: countedHundredths <= (item.minimumStock ?? 0),
+        };
+      });
+  }, [items, stockTakeCounts]);
+
   // =========================================================================
   //  MUTATIONS
   // =========================================================================
@@ -466,10 +511,27 @@ export default function ManagerInventory() {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/items"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/analytics"] });
       setBulkDialogOpen(false);
-      setBulkRows([{ name: "", category: "chemicals", unit: "liters", initialStock: "", minimumStock: "" }]);
+      setBulkRows([{ name: "", category: "chemicals", unit: "liters", initialStock: "", costPerUnit: "", minimumStock: "" }]);
     },
     onError: (err: Error) =>
       toast({ title: err.message || "Failed to create items", variant: "destructive" }),
+  });
+
+  const stockTakeMutation = useMutation({
+    mutationFn: async (data: { adjustments: Array<{ itemId: string; newStock: number }>; notes: string }) => {
+      const res = await apiRequest("POST", "/api/inventory/stock-take", data);
+      return res.json();
+    },
+    onSuccess: (data: { adjustedCount: number; results: typeof stockTakeResults; lowStockItems: typeof stockTakeResults }) => {
+      toast({ title: `Stock take complete: ${data.adjustedCount} item(s) updated` });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/low-stock"] });
+      setStockTakeResults(data.results);
+      setStockTakePhase("results");
+    },
+    onError: (err: Error) =>
+      toast({ title: err.message || "Failed to complete stock take", variant: "destructive" }),
   });
 
   // -- Suppliers --
@@ -564,6 +626,46 @@ export default function ManagerInventory() {
   });
 
   // =========================================================================
+  //  STOCK TAKE HELPERS
+  // =========================================================================
+
+  function openStockTake() {
+    setStockTakeCounts({});
+    setStockTakePhase("input");
+    setStockTakeResults([]);
+    setStockTakeCategoryFilter("all");
+    setStockTakeSearch("");
+    setStockTakeShowFilter("all");
+    queryClient.invalidateQueries({ queryKey: ["/api/inventory/items"] });
+    setStockTakeDialogOpen(true);
+  }
+
+  function closeStockTake() {
+    setStockTakeDialogOpen(false);
+    setStockTakeCounts({});
+    setStockTakePhase("input");
+    setStockTakeResults([]);
+  }
+
+  function handleStockTakeSubmit() {
+    const adjustments = stockTakeChangedItems.map(({ item, countedHundredths }) => ({
+      itemId: item.id,
+      newStock: countedHundredths,
+    }));
+    if (adjustments.length === 0) {
+      toast({ title: "No changes to submit", variant: "destructive" });
+      return;
+    }
+    const dateStr = new Date().toLocaleDateString("en-GB", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    stockTakeMutation.mutate({ adjustments, notes: `Stock take - ${dateStr}` });
+  }
+
+  // =========================================================================
   //  FORM HELPERS
   // =========================================================================
 
@@ -574,6 +676,7 @@ export default function ManagerInventory() {
       category: "chemicals",
       unit: "liters",
       initialStock: "",
+      costPerUnit: "",
       sellingPricePerUnit: "",
       minimumStock: "",
       supplierId: "none",
@@ -620,6 +723,7 @@ export default function ManagerInventory() {
       category: item.category,
       unit: item.unit,
       initialStock: item.currentStock != null ? String(item.currentStock / 100) : "",
+      costPerUnit: item.costPerUnit != null ? (item.costPerUnit / 100).toFixed(2) : "",
       sellingPricePerUnit:
         item.sellingPricePerUnit != null ? (item.sellingPricePerUnit / 100).toFixed(2) : "",
       minimumStock: item.minimumStock != null ? String(item.minimumStock / 100) : "",
@@ -642,6 +746,9 @@ export default function ManagerInventory() {
       category: itemForm.category,
       unit: itemForm.unit,
       currentStock: itemForm.initialStock ? Math.round(parseFloat(itemForm.initialStock) * 100) : 0,
+      costPerUnit: itemForm.costPerUnit
+        ? Math.round(parseFloat(itemForm.costPerUnit) * 100)
+        : null,
       sellingPricePerUnit: itemForm.sellingPricePerUnit
         ? Math.round(parseFloat(itemForm.sellingPricePerUnit) * 100)
         : null,
@@ -986,6 +1093,15 @@ export default function ManagerInventory() {
                   >
                     <Boxes className="w-4 h-4 mr-1" />
                     Bulk Add
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={openStockTake}
+                    className="shrink-0"
+                  >
+                    <ClipboardCheck className="w-4 h-4 mr-1" />
+                    Stock Take
                   </Button>
                 </div>
               </CardContent>
@@ -1695,6 +1811,19 @@ export default function ManagerInventory() {
                 />
               </div>
               <div className="space-y-1">
+                <Label>Cost per Unit ({currencySymbol})</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={itemForm.costPerUnit}
+                  onChange={(e) =>
+                    setItemForm((f) => ({ ...f, costPerUnit: e.target.value }))
+                  }
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="space-y-1">
                 <Label>Selling Price ({currencySymbol})</Label>
                 <Input
                   type="number"
@@ -2219,7 +2348,7 @@ export default function ManagerInventory() {
           <div className="space-y-3">
             {bulkRows.map((row, idx) => (
               <div key={idx} className="grid grid-cols-12 gap-2 items-end">
-                <div className="col-span-12 sm:col-span-3 space-y-1">
+                <div className="col-span-12 sm:col-span-2 space-y-1">
                   {idx === 0 && <Label className="text-xs">Name *</Label>}
                   <Input
                     className="h-8 text-xs"
@@ -2254,7 +2383,7 @@ export default function ManagerInventory() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="col-span-6 sm:col-span-2 space-y-1">
+                <div className="col-span-6 sm:col-span-1 space-y-1">
                   {idx === 0 && <Label className="text-xs">Unit</Label>}
                   <Select
                     value={row.unit}
@@ -2274,7 +2403,7 @@ export default function ManagerInventory() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="col-span-5 sm:col-span-2 space-y-1">
+                <div className="col-span-4 sm:col-span-2 space-y-1">
                   {idx === 0 && <Label className="text-xs">Qty Received</Label>}
                   <Input
                     className="h-8 text-xs"
@@ -2287,10 +2416,26 @@ export default function ManagerInventory() {
                       updated[idx] = { ...updated[idx], initialStock: e.target.value };
                       setBulkRows(updated);
                     }}
-                    placeholder="e.g. 5 or 25"
+                    placeholder="e.g. 5"
                   />
                 </div>
-                <div className="col-span-5 sm:col-span-2 space-y-1">
+                <div className="col-span-4 sm:col-span-2 space-y-1">
+                  {idx === 0 && <Label className="text-xs">Cost ({currencySymbol})</Label>}
+                  <Input
+                    className="h-8 text-xs"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={row.costPerUnit}
+                    onChange={(e) => {
+                      const updated = [...bulkRows];
+                      updated[idx] = { ...updated[idx], costPerUnit: e.target.value };
+                      setBulkRows(updated);
+                    }}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="col-span-4 sm:col-span-2 space-y-1">
                   {idx === 0 && <Label className="text-xs">Min Stock</Label>}
                   <Input
                     className="h-8 text-xs"
@@ -2325,7 +2470,7 @@ export default function ManagerInventory() {
               variant="outline"
               size="sm"
               onClick={() =>
-                setBulkRows([...bulkRows, { name: "", category: "chemicals", unit: "liters", initialStock: "", minimumStock: "" }])
+                setBulkRows([...bulkRows, { name: "", category: "chemicals", unit: "liters", initialStock: "", costPerUnit: "", minimumStock: "" }])
               }
             >
               <Plus className="w-4 h-4 mr-1" />
@@ -2349,6 +2494,7 @@ export default function ManagerInventory() {
                   category: r.category,
                   unit: r.unit,
                   currentStock: r.initialStock ? Math.round(parseFloat(r.initialStock) * 100) : 0,
+                  costPerUnit: r.costPerUnit ? Math.round(parseFloat(r.costPerUnit) * 100) : null,
                   minimumStock: r.minimumStock ? Math.round(parseFloat(r.minimumStock) * 100) : null,
                 }));
                 bulkCreateMutation.mutate(payloads);
@@ -2363,6 +2509,287 @@ export default function ManagerInventory() {
               Create {bulkRows.filter((r) => r.name.trim()).length} Item{bulkRows.filter((r) => r.name.trim()).length !== 1 ? "s" : ""}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ================================================================= */}
+      {/*  STOCK TAKE DIALOG                                                */}
+      {/* ================================================================= */}
+      <Dialog open={stockTakeDialogOpen} onOpenChange={(open) => { if (!open) closeStockTake(); }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardCheck className="w-5 h-5" />
+              Stock Take {stockTakePhase === "results" ? "- Complete" : `- ${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`}
+            </DialogTitle>
+            <DialogDescription>
+              {stockTakePhase === "input" && "Count your physical inventory and enter the actual quantities below."}
+              {stockTakePhase === "confirm" && "Review the changes below before applying."}
+              {stockTakePhase === "results" && "Stock take has been applied. See the summary below."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* ---- PHASE 1: INPUT ---- */}
+          {stockTakePhase === "input" && (
+            <div className="space-y-4">
+              {/* Filters */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="relative flex-1 min-w-[150px]">
+                  <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    className="pl-8 h-9 text-sm"
+                    placeholder="Search items..."
+                    value={stockTakeSearch}
+                    onChange={(e) => setStockTakeSearch(e.target.value)}
+                  />
+                </div>
+                <Select value={stockTakeCategoryFilter} onValueChange={setStockTakeCategoryFilter}>
+                  <SelectTrigger className="w-[140px] h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {INVENTORY_CATEGORIES.map((cat) => (
+                      <SelectItem key={cat} value={cat}>{categoryLabel(cat)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={stockTakeShowFilter} onValueChange={(v) => setStockTakeShowFilter(v as "all" | "changed")}>
+                  <SelectTrigger className="w-[120px] h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Items</SelectItem>
+                    <SelectItem value="changed">Changed Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Items grid */}
+              <div className="space-y-1">
+                <div className="grid grid-cols-12 gap-2 px-2 text-xs font-medium text-muted-foreground">
+                  <div className="col-span-4">Item</div>
+                  <div className="col-span-2 text-right">Current</div>
+                  <div className="col-span-3">Counted</div>
+                  <div className="col-span-1 text-right">Diff</div>
+                  <div className="col-span-2 text-center">Status</div>
+                </div>
+                <div className="max-h-[50vh] overflow-y-auto space-y-1">
+                  {(items || [])
+                    .filter((item) => {
+                      if (stockTakeCategoryFilter !== "all" && item.category !== stockTakeCategoryFilter) return false;
+                      if (stockTakeSearch) {
+                        const term = stockTakeSearch.toLowerCase();
+                        if (!item.name.toLowerCase().includes(term) && !(item.sku && item.sku.toLowerCase().includes(term))) return false;
+                      }
+                      if (stockTakeShowFilter === "changed") {
+                        const v = stockTakeCounts[item.id];
+                        if (!v || v.trim() === "") return false;
+                        const counted = parseFloat(v);
+                        if (isNaN(counted) || Math.round(counted * 100) === (item.currentStock ?? 0)) return false;
+                      }
+                      return true;
+                    })
+                    .map((item) => {
+                      const countedStr = stockTakeCounts[item.id] || "";
+                      const hasCounted = countedStr.trim() !== "" && !isNaN(parseFloat(countedStr));
+                      const countedHundredths = hasCounted ? Math.round(parseFloat(countedStr) * 100) : null;
+                      const currentHundredths = item.currentStock ?? 0;
+                      const diff = countedHundredths !== null ? countedHundredths - currentHundredths : null;
+                      const previewStock = countedHundredths ?? currentHundredths;
+                      const colorClass = stockColorClass(previewStock, item.minimumStock);
+                      const min = item.minimumStock ?? 0;
+                      const barPct = min > 0 ? Math.min(100, Math.round((previewStock / (min * 3)) * 100)) : 100;
+                      const barColor = previewStock <= min ? "bg-red-500" : previewStock < min * 2 ? "bg-amber-500" : "bg-green-500";
+
+                      return (
+                        <div key={item.id} className="grid grid-cols-12 gap-2 items-center px-2 py-2 rounded-md border border-border/50 hover:bg-muted/30">
+                          <div className="col-span-4">
+                            <p className="text-sm font-medium truncate">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.sku && <span>{item.sku} · </span>}
+                              {categoryLabel(item.category)}
+                              {min > 0 && <span className="ml-1 text-muted-foreground/60">· min: {stockToDisplay(min)}</span>}
+                            </p>
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <span className="text-sm font-mono">{stockToDisplay(currentHundredths)}</span>
+                            <span className="text-xs text-muted-foreground ml-1">{item.unit}</span>
+                          </div>
+                          <div className="col-span-3">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="h-8 text-sm"
+                              placeholder={stockToDisplay(currentHundredths)}
+                              value={countedStr}
+                              onChange={(e) => setStockTakeCounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                            />
+                          </div>
+                          <div className="col-span-1 text-right">
+                            {diff !== null && diff !== 0 ? (
+                              <span className={`text-xs font-mono font-semibold ${diff > 0 ? "text-green-500" : "text-red-500"}`}>
+                                {diff > 0 ? "+" : ""}{stockToDisplay(diff)}
+                              </span>
+                            ) : diff === 0 ? (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            ) : null}
+                          </div>
+                          <div className="col-span-2">
+                            <div className="flex items-center gap-1.5">
+                              <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                                <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${barPct}%` }} />
+                              </div>
+                              {hasCounted && previewStock <= min && min > 0 && (
+                                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* Summary footer */}
+              <div className="flex items-center justify-between pt-2 border-t text-sm text-muted-foreground">
+                <div>
+                  <span className="font-medium text-foreground">{stockTakeChangedItems.length}</span> item{stockTakeChangedItems.length !== 1 ? "s" : ""} changed
+                  {stockTakeChangedItems.filter((c) => c.isLowStock).length > 0 && (
+                    <span className="ml-2 text-red-500 font-medium">
+                      · {stockTakeChangedItems.filter((c) => c.isLowStock).length} will be low stock
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={closeStockTake}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (stockTakeChangedItems.length === 0) {
+                        toast({ title: "No changes to submit", variant: "destructive" });
+                        return;
+                      }
+                      setStockTakePhase("confirm");
+                    }}
+                    disabled={stockTakeChangedItems.length === 0}
+                  >
+                    Review Changes ({stockTakeChangedItems.length})
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ---- PHASE 2: CONFIRMATION ---- */}
+          {stockTakePhase === "confirm" && (
+            <div className="space-y-4">
+              {stockTakeChangedItems.filter((c) => c.isLowStock).length > 0 && (
+                <div className="flex items-center gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-600 text-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>
+                    <strong>{stockTakeChangedItems.filter((c) => c.isLowStock).length} item(s)</strong> will be at or below minimum stock after this update.
+                  </span>
+                </div>
+              )}
+
+              <div className="max-h-[50vh] overflow-y-auto space-y-1">
+                {stockTakeChangedItems.map(({ item, countedHundredths, diff, isLowStock }) => {
+                  const min = item.minimumStock ?? 0;
+                  return (
+                    <div key={item.id} className={`flex items-center justify-between px-3 py-2 rounded-md border ${isLowStock ? "border-red-500/40 bg-red-500/5" : "border-border/50"}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">{categoryLabel(item.category)} · {item.unit}{min > 0 ? ` · min: ${stockToDisplay(min)}` : ""}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-sm font-mono text-muted-foreground">{stockToDisplay(item.currentStock)}</span>
+                        <span className="text-muted-foreground">→</span>
+                        <span className="text-sm font-mono font-semibold">{stockToDisplay(countedHundredths)}</span>
+                        <span className={`text-xs font-mono font-semibold min-w-[50px] text-right ${diff > 0 ? "text-green-500" : "text-red-500"}`}>
+                          ({diff > 0 ? "+" : ""}{stockToDisplay(diff)})
+                        </span>
+                        {isLowStock && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button variant="outline" onClick={() => setStockTakePhase("input")}>
+                  <ChevronLeft className="w-4 h-4 mr-1" />
+                  Back to Edit
+                </Button>
+                <Button onClick={handleStockTakeSubmit} disabled={stockTakeMutation.isPending}>
+                  {stockTakeMutation.isPending ? (
+                    <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4 mr-1" />
+                  )}
+                  Confirm & Apply ({stockTakeChangedItems.length} item{stockTakeChangedItems.length !== 1 ? "s" : ""})
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+
+          {/* ---- PHASE 3: RESULTS ---- */}
+          {stockTakePhase === "results" && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 rounded-md bg-green-500/10 border border-green-500/30 text-green-600 text-sm">
+                <Check className="w-4 h-4 shrink-0" />
+                <span><strong>{stockTakeResults.length} item(s)</strong> updated successfully.</span>
+              </div>
+
+              {stockTakeResults.filter((r) => r.isLowStock).length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-red-500 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" />
+                    Low Stock Alerts
+                  </h4>
+                  {stockTakeResults.filter((r) => r.isLowStock).map((r) => (
+                    <div key={r.itemId} className="flex items-center justify-between px-3 py-2 rounded-md border border-red-500/40 bg-red-500/5">
+                      <div>
+                        <p className="text-sm font-medium">{r.itemName}</p>
+                        <p className="text-xs text-muted-foreground">min: {stockToDisplay(r.minimumStock)} {r.unit}</p>
+                      </div>
+                      <Badge className="text-red-600 bg-red-500/10 border-red-500/30">
+                        {stockToDisplay(r.newStock)} / {stockToDisplay(r.minimumStock)} {r.unit}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <h4 className="text-sm font-semibold text-muted-foreground">All Changes</h4>
+                <div className="max-h-[40vh] overflow-y-auto space-y-1">
+                  {stockTakeResults.map((r) => (
+                    <div key={r.itemId} className="flex items-center justify-between px-3 py-1.5 rounded-md border border-border/50 text-sm">
+                      <span className="truncate flex-1 min-w-0">{r.itemName}</span>
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <span className="font-mono text-muted-foreground">{stockToDisplay(r.previousStock)}</span>
+                        <span className="text-muted-foreground">→</span>
+                        <span className="font-mono font-semibold">{stockToDisplay(r.newStock)}</span>
+                        <span className={`font-mono text-xs min-w-[50px] text-right ${r.difference > 0 ? "text-green-500" : "text-red-500"}`}>
+                          ({r.difference > 0 ? "+" : ""}{stockToDisplay(r.difference)})
+                        </span>
+                        {r.isLowStock ? (
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5 text-green-500" />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button onClick={closeStockTake}>Close</Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
