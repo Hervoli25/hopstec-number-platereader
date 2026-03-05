@@ -43,6 +43,8 @@ import BusinessSettings from "@/pages/business-settings";
 import PrivacyPolicy from "@/pages/legal/privacy";
 import TermsOfService from "@/pages/legal/terms";
 import CookiePolicy from "@/pages/legal/cookies";
+import TenantConduct from "@/pages/legal/tenant-conduct";
+import FranchiseCharter from "@/pages/legal/franchise-charter";
 import Help from "@/pages/help";
 import TechnicianGuide from "@/pages/help/technician";
 import ManagerGuide from "@/pages/help/manager";
@@ -50,6 +52,7 @@ import AdminGuide from "@/pages/help/admin";
 import CustomerGuide from "@/pages/help/customer";
 import FAQ from "@/pages/help/faq";
 import GettingStarted from "@/pages/help/getting-started";
+import TenantPortal from "@/pages/tenant-portal";
 
 function LoadingScreen() {
   return (
@@ -80,7 +83,8 @@ function AppRouter() {
   const isPublicPath = publicPaths.includes(location) ||
                        location.startsWith("/customer/job/") ||
                        location.startsWith("/legal/") ||
-                       location.startsWith("/help");
+                       location.startsWith("/help") ||
+                       location.startsWith("/t/");
 
   // Landing page is public
   if (location === "/landing") {
@@ -93,10 +97,13 @@ function AppRouter() {
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />
         <Route path="/customer/job/:token" component={CustomerJob} />
+        <Route path="/t/:slug" component={TenantPortal} />
         <Route path="/about" component={About} />
         <Route path="/legal/privacy" component={PrivacyPolicy} />
         <Route path="/legal/terms" component={TermsOfService} />
         <Route path="/legal/cookies" component={CookiePolicy} />
+        <Route path="/legal/tenant-conduct" component={TenantConduct} />
+        <Route path="/legal/franchise-charter" component={FranchiseCharter} />
         <Route path="/help" component={Help} />
         <Route path="/help/technician" component={TechnicianGuide} />
         <Route path="/help/manager" component={ManagerGuide} />

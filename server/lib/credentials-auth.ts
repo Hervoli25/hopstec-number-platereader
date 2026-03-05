@@ -55,11 +55,12 @@ export async function createCredentialsUser(
   email: string,
   password: string,
   role: "technician" | "manager" | "admin",
-  name?: string
+  name?: string,
+  tenantId?: string
 ): Promise<User> {
   const passwordHash = await hashPassword(password);
   const id = crypto.randomUUID();
-  
+
   const user = await storage.createUser({
     id,
     email,
@@ -68,8 +69,9 @@ export async function createCredentialsUser(
     firstName: name?.split(" ")[0] || null,
     lastName: name?.split(" ").slice(1).join(" ") || null,
     isActive: true,
+    tenantId: tenantId || "default",
   });
-  
+
   return user;
 }
 

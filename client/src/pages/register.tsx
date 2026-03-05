@@ -1,19 +1,39 @@
 import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { useMutation } from "@tanstack/react-query";
+import { Link, useLocation, useSearch } from "wouter";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Loader2, UserPlus, ArrowLeft, Eye, EyeOff } from "lucide-react";
+import { Loader2, UserPlus, ArrowLeft, Eye, EyeOff, Building2, Shield } from "lucide-react";
 import hopsovirLogo from "@/assets/images/logo.png";
+
+interface TenantBranding {
+  name: string;
+  primaryColor: string | null;
+  secondaryColor: string | null;
+  logoUrl: string | null;
+}
 
 export default function Register() {
   const [, setLocation] = useLocation();
+  const search = useSearch();
   const { toast } = useToast();
+
+  // Extract tenant slug from query string (?tenant=sparklemycar)
+  const params = new URLSearchParams(search);
+  const tenantSlug = params.get("tenant");
+
+  // Fetch tenant branding if tenantSlug is present
+  const { data: tenantBranding } = useQuery<TenantBranding>({
+    queryKey: [`/api/public/branding/${tenantSlug}`],
+    enabled: !!tenantSlug,
+  });
+
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -25,16 +45,25 @@ export default function Register() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const registerMutation = useMutation({
-    mutationFn: async (data: { email: string; password: string; firstName: string; lastName: string }) => {
+    mutationFn: async (data: {
+      email: string;
+      password: string;
+      firstName: string;
+      lastName: string;
+      tenantSlug?: string;
+    }) => {
       const res = await apiRequest("POST", "/api/auth/credentials/register", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       queryClient.invalidateQueries({ queryKey: ["/api/user/role"] });
+      const roleMsg = data.role === "manager"
+        ? "You've been assigned as tenant manager."
+        : "You can now sign in.";
       toast({
         title: "Registration successful",
-        description: "Welcome to HOPSVOIR! You can now sign in.",
+        description: `Welcome! ${roleMsg}`,
       });
       setLocation("/login");
     },
@@ -49,7 +78,7 @@ export default function Register() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.email || !formData.password || !formData.firstName) {
       toast({
         title: "Missing information",
@@ -82,8 +111,12 @@ export default function Register() {
       password: formData.password,
       firstName: formData.firstName,
       lastName: formData.lastName,
+      ...(tenantSlug ? { tenantSlug } : {}),
     });
   };
+
+  const primaryColor = tenantBranding?.primaryColor || undefined;
+  const backLink = tenantSlug ? `/t/${tenantSlug}` : "/login";
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -93,22 +126,52 @@ export default function Register() {
         className="w-full max-w-md"
       >
         <div className="text-center mb-8">
-          <img 
-            src={hopsovirLogo} 
-            alt="HOPSVOIR" 
-            className="h-16 mx-auto mb-4"
-          />
+          {tenantBranding?.logoUrl ? (
+            <img
+              src={tenantBranding.logoUrl}
+              alt={tenantBranding.name}
+              className="h-16 mx-auto mb-4"
+            />
+          ) : tenantBranding ? (
+            <div
+              className="w-16 h-16 rounded-xl flex items-center justify-center text-white font-bold text-2xl mx-auto mb-4"
+              style={{ backgroundColor: primaryColor || "#3B82F6" }}
+            >
+              {tenantBranding.name[0]?.toUpperCase()}
+            </div>
+          ) : (
+            <img
+              src={hopsovirLogo}
+              alt="HOPSVOIR"
+              className="h-16 mx-auto mb-4"
+            />
+          )}
           <h1 className="text-2xl font-bold">Create Account</h1>
-          <p className="text-muted-foreground mt-2">
-            Join HOPSVOIR as a new team member
-          </p>
+          {tenantBranding ? (
+            <div className="mt-2 space-y-1">
+              <p className="text-muted-foreground">
+                Join <span className="font-semibold" style={{ color: primaryColor }}>{tenantBranding.name}</span>
+              </p>
+              <Badge variant="secondary" className="gap-1">
+                <Building2 className="w-3 h-3" />
+                {tenantBranding.name}
+              </Badge>
+            </div>
+          ) : (
+            <p className="text-muted-foreground mt-2">
+              Join HOPSVOIR as a new team member
+            </p>
+          )}
         </div>
 
         <Card>
           <CardHeader>
             <CardTitle>Register</CardTitle>
             <CardDescription>
-              Create your technician account
+              {tenantBranding
+                ? `Create your account for ${tenantBranding.name}. The first user becomes the tenant manager.`
+                : "Create your technician account"
+              }
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -206,11 +269,12 @@ export default function Register() {
                 </div>
               </div>
 
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 className="w-full"
                 disabled={registerMutation.isPending}
                 data-testid="button-register"
+                style={primaryColor ? { backgroundColor: primaryColor, color: "#fff" } : {}}
               >
                 {registerMutation.isPending ? (
                   <>
@@ -226,17 +290,32 @@ export default function Register() {
               </Button>
             </form>
 
-            <p className="text-center text-sm text-muted-foreground mt-4">
-              New accounts are created as technicians. Contact an admin to upgrade your role.
-            </p>
+            {tenantBranding ? (
+              <div className="mt-4 space-y-2">
+                <p className="text-center text-xs text-muted-foreground flex items-center justify-center gap-1">
+                  <Shield className="w-3 h-3" />
+                  First registered user becomes the tenant manager
+                </p>
+                <p className="text-center text-xs text-muted-foreground">
+                  By registering, you agree to the{" "}
+                  <Link href="/legal/tenant-conduct" className="text-primary hover:underline">Code of Conduct</Link>{" "}
+                  and{" "}
+                  <Link href="/legal/franchise-charter" className="text-primary hover:underline">Franchise Charter</Link>
+                </p>
+              </div>
+            ) : (
+              <p className="text-center text-sm text-muted-foreground mt-4">
+                New accounts are created as technicians. Contact an admin to upgrade your role.
+              </p>
+            )}
           </CardContent>
         </Card>
 
         <div className="text-center mt-6">
-          <Link href="/login">
+          <Link href={backLink}>
             <Button variant="ghost" data-testid="link-back-to-login">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Sign In
+              {tenantSlug ? "Back to Portal" : "Back to Sign In"}
             </Button>
           </Link>
         </div>

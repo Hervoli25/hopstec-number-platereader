@@ -16,6 +16,8 @@ export const loyaltyTierEnum = pgEnum("loyalty_tier", ["basic", "premium"]);
 export const inventoryCategoryEnum = pgEnum("inventory_category", ["chemicals", "cloths_towels", "wax_polish", "brushes_sponges", "air_fresheners", "interior_care", "tire_wheel_care", "sealants_coatings", "safety_gear", "equipment", "packaging", "other"]);
 export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", ["draft", "submitted", "received", "cancelled"]);
 export const tenantPlanEnum = pgEnum("tenant_plan", ["free", "basic", "pro", "enterprise"]);
+export const tenantStatusEnum = pgEnum("tenant_status", ["trial", "active", "suspended", "inactive"]);
+export const invoiceStatusEnum = pgEnum("invoice_status", ["draft", "pending", "paid", "overdue", "cancelled"]);
 
 // Tenants (multi-tenancy)
 export const tenants = pgTable("tenants", {
@@ -23,12 +25,21 @@ export const tenants = pgTable("tenants", {
   name: varchar("name", { length: 255 }).notNull(),
   slug: varchar("slug", { length: 100 }).notNull().unique(),
   plan: tenantPlanEnum("plan").notNull().default("free"),
+  status: tenantStatusEnum("status").notNull().default("trial"),
   isActive: boolean("is_active").default(true),
+  // Contact info
+  contactEmail: varchar("contact_email", { length: 255 }),
+  contactPhone: varchar("contact_phone", { length: 50 }),
+  address: text("address"),
+  // Branding
   primaryColor: varchar("primary_color", { length: 20 }),
   secondaryColor: varchar("secondary_color", { length: 20 }),
   logoUrl: text("logo_url"),
   faviconUrl: text("favicon_url"),
   customDomain: varchar("custom_domain", { length: 255 }),
+  // Trial & billing
+  trialEndsAt: timestamp("trial_ends_at"),
+  billingEmail: varchar("billing_email", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -601,6 +612,38 @@ export const billingSnapshots = pgTable("billing_snapshots", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Invoices (per-tenant billing invoices)
+export const invoices = pgTable("invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  invoiceNumber: varchar("invoice_number", { length: 50 }).notNull().unique(),
+  status: invoiceStatusEnum("status").notNull().default("draft"),
+  // Period
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  // Amounts
+  subtotal: integer("subtotal").default(0), // in cents
+  tax: integer("tax").default(0), // in cents
+  total: integer("total").default(0), // in cents
+  // Plan at time of invoice
+  planAtTime: varchar("plan_at_time", { length: 20 }),
+  // Usage at time of invoice
+  washCount: integer("wash_count").default(0),
+  parkingSessionCount: integer("parking_session_count").default(0),
+  activeUserCount: integer("active_user_count").default(0),
+  branchCount: integer("branch_count").default(0),
+  // Line items (JSON array)
+  lineItems: jsonb("line_items").$type<Array<{ description: string; quantity: number; unitPrice: number; total: number }>>().default([]),
+  // Dates
+  issuedAt: timestamp("issued_at"),
+  dueDate: timestamp("due_date"),
+  paidAt: timestamp("paid_at"),
+  // Notes
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Feature Flags (global definitions)
 export const featureFlags = pgTable("feature_flags", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -659,6 +702,7 @@ export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, 
 export const insertBillingSnapshotSchema = createInsertSchema(billingSnapshots).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertFeatureFlagSchema = createInsertSchema(featureFlags).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertTenantFeatureOverrideSchema = createInsertSchema(tenantFeatureOverrides).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -765,6 +809,9 @@ export type InsertFeatureFlag = z.infer<typeof insertFeatureFlagSchema>;
 
 export type TenantFeatureOverride = typeof tenantFeatureOverrides.$inferSelect;
 export type InsertTenantFeatureOverride = z.infer<typeof insertTenantFeatureOverrideSchema>;
+
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"] as const;

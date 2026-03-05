@@ -47,6 +47,18 @@ export function AppFooter() {
                 Cookie Policy
               </span>
             </Link>
+            <span className="text-muted-foreground/40">•</span>
+            <Link href="/legal/tenant-conduct">
+              <span className="hover:text-primary transition-colors cursor-pointer">
+                Code of Conduct
+              </span>
+            </Link>
+            <span className="text-muted-foreground/40">•</span>
+            <Link href="/legal/franchise-charter">
+              <span className="hover:text-primary transition-colors cursor-pointer">
+                Franchise Charter
+              </span>
+            </Link>
           </div>
         </div>
       </div>
@@ -91,6 +103,18 @@ export function CompactFooter() {
           <Link href="/legal/cookies">
             <span className="hover:text-primary transition-colors cursor-pointer">
               Cookies
+            </span>
+          </Link>
+          <span className="text-muted-foreground/40">•</span>
+          <Link href="/legal/tenant-conduct">
+            <span className="hover:text-primary transition-colors cursor-pointer">
+              Conduct
+            </span>
+          </Link>
+          <span className="text-muted-foreground/40">•</span>
+          <Link href="/legal/franchise-charter">
+            <span className="hover:text-primary transition-colors cursor-pointer">
+              Franchise
             </span>
           </Link>
         </div>

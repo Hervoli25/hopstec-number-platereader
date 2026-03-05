@@ -149,6 +149,7 @@ export async function registerRoutes(
     password: z.string().min(6),
     firstName: z.string().min(1),
     lastName: z.string().optional(),
+    tenantSlug: z.string().optional(),
   });
 
   app.post("/api/auth/credentials/register", async (req, res) => {
@@ -158,20 +159,44 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Please fill in all required fields correctly" });
       }
 
-      const { email, password, firstName, lastName } = result.data;
-      
+      const { email, password, firstName, lastName, tenantSlug } = result.data;
+
       // Check if email already exists
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
         return res.status(400).json({ message: "An account with this email already exists" });
       }
 
-      // Create new user as technician (default role)
+      // Resolve tenant if tenantSlug is provided
+      let tenantId = "default";
+      let role: "technician" | "manager" | "admin" = "technician";
+
+      if (tenantSlug) {
+        const tenant = await storage.getTenantBySlug(tenantSlug);
+        if (!tenant || !tenant.isActive) {
+          return res.status(404).json({ message: "Business not found or inactive" });
+        }
+        tenantId = tenant.id;
+
+        // Check if this is the first user for the tenant — make them manager
+        const existingUsers = await storage.getUsers();
+        const tenantUsers = existingUsers.filter((u) => u.tenantId === tenant.id);
+        if (tenantUsers.length === 0) {
+          role = "manager";
+        }
+      }
+
       const { createCredentialsUser } = await import("./lib/credentials-auth");
       const name = lastName ? `${firstName} ${lastName}` : firstName;
-      await createCredentialsUser(email, password, "technician", name);
+      await createCredentialsUser(email, password, role, name, tenantId);
 
-      res.json({ success: true, message: "Account created successfully" });
+      res.json({
+        success: true,
+        message: role === "manager"
+          ? "Account created as tenant manager"
+          : "Account created successfully",
+        role,
+      });
     } catch (error) {
       console.error("Registration error:", error);
       res.status(500).json({ message: "Failed to create account" });
@@ -3158,6 +3183,31 @@ export async function registerRoutes(
   // TENANTS & BRANCHES (Multi-tenancy)
   // =====================
 
+  // --- Public Tenant Info (for tenant portal page) ---
+  app.get("/api/public/tenant/:slug", async (req, res) => {
+    try {
+      const tenant = await storage.getTenantBySlug(req.params.slug as string);
+      if (!tenant || !tenant.isActive) return res.status(404).json({ message: "Tenant not found" });
+      res.json({
+        id: tenant.id,
+        name: tenant.name,
+        slug: tenant.slug,
+        plan: tenant.plan,
+        status: tenant.status,
+        primaryColor: tenant.primaryColor,
+        secondaryColor: tenant.secondaryColor,
+        logoUrl: tenant.logoUrl,
+        faviconUrl: tenant.faviconUrl,
+        contactEmail: tenant.contactEmail,
+        contactPhone: tenant.contactPhone,
+        address: tenant.address,
+      });
+    } catch (error) {
+      console.error("Error fetching public tenant info:", error);
+      res.status(500).json({ message: "Failed to fetch tenant" });
+    }
+  });
+
   // --- Tenant Branding (public for login page) ---
   app.get("/api/public/branding/:slug", async (req, res) => {
     try {
@@ -3260,15 +3310,34 @@ export async function registerRoutes(
 
   app.post("/api/admin/tenants", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
     try {
-      const { name, slug, plan } = req.body;
+      const { name, slug, plan, contactEmail, contactPhone, address, billingEmail, primaryColor, secondaryColor, status } = req.body;
       if (!name || !slug) return res.status(400).json({ message: "name and slug are required" });
       // Check slug uniqueness
       const existing = await storage.getTenantBySlug(slug);
       if (existing) return res.status(409).json({ message: "Slug already in use" });
-      const tenant = await storage.createTenant({ name, slug, plan: plan || "free" });
+      // Set trial end date: 14 days from now
+      const trialEndsAt = new Date();
+      trialEndsAt.setDate(trialEndsAt.getDate() + 14);
+      const tenant = await storage.createTenant({
+        name,
+        slug,
+        plan: plan || "free",
+        status: status || "trial",
+        contactEmail: contactEmail || null,
+        contactPhone: contactPhone || null,
+        address: address || null,
+        billingEmail: billingEmail || contactEmail || null,
+        primaryColor: primaryColor || null,
+        secondaryColor: secondaryColor || null,
+        trialEndsAt,
+      });
       // Create a default branch for the new tenant
       const branch = await storage.createBranch({ tenantId: tenant.id, name: "Main Branch" });
-      res.status(201).json({ tenant, branch });
+      // Generate the tenant access URL
+      const host = req.get("host") || "localhost:5000";
+      const protocol = req.protocol || "https";
+      const tenantUrl = `${protocol}://${host}/t/${tenant.slug}`;
+      res.status(201).json({ tenant, branch, tenantUrl });
     } catch (error) {
       console.error("Error creating tenant:", error);
       res.status(500).json({ message: "Failed to create tenant" });
@@ -3307,6 +3376,278 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deactivating tenant:", error);
       res.status(500).json({ message: "Failed to deactivate tenant" });
+    }
+  });
+
+  // Tenant stats (for admin dashboard cards)
+  app.get("/api/admin/tenants/:id/stats", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const stats = await storage.getTenantStats(req.params.id as string);
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching tenant stats:", error);
+      res.status(500).json({ message: "Failed to fetch tenant stats" });
+    }
+  });
+
+  // All tenants with stats (enriched list)
+  app.get("/api/admin/tenants-with-stats", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const allTenants = await storage.getTenants();
+      const enriched = await Promise.all(
+        allTenants.map(async (tenant) => {
+          try {
+            const stats = await storage.getTenantStats(tenant.id);
+            return { ...tenant, stats };
+          } catch {
+            return { ...tenant, stats: { userCount: 0, washCount: 0, parkingSessionCount: 0, branchCount: 0 } };
+          }
+        })
+      );
+      res.json(enriched);
+    } catch (error) {
+      console.error("Error fetching tenants with stats:", error);
+      res.status(500).json({ message: "Failed to fetch tenants" });
+    }
+  });
+
+  // =====================
+  // INVOICES
+  // =====================
+
+  // Super admin: list all invoices (optionally filtered by tenant)
+  app.get("/api/admin/invoices", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { tenantId, status } = req.query;
+      const result = await storage.getInvoices({ tenantId: tenantId as string, status: status as string });
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching invoices:", error);
+      res.status(500).json({ message: "Failed to fetch invoices" });
+    }
+  });
+
+  // Super admin: generate invoice for a tenant
+  app.post("/api/admin/invoices", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { tenantId, month } = req.body;
+      if (!tenantId) return res.status(400).json({ message: "tenantId is required" });
+
+      const tenant = await storage.getTenant(tenantId);
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+
+      const { BILLING_PLANS, generateInvoiceNumber } = await import("../shared/billing");
+      type TenantPlan = keyof typeof BILLING_PLANS;
+      const plan = BILLING_PLANS[tenant.plan as TenantPlan];
+
+      // Get usage stats
+      const stats = await storage.getTenantStats(tenantId);
+
+      // Calculate period
+      const targetMonth = month || new Date().toISOString().slice(0, 7);
+      const [year, mon] = targetMonth.split("-").map(Number);
+      const periodStart = new Date(year, mon - 1, 1);
+      const periodEnd = new Date(year, mon, 0, 23, 59, 59);
+      const dueDate = new Date(year, mon, 15); // Due 15th of next month
+
+      // Build line items
+      const lineItems = [
+        { description: `${plan.label} Plan - Monthly Subscription`, quantity: 1, unitPrice: plan.price, total: plan.price },
+      ];
+      const subtotal = plan.price;
+      const tax = 0;
+      const total = subtotal + tax;
+
+      const invoice = await storage.createInvoice({
+        tenantId,
+        invoiceNumber: generateInvoiceNumber(tenant.slug, periodStart),
+        status: "pending",
+        periodStart,
+        periodEnd,
+        subtotal,
+        tax,
+        total,
+        planAtTime: tenant.plan,
+        washCount: stats.washCount,
+        parkingSessionCount: stats.parkingSessionCount,
+        activeUserCount: stats.userCount,
+        branchCount: stats.branchCount,
+        lineItems,
+        issuedAt: new Date(),
+        dueDate,
+      });
+
+      res.status(201).json(invoice);
+    } catch (error) {
+      console.error("Error creating invoice:", error);
+      res.status(500).json({ message: "Failed to create invoice" });
+    }
+  });
+
+  // Super admin: update invoice status
+  app.patch("/api/admin/invoices/:id", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const { status, paidAt, notes } = req.body;
+      const update: any = {};
+      if (status) update.status = status;
+      if (paidAt) update.paidAt = new Date(paidAt);
+      if (status === "paid" && !paidAt) update.paidAt = new Date();
+      if (notes !== undefined) update.notes = notes;
+      const invoice = await storage.updateInvoice(req.params.id as string, update);
+      if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+      res.json(invoice);
+    } catch (error) {
+      console.error("Error updating invoice:", error);
+      res.status(500).json({ message: "Failed to update invoice" });
+    }
+  });
+
+  // Super admin: send invoice to tenant via email
+  app.post("/api/admin/invoices/:id/send", isAuthenticated, requireSuperAdminMiddleware(), async (req: any, res) => {
+    try {
+      const invoice = await storage.getInvoice(req.params.id as string);
+      if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+
+      const tenant = await storage.getTenant(invoice.tenantId);
+      if (!tenant) return res.status(404).json({ message: "Tenant not found" });
+
+      const recipientEmail = tenant.billingEmail || tenant.contactEmail;
+      if (!recipientEmail) {
+        return res.status(400).json({
+          message: "No billing or contact email configured for this tenant. Please update the tenant's email in settings.",
+        });
+      }
+
+      const { formatCents } = await import("../shared/billing");
+      const nodemailer = await import("nodemailer");
+
+      // Configure transporter — uses SMTP_* env vars or defaults to Ethereal for testing
+      let transporter;
+      if (process.env.SMTP_HOST) {
+        transporter = nodemailer.default.createTransport({
+          host: process.env.SMTP_HOST,
+          port: parseInt(process.env.SMTP_PORT || "587"),
+          secure: process.env.SMTP_SECURE === "true",
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+      } else {
+        // Fallback: create test account (Ethereal) for development
+        const testAccount = await nodemailer.default.createTestAccount();
+        transporter = nodemailer.default.createTransport({
+          host: "smtp.ethereal.email",
+          port: 587,
+          secure: false,
+          auth: { user: testAccount.user, pass: testAccount.pass },
+        });
+      }
+
+      const lineItemsHTML = (invoice.lineItems as any[] || [])
+        .map((item: any) => `
+          <tr>
+            <td style="padding: 10px 16px; border-bottom: 1px solid #f3f4f6;">${item.description}</td>
+            <td style="padding: 10px 16px; border-bottom: 1px solid #f3f4f6; text-align: center;">${item.quantity}</td>
+            <td style="padding: 10px 16px; border-bottom: 1px solid #f3f4f6; text-align: right;">$${(item.unitPrice / 100).toFixed(2)}</td>
+            <td style="padding: 10px 16px; border-bottom: 1px solid #f3f4f6; text-align: right; font-weight: 600;">$${(item.total / 100).toFixed(2)}</td>
+          </tr>
+        `).join("");
+
+      const periodLabel = invoice.periodStart
+        ? new Date(invoice.periodStart).toLocaleDateString("en-US", { month: "long", year: "numeric" })
+        : "Current Period";
+
+      const dueDateLabel = invoice.dueDate
+        ? new Date(invoice.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+        : "Upon receipt";
+
+      const emailHTML = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body style="font-family: 'Segoe UI', Tahoma, sans-serif; color: #1a1a1a; background: #f9fafb; margin: 0; padding: 0;">
+  <div style="max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; margin-top: 32px; margin-bottom: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <div style="background: #3B82F6; padding: 24px 32px; color: #fff;">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 700;">HOPSVOIR</h1>
+      <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.9;">Invoice for ${periodLabel}</p>
+    </div>
+    <div style="padding: 32px;">
+      <p style="font-size: 15px; color: #374151; margin-bottom: 24px;">
+        Dear <strong>${tenant.name}</strong>,<br><br>
+        Please find your invoice details below. Invoice <strong>${invoice.invoiceNumber}</strong> is due by <strong>${dueDateLabel}</strong>.
+      </p>
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+        <thead>
+          <tr style="background: #f9fafb;">
+            <th style="padding: 10px 16px; text-align: left; font-size: 11px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; border-bottom: 2px solid #e5e7eb;">Description</th>
+            <th style="padding: 10px 16px; text-align: center; font-size: 11px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; border-bottom: 2px solid #e5e7eb;">Qty</th>
+            <th style="padding: 10px 16px; text-align: right; font-size: 11px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; border-bottom: 2px solid #e5e7eb;">Unit Price</th>
+            <th style="padding: 10px 16px; text-align: right; font-size: 11px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; border-bottom: 2px solid #e5e7eb;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lineItemsHTML}
+        </tbody>
+      </table>
+      <div style="text-align: right; margin-bottom: 24px;">
+        <p style="font-size: 14px; color: #6b7280; margin: 4px 0;">Subtotal: <strong style="color: #1a1a1a;">${formatCents(invoice.subtotal || 0)}</strong></p>
+        <p style="font-size: 14px; color: #6b7280; margin: 4px 0;">Tax: <strong style="color: #1a1a1a;">${formatCents(invoice.tax || 0)}</strong></p>
+        <div style="border-top: 2px solid #1a1a1a; display: inline-block; padding-top: 8px; margin-top: 8px;">
+          <p style="font-size: 20px; font-weight: 700; margin: 0;">Total: ${formatCents(invoice.total || 0)}</p>
+        </div>
+      </div>
+      <div style="background: #f0f9ff; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+        <p style="font-size: 13px; color: #374151; margin: 0;"><strong>Usage Summary:</strong> ${invoice.washCount} washes, ${invoice.parkingSessionCount} parking sessions, ${invoice.activeUserCount} active users, ${invoice.branchCount} branch(es)</p>
+      </div>
+      ${invoice.notes ? `<p style="font-size: 13px; color: #92400e; background: #fffbeb; padding: 12px; border-radius: 4px;"><strong>Notes:</strong> ${invoice.notes}</p>` : ""}
+    </div>
+    <div style="background: #f9fafb; padding: 20px 32px; text-align: center; border-top: 1px solid #e5e7eb;">
+      <p style="font-size: 12px; color: #9ca3af; margin: 0;">Thank you for your business.</p>
+      <p style="font-size: 12px; color: #9ca3af; margin: 4px 0 0;">HOPSVOIR — Professional Carwash & Parking Management</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      const info = await transporter.sendMail({
+        from: process.env.SMTP_FROM || '"HOPSVOIR Billing" <billing@hopsvoir.com>',
+        to: recipientEmail,
+        subject: `Invoice ${invoice.invoiceNumber} — ${periodLabel}`,
+        html: emailHTML,
+      });
+
+      // Update invoice status to pending if it was draft
+      if (invoice.status === "draft") {
+        await storage.updateInvoice(invoice.id, { status: "pending", issuedAt: new Date() } as any);
+      }
+
+      // Log the Ethereal preview URL in development
+      const previewUrl = nodemailer.default.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log("Invoice email preview URL:", previewUrl);
+      }
+
+      res.json({
+        success: true,
+        message: `Invoice sent to ${recipientEmail}`,
+        previewUrl: previewUrl || undefined,
+      });
+    } catch (error) {
+      console.error("Error sending invoice:", error);
+      res.status(500).json({ message: "Failed to send invoice email" });
+    }
+  });
+
+  // Tenant admin: view own invoices
+  app.get("/api/tenant/invoices", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const tenantId = req.tenantId || "default";
+      const result = await storage.getInvoicesByTenant(tenantId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching tenant invoices:", error);
+      res.status(500).json({ message: "Failed to fetch invoices" });
     }
   });
 
@@ -3627,24 +3968,22 @@ export async function registerRoutes(
       const tenant = await storage.getTenant(tenantId);
       if (!tenant) return res.status(404).json({ message: "Tenant not found" });
 
-      // Get current month usage in real-time
-      const { db: dbRef } = await import("./db");
-      const { washJobs, parkingSessions, users: usersTable, branches: branchesTable } = await import("@shared/schema");
-      const { eq, and, gte, sql: sqlFn } = await import("drizzle-orm");
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const { BILLING_PLANS } = await import("../shared/billing");
+      type TenantPlanKey = keyof typeof BILLING_PLANS;
+      const planLimits = BILLING_PLANS[(tenant.plan || "free") as TenantPlanKey];
 
-      const [washCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(washJobs).where(and(eq(washJobs.tenantId, tenantId), gte(washJobs.createdAt, startOfMonth)));
-      const [parkingCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(parkingSessions).where(and(eq(parkingSessions.tenantId, tenantId), gte(parkingSessions.createdAt, startOfMonth)));
-      const [userCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(usersTable).where(and(eq(usersTable.tenantId, tenantId), eq(usersTable.isActive, true)));
-      const [branchCount] = await dbRef.select({ count: sqlFn<number>`count(*)::int` }).from(branchesTable).where(and(eq(branchesTable.tenantId, tenantId), eq(branchesTable.isActive, true)));
+      // Get current month usage
+      const stats = await storage.getTenantStats(tenantId);
 
       res.json({
         plan: tenant.plan,
-        washCount: washCount?.count || 0,
-        parkingSessionCount: parkingCount?.count || 0,
-        activeUserCount: userCount?.count || 0,
-        branchCount: branchCount?.count || 0,
+        status: tenant.status || "active",
+        washCount: stats.washCount,
+        parkingSessionCount: stats.parkingSessionCount,
+        activeUserCount: stats.userCount,
+        branchCount: stats.branchCount,
+        limits: planLimits,
+        trialEndsAt: tenant.trialEndsAt,
       });
     } catch (error) {
       console.error("Error fetching billing usage:", error);
@@ -3659,7 +3998,16 @@ export async function registerRoutes(
       const { billingSnapshots } = await import("@shared/schema");
       const { desc } = await import("drizzle-orm");
       const snapshots = await dbRef.select().from(billingSnapshots).orderBy(desc(billingSnapshots.month));
-      res.json(snapshots);
+
+      // Also get all invoices for revenue calculations
+      const allInvoices = await storage.getInvoices({});
+      const allTenants = await storage.getTenants();
+
+      res.json({
+        snapshots,
+        invoices: allInvoices,
+        tenants: allTenants,
+      });
     } catch (error) {
       console.error("Error fetching billing:", error);
       res.status(500).json({ message: "Failed to fetch billing" });

@@ -1,7 +1,7 @@
 import { db } from "../db";
-import { billingSnapshots, tenants, washJobs, parkingSessions, users, branches } from "@shared/schema";
+import { billingSnapshots, tenants, washJobs, parkingSessions, users, branches, invoices } from "@shared/schema";
 import { eq, and, gte, lte, sql } from "drizzle-orm";
-import { BILLING_PLANS } from "../../shared/billing";
+import { BILLING_PLANS, generateInvoiceNumber } from "../../shared/billing";
 import type { TenantPlan } from "@shared/schema";
 
 /**
@@ -42,8 +42,10 @@ export async function generateBillingSnapshot(tenantId: string, month: string): 
   const branchCount = branchResult?.count || 0;
 
   // Get tenant plan
-  const [tenant] = await db.select({ plan: tenants.plan }).from(tenants).where(eq(tenants.id, tenantId));
-  const plan = (tenant?.plan || "free") as TenantPlan;
+  const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId));
+  if (!tenant) return;
+
+  const plan = (tenant.plan || "free") as TenantPlan;
   const planLimits = BILLING_PLANS[plan];
   const estimatedAmount = planLimits.price;
 
@@ -74,12 +76,55 @@ export async function generateBillingSnapshot(tenantId: string, month: string): 
 
 /**
  * Generate snapshots for all active tenants for the given month.
+ * Also generates invoices if they don't exist yet.
  */
 export async function generateAllSnapshots(month: string): Promise<number> {
   const allTenants = await db.select().from(tenants).where(eq(tenants.isActive, true));
+  const [year, mon] = month.split("-").map(Number);
+
   for (const tenant of allTenants) {
     try {
       await generateBillingSnapshot(tenant.id, month);
+
+      // Auto-generate invoice if plan is paid and no invoice exists for this period
+      const plan = (tenant.plan || "free") as TenantPlan;
+      const planLimits = BILLING_PLANS[plan];
+      if (planLimits.price > 0) {
+        const periodStart = new Date(year, mon - 1, 1);
+        const periodEnd = new Date(year, mon, 0, 23, 59, 59);
+
+        // Check if invoice already exists
+        const [existingInvoice] = await db
+          .select()
+          .from(invoices)
+          .where(and(eq(invoices.tenantId, tenant.id), eq(invoices.periodStart, periodStart)));
+
+        if (!existingInvoice) {
+          const dueDate = new Date(year, mon, 15);
+          const lineItems = [
+            { description: `${planLimits.label} Plan - Monthly Subscription`, quantity: 1, unitPrice: planLimits.price, total: planLimits.price },
+          ];
+
+          await db.insert(invoices).values({
+            tenantId: tenant.id,
+            invoiceNumber: generateInvoiceNumber(tenant.slug, periodStart),
+            status: "pending",
+            periodStart,
+            periodEnd,
+            subtotal: planLimits.price,
+            tax: 0,
+            total: planLimits.price,
+            planAtTime: plan,
+            washCount: 0,
+            parkingSessionCount: 0,
+            activeUserCount: 0,
+            branchCount: 0,
+            lineItems,
+            issuedAt: new Date(),
+            dueDate,
+          });
+        }
+      }
     } catch (error) {
       console.error(`Failed to generate snapshot for tenant ${tenant.id}:`, error);
     }

@@ -8,7 +8,7 @@ import {
   customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts,
   loyaltyTransactions, pushSubscriptions,
   suppliers, inventoryItems, inventoryConsumption, purchaseOrders,
-  tenants, branches, webhookRetries,
+  tenants, branches, webhookRetries, invoices,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -32,6 +32,7 @@ import {
   type PurchaseOrder, type InsertPurchaseOrder,
   type Tenant, type InsertTenant,
   type Branch, type InsertBranch,
+  type Invoice, type InsertInvoice,
   type EventLog, type InsertEventLog,
   type UserRole, type InsertUserRole,
   type User, type InsertUser,
@@ -230,6 +231,21 @@ export interface IStorage {
   getBranches(tenantId: string): Promise<Branch[]>;
   getBranch(id: string): Promise<Branch | undefined>;
   updateBranch(id: string, data: Partial<InsertBranch>): Promise<Branch | undefined>;
+
+  // Invoices
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  getInvoices(filters?: { tenantId?: string; status?: string }): Promise<Invoice[]>;
+  getInvoice(id: string): Promise<Invoice | undefined>;
+  updateInvoice(id: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  getInvoicesByTenant(tenantId: string): Promise<Invoice[]>;
+
+  // Tenant Stats
+  getTenantStats(tenantId: string): Promise<{
+    userCount: number;
+    washCount: number;
+    parkingSessionCount: number;
+    branchCount: number;
+  }>;
 
   // Event Logs
   logEvent(event: InsertEventLog): Promise<EventLog>;
@@ -1849,6 +1865,62 @@ export class DatabaseStorage implements IStorage {
   async updateBranch(id: string, data: Partial<InsertBranch>): Promise<Branch | undefined> {
     const [result] = await db.update(branches).set({ ...data, updatedAt: new Date() }).where(eq(branches.id, id)).returning();
     return result;
+  }
+
+  // ─── Invoices ──────────────────────────────────────────────────────────
+
+  async createInvoice(invoice: InsertInvoice): Promise<Invoice> {
+    const [result] = await db.insert(invoices).values(invoice as any).returning();
+    return result;
+  }
+
+  async getInvoices(filters?: { tenantId?: string; status?: string }): Promise<Invoice[]> {
+    let query = db.select().from(invoices);
+    const conditions = [];
+    if (filters?.tenantId) conditions.push(eq(invoices.tenantId, filters.tenantId));
+    if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+    return (query as any).orderBy(desc(invoices.createdAt));
+  }
+
+  async getInvoice(id: string): Promise<Invoice | undefined> {
+    const [result] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return result;
+  }
+
+  async updateInvoice(id: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const [result] = await db.update(invoices).set({ ...data, updatedAt: new Date() } as any).where(eq(invoices.id, id)).returning();
+    return result;
+  }
+
+  async getInvoicesByTenant(tenantId: string): Promise<Invoice[]> {
+    return db.select().from(invoices).where(eq(invoices.tenantId, tenantId)).orderBy(desc(invoices.createdAt));
+  }
+
+  // ─── Tenant Stats ─────────────────────────────────────────────────────
+
+  async getTenantStats(tenantId: string): Promise<{
+    userCount: number;
+    washCount: number;
+    parkingSessionCount: number;
+    branchCount: number;
+  }> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [userResult] = await db.select({ count: sql<number>`count(*)::int` }).from(users).where(and(eq(users.tenantId, tenantId), eq(users.isActive, true)));
+    const [washResult] = await db.select({ count: sql<number>`count(*)::int` }).from(washJobs).where(and(eq(washJobs.tenantId, tenantId), gte(washJobs.createdAt, startOfMonth)));
+    const [parkingResult] = await db.select({ count: sql<number>`count(*)::int` }).from(parkingSessions).where(and(eq(parkingSessions.tenantId, tenantId), gte(parkingSessions.createdAt, startOfMonth)));
+    const [branchResult] = await db.select({ count: sql<number>`count(*)::int` }).from(branches).where(and(eq(branches.tenantId, tenantId), eq(branches.isActive, true)));
+
+    return {
+      userCount: userResult?.count || 0,
+      washCount: washResult?.count || 0,
+      parkingSessionCount: parkingResult?.count || 0,
+      branchCount: branchResult?.count || 0,
+    };
   }
 }
 
