@@ -1493,3 +1493,152 @@ export async function getCRMLoyaltyAnalytics(): Promise<{
     return null;
   }
 }
+
+// Get customer/member growth analytics — monthly new users, members, bookings over the last 12 months
+export async function getCRMGrowthAnalytics(): Promise<{
+  months: {
+    month: string; // "YYYY-MM"
+    label: string; // "Jan 2025"
+    newUsers: number;
+    newMembers: number;
+    newBookings: number;
+    cumulativeUsers: number;
+    cumulativeMembers: number;
+  }[];
+  totals: { totalUsers: number; totalMembers: number; totalBookings: number };
+  peaks: { bestUserMonth: string; bestMemberMonth: string; bestBookingMonth: string };
+  growthRate: { usersLast3Months: number; membersLast3Months: number }; // percentage
+} | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    // Monthly new users over last 12 months
+    const usersResult = await pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') as month,
+        TO_CHAR(DATE_TRUNC('month', "createdAt"), 'Mon YYYY') as label,
+        COUNT(*)::int as count
+      FROM "User"
+      WHERE "createdAt" >= DATE_TRUNC('month', NOW()) - INTERVAL '11 months'
+      GROUP BY DATE_TRUNC('month', "createdAt")
+      ORDER BY DATE_TRUNC('month', "createdAt")
+    `);
+
+    // Monthly new memberships over last 12 months
+    const membersResult = await pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') as month,
+        COUNT(*)::int as count
+      FROM "Membership"
+      WHERE "createdAt" >= DATE_TRUNC('month', NOW()) - INTERVAL '11 months'
+      GROUP BY DATE_TRUNC('month', "createdAt")
+      ORDER BY DATE_TRUNC('month', "createdAt")
+    `);
+
+    // Monthly new bookings over last 12 months
+    const bookingsResult = await pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') as month,
+        COUNT(*)::int as count
+      FROM "Booking"
+      WHERE "createdAt" >= DATE_TRUNC('month', NOW()) - INTERVAL '11 months'
+      GROUP BY DATE_TRUNC('month', "createdAt")
+      ORDER BY DATE_TRUNC('month', "createdAt")
+    `);
+
+    // Cumulative totals before the 12-month window (baseline)
+    const baselineResult = await pool.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM "User" WHERE "createdAt" < DATE_TRUNC('month', NOW()) - INTERVAL '11 months') as "baseUsers",
+        (SELECT COUNT(*)::int FROM "Membership" WHERE "createdAt" < DATE_TRUNC('month', NOW()) - INTERVAL '11 months') as "baseMembers"
+    `);
+
+    // Grand totals
+    const totalsResult = await pool.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM "User") as "totalUsers",
+        (SELECT COUNT(*)::int FROM "Membership" WHERE "isActive" = true) as "totalMembers",
+        (SELECT COUNT(*)::int FROM "Booking") as "totalBookings"
+    `);
+
+    const baseUsers = baselineResult.rows[0]?.baseUsers || 0;
+    const baseMembers = baselineResult.rows[0]?.baseMembers || 0;
+
+    // Build a map for all 12 months
+    const usersMap: Record<string, number> = {};
+    const membersMap: Record<string, number> = {};
+    const bookingsMap: Record<string, number> = {};
+    const labelsMap: Record<string, string> = {};
+
+    for (const row of usersResult.rows) {
+      usersMap[row.month] = row.count;
+      labelsMap[row.month] = row.label;
+    }
+    for (const row of membersResult.rows) { membersMap[row.month] = row.count; }
+    for (const row of bookingsResult.rows) { bookingsMap[row.month] = row.count; }
+
+    // Generate all 12 months
+    const months: {
+      month: string; label: string;
+      newUsers: number; newMembers: number; newBookings: number;
+      cumulativeUsers: number; cumulativeMembers: number;
+    }[] = [];
+
+    let cumUsers = baseUsers;
+    let cumMembers = baseMembers;
+    let peakUsers = { month: "", count: 0 };
+    let peakMembers = { month: "", count: 0 };
+    let peakBookings = { month: "", count: 0 };
+
+    const now = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = labelsMap[key] || d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
+      const newUsers = usersMap[key] || 0;
+      const newMembers = membersMap[key] || 0;
+      const newBookings = bookingsMap[key] || 0;
+
+      cumUsers += newUsers;
+      cumMembers += newMembers;
+
+      if (newUsers > peakUsers.count) peakUsers = { month: label, count: newUsers };
+      if (newMembers > peakMembers.count) peakMembers = { month: label, count: newMembers };
+      if (newBookings > peakBookings.count) peakBookings = { month: label, count: newBookings };
+
+      months.push({ month: key, label, newUsers, newMembers, newBookings, cumulativeUsers: cumUsers, cumulativeMembers: cumMembers });
+    }
+
+    // Growth rate: compare last 3 months vs the previous 3 months
+    const last3Users = months.slice(-3).reduce((s, m) => s + m.newUsers, 0);
+    const prev3Users = months.slice(-6, -3).reduce((s, m) => s + m.newUsers, 0);
+    const last3Members = months.slice(-3).reduce((s, m) => s + m.newMembers, 0);
+    const prev3Members = months.slice(-6, -3).reduce((s, m) => s + m.newMembers, 0);
+
+    const usersGrowth = prev3Users > 0 ? Math.round(((last3Users - prev3Users) / prev3Users) * 100) : (last3Users > 0 ? 100 : 0);
+    const membersGrowth = prev3Members > 0 ? Math.round(((last3Members - prev3Members) / prev3Members) * 100) : (last3Members > 0 ? 100 : 0);
+
+    return {
+      months,
+      totals: {
+        totalUsers: totalsResult.rows[0]?.totalUsers || 0,
+        totalMembers: totalsResult.rows[0]?.totalMembers || 0,
+        totalBookings: totalsResult.rows[0]?.totalBookings || 0,
+      },
+      peaks: {
+        bestUserMonth: peakUsers.month ? `${peakUsers.month} (${peakUsers.count})` : "N/A",
+        bestMemberMonth: peakMembers.month ? `${peakMembers.month} (${peakMembers.count})` : "N/A",
+        bestBookingMonth: peakBookings.month ? `${peakBookings.month} (${peakBookings.count})` : "N/A",
+      },
+      growthRate: {
+        usersLast3Months: usersGrowth,
+        membersLast3Months: membersGrowth,
+      },
+    };
+  } catch (error) {
+    console.error("Error fetching CRM growth analytics:", error);
+    return null;
+  }
+}

@@ -749,6 +749,31 @@ export const bookingTimeSlotConfig = pgTable("booking_time_slot_config", {
   isActive: boolean("is_active").default(true),
 });
 
+// Booking Payments (local records for CRM and local bookings)
+export const paymentMethodEnum = pgEnum("payment_method", ["cash", "card", "eft", "mobile"]);
+
+export const bookingPayments = pgTable("booking_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  bookingId: varchar("booking_id").notNull(), // CRM booking ID or local booking ID
+  receiptNumber: varchar("receipt_number", { length: 50 }).notNull(),
+  amount: integer("amount").notNull(), // in cents
+  paymentMethod: paymentMethodEnum("payment_method").notNull(),
+  paymentReference: varchar("payment_reference", { length: 255 }),
+  confirmedBy: varchar("confirmed_by", { length: 255 }).notNull(), // staff name
+  confirmedByUserId: varchar("confirmed_by_user_id"), // staff userId
+  customerName: varchar("customer_name", { length: 255 }),
+  customerEmail: varchar("customer_email", { length: 255 }),
+  customerPhone: varchar("customer_phone", { length: 50 }),
+  licensePlate: varchar("license_plate", { length: 50 }),
+  serviceName: varchar("service_name", { length: 255 }),
+  bookingDate: varchar("booking_date", { length: 10 }),
+  timeSlot: varchar("time_slot", { length: 5 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertPushSubscriptionSchema = createInsertSchema(pushSubscriptions).omit({ id: true, createdAt: true });
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
@@ -791,6 +816,7 @@ export const insertBookingCustomerSchema = createInsertSchema(bookingCustomers).
 export const insertBookingVehicleSchema = createInsertSchema(bookingVehicles).omit({ id: true, createdAt: true });
 export const insertBookingSchema = createInsertSchema(bookings).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertBookingTimeSlotConfigSchema = createInsertSchema(bookingTimeSlotConfig).omit({ id: true });
+export const insertBookingPaymentSchema = createInsertSchema(bookingPayments).omit({ id: true, createdAt: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -915,6 +941,9 @@ export type InsertBooking = z.infer<typeof insertBookingSchema>;
 
 export type BookingTimeSlotConfig = typeof bookingTimeSlotConfig.$inferSelect;
 export type InsertBookingTimeSlotConfig = z.infer<typeof insertBookingTimeSlotConfigSchema>;
+
+export type BookingPayment = typeof bookingPayments.$inferSelect;
+export type InsertBookingPayment = z.infer<typeof insertBookingPaymentSchema>;
 
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"] as const;

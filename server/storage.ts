@@ -9,7 +9,7 @@ import {
   loyaltyAccounts, loyaltyTransactions, pushSubscriptions,
   suppliers, inventoryItems, inventoryConsumption, purchaseOrders,
   tenants, branches, webhookRetries, invoices,
-  bookingServices, bookingCustomers, bookingVehicles, bookings, bookingTimeSlotConfig,
+  bookingServices, bookingCustomers, bookingVehicles, bookings, bookingTimeSlotConfig, bookingPayments,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -48,6 +48,7 @@ import {
   type BookingVehicle, type InsertBookingVehicle,
   type Booking, type InsertBooking,
   type BookingTimeSlotConfig, type InsertBookingTimeSlotConfig,
+  type BookingPayment, type InsertBookingPayment,
   WASH_STATUS_ORDER
 } from "@shared/schema";
 import { normalizePlate } from "./lib/plate-utils";
@@ -296,6 +297,13 @@ export interface IStorage {
     completionRate: number;
     bookingRevenue: number;
   }>;
+
+  // Booking Payments
+  createBookingPayment(tenantId: string, payment: Omit<InsertBookingPayment, "tenantId">): Promise<BookingPayment>;
+  getBookingPayment(id: string, tenantId?: string): Promise<BookingPayment | undefined>;
+  getBookingPaymentByBookingId(bookingId: string, tenantId?: string): Promise<BookingPayment | undefined>;
+  getBookingPayments(tenantId: string, filters?: { fromDate?: string; toDate?: string; limit?: number }): Promise<BookingPayment[]>;
+  generateReceiptNumber(tenantId: string): Promise<string>;
 
   // Tenants (admin-level, stays global)
   createTenant(tenant: InsertTenant): Promise<Tenant>;
@@ -2639,6 +2647,44 @@ export class DatabaseStorage implements IStorage {
       completionRate,
       bookingRevenue: revenueResult?.total || 0,
     };
+  }
+
+  // ─── Booking Payments ──────────────────────────────────────────────────
+
+  async createBookingPayment(tenantId: string, payment: Omit<InsertBookingPayment, "tenantId">): Promise<BookingPayment> {
+    const [result] = await db.insert(bookingPayments).values({ ...payment, tenantId }).returning();
+    return result;
+  }
+
+  async getBookingPayment(id: string, tenantId?: string): Promise<BookingPayment | undefined> {
+    const conditions = [eq(bookingPayments.id, id)];
+    if (tenantId) conditions.push(eq(bookingPayments.tenantId, tenantId));
+    const [result] = await db.select().from(bookingPayments).where(and(...conditions));
+    return result;
+  }
+
+  async getBookingPaymentByBookingId(bookingId: string, tenantId?: string): Promise<BookingPayment | undefined> {
+    const conditions = [eq(bookingPayments.bookingId, bookingId)];
+    if (tenantId) conditions.push(eq(bookingPayments.tenantId, tenantId));
+    const [result] = await db.select().from(bookingPayments).where(and(...conditions));
+    return result;
+  }
+
+  async getBookingPayments(tenantId: string, filters?: { fromDate?: string; toDate?: string; limit?: number }): Promise<BookingPayment[]> {
+    const conditions = [eq(bookingPayments.tenantId, tenantId)];
+    if (filters?.fromDate) conditions.push(gte(bookingPayments.createdAt, new Date(filters.fromDate)));
+    if (filters?.toDate) conditions.push(lte(bookingPayments.createdAt, new Date(filters.toDate + "T23:59:59")));
+    let query = db.select().from(bookingPayments).where(and(...conditions)).orderBy(desc(bookingPayments.createdAt));
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    return query;
+  }
+
+  async generateReceiptNumber(tenantId: string): Promise<string> {
+    const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(bookingPayments).where(eq(bookingPayments.tenantId, tenantId));
+    const num = (countResult?.count || 0) + 1;
+    const date = new Date();
+    const prefix = `RCT-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}`;
+    return `${prefix}-${String(num).padStart(5, "0")}`;
   }
 
   // ─── Tenant Stats ─────────────────────────────────────────────────────

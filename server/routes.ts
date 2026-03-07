@@ -28,6 +28,10 @@ import {
   getTodayBookings,
   findBookingByPlate,
   updateBookingStatus,
+  getManagerBookings,
+  getBookingById,
+  updateBooking as updateCRMBooking,
+  cancelBooking as cancelCRMBooking,
   getCRMNotifications,
   createCRMNotification,
   updateCRMNotificationStatus,
@@ -39,6 +43,8 @@ import {
   getBookingWithMembership,
   getUpcomingBookingsWithMemberships,
   findCRMCustomerByPlate,
+  getCRMLoyaltyAnalytics,
+  getCRMGrowthAnalytics,
 } from "./lib/booking-db";
 import {
   calculateParkingFee,
@@ -2089,6 +2095,360 @@ export async function registerRoutes(
   });
 
   // =====================
+  // CRM BOOKING MANAGEMENT (Ekhaya)
+  // =====================
+
+  // Manager search bookings (by name, email, phone, plate, reference)
+  app.get("/api/crm/bookings/manager", isAuthenticated, async (req, res) => {
+    try {
+      const { search, status, limit } = req.query;
+      const filters: any = {};
+      if (search && typeof search === "string") filters.customerSearch = search;
+      if (status && typeof status === "string") filters.status = status;
+      if (limit) filters.limit = parseInt(limit as string, 10);
+
+      const result = await getManagerBookings(filters);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching CRM manager bookings:", error);
+      res.status(500).json({ message: "Failed to fetch bookings" });
+    }
+  });
+
+  // Get single CRM booking details
+  app.get("/api/crm/bookings/:id", isAuthenticated, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const booking = await getBookingById(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+      res.json(booking);
+    } catch (error) {
+      console.error("Error fetching CRM booking:", error);
+      res.status(500).json({ message: "Failed to fetch booking" });
+    }
+  });
+
+  // Update CRM booking (reschedule, change status, update notes)
+  app.patch("/api/crm/bookings/:id", isAuthenticated, async (req, res) => {
+    try {
+      const bookingId = req.params.id as string;
+      const { bookingDate, timeSlot, serviceId, notes, status } = req.body;
+
+      const updates: any = {};
+      if (bookingDate) updates.bookingDate = new Date(bookingDate);
+      if (timeSlot) updates.timeSlot = timeSlot;
+      if (serviceId) updates.serviceId = serviceId;
+      if (notes !== undefined) updates.notes = notes;
+      if (status) updates.status = status;
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No updates provided" });
+      }
+
+      const success = await updateCRMBooking(bookingId, updates);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to update booking" });
+      }
+
+      res.json({ message: "Booking updated successfully" });
+    } catch (error) {
+      console.error("Error updating CRM booking:", error);
+      res.status(500).json({ message: "Failed to update booking" });
+    }
+  });
+
+  // Cancel CRM booking
+  app.delete("/api/crm/bookings/:id", isAuthenticated, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const success = await cancelCRMBooking(id);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to cancel booking" });
+      }
+      res.json({ message: "Booking cancelled successfully" });
+    } catch (error) {
+      console.error("Error cancelling CRM booking:", error);
+      res.status(500).json({ message: "Failed to cancel booking" });
+    }
+  });
+
+  // =====================
+  // BOOKING PAYMENTS
+  // =====================
+
+  // Confirm payment for a CRM booking
+  app.post("/api/crm/bookings/:id/payment", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const bookingId = req.params.id;
+      const userId = (req as any).user?.claims?.sub;
+      const { amount, paymentMethod, paymentReference, confirmedBy, notes } = req.body;
+
+      if (!amount || !paymentMethod || !confirmedBy) {
+        return res.status(400).json({ message: "amount, paymentMethod, and confirmedBy are required" });
+      }
+
+      if (!["cash", "card", "eft", "mobile"].includes(paymentMethod)) {
+        return res.status(400).json({ message: "Invalid payment method" });
+      }
+
+      // Check if payment already exists for this booking
+      const existing = await storage.getBookingPaymentByBookingId(bookingId, tenantId);
+      if (existing) {
+        return res.status(409).json({ message: "Payment already recorded for this booking", payment: existing });
+      }
+
+      // Get booking details from CRM for the receipt
+      const booking = await getBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" });
+      }
+
+      // Generate receipt number
+      const receiptNumber = await storage.generateReceiptNumber(tenantId);
+
+      // Create payment record
+      const payment = await storage.createBookingPayment(tenantId, {
+        bookingId,
+        receiptNumber,
+        amount: parseInt(String(amount), 10),
+        paymentMethod,
+        paymentReference: paymentReference || null,
+        confirmedBy,
+        confirmedByUserId: userId,
+        customerName: booking.customerName,
+        customerEmail: booking.customerEmail,
+        customerPhone: booking.customerPhone,
+        licensePlate: booking.licensePlate,
+        serviceName: booking.serviceName,
+        bookingDate: booking.bookingDate,
+        timeSlot: booking.timeSlot,
+        notes: notes || null,
+      });
+
+      // Update CRM booking status to COMPLETED
+      await updateCRMBooking(bookingId, { status: "COMPLETED" });
+
+      // Log the payment event
+      await storage.logEvent(tenantId, {
+        type: "booking_payment_confirmed",
+        userId,
+        payloadJson: {
+          bookingId,
+          receiptNumber,
+          amount,
+          paymentMethod,
+          confirmedBy,
+          confirmedAt: new Date().toISOString(),
+        },
+      });
+
+      res.json({
+        message: "Payment confirmed successfully",
+        payment,
+      });
+    } catch (error) {
+      console.error("Error confirming payment:", error);
+      res.status(500).json({ message: "Failed to confirm payment" });
+    }
+  });
+
+  // Get payment for a booking
+  app.get("/api/crm/bookings/:id/payment", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const bookingId = req.params.id;
+      const payment = await storage.getBookingPaymentByBookingId(bookingId, tenantId);
+      if (!payment) {
+        return res.status(404).json({ message: "No payment found for this booking" });
+      }
+
+      // Get business settings for receipt branding
+      const settings = await storage.getBusinessSettings(tenantId);
+
+      res.json({
+        payment,
+        businessSettings: settings ? {
+          businessName: settings.businessName,
+          businessLogo: settings.businessLogo,
+          businessAddress: settings.businessAddress,
+          businessPhone: settings.businessPhone,
+          businessEmail: settings.businessEmail,
+          currency: settings.currency,
+          currencySymbol: settings.currencySymbol,
+          taxRate: settings.taxRate,
+          taxLabel: settings.taxLabel,
+          receiptFooter: settings.receiptFooter,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error fetching payment:", error);
+      res.status(500).json({ message: "Failed to fetch payment" });
+    }
+  });
+
+  // Send receipt email to customer
+  app.post("/api/crm/bookings/:id/send-receipt", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const bookingId = req.params.id;
+      const { paymentId } = req.body;
+
+      // Get payment record
+      let payment;
+      if (paymentId) {
+        payment = await storage.getBookingPayment(paymentId, tenantId);
+      } else {
+        payment = await storage.getBookingPaymentByBookingId(bookingId, tenantId);
+      }
+      if (!payment) {
+        return res.status(404).json({ message: "No payment found for this booking" });
+      }
+
+      const recipientEmail = payment.customerEmail;
+      if (!recipientEmail) {
+        return res.status(400).json({ message: "No email address on file for this customer" });
+      }
+
+      // Get business settings for branding
+      const settings = await storage.getBusinessSettings(tenantId);
+      const businessName = settings?.businessName || "EKHAYA CAR WASH";
+      const businessPhone = settings?.businessPhone || "";
+      const businessEmail = settings?.businessEmail || "";
+      const businessAddress = settings?.businessAddress || "";
+      const currencySymbol = settings?.currencySymbol || "R";
+
+      const formatAmount = (cents: number) => `${currencySymbol} ${(cents / 100).toFixed(2)}`;
+      const paymentDate = payment.createdAt ? new Date(payment.createdAt).toLocaleDateString("en-ZA", { year: "numeric", month: "long", day: "numeric" }) : "N/A";
+      const serviceDate = payment.bookingDate ? new Date(payment.bookingDate + "T00:00:00").toLocaleDateString("en-ZA", { year: "numeric", month: "long", day: "numeric" }) : "N/A";
+      const generatedDate = new Date().toLocaleDateString("en-ZA", { year: "numeric", month: "long", day: "numeric" });
+
+      const receiptHTML = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body style="font-family: Arial, sans-serif; color: #333; background: #f9fafb; margin: 0; padding: 0;">
+  <div style="max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; margin-top: 32px; margin-bottom: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <div style="background: #2563eb; padding: 24px 32px; text-align: center; color: #fff;">
+      <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 1px;">${businessName}</h1>
+      <p style="margin: 4px 0 0; font-size: 12px; opacity: 0.9;">Premium Car Care Services</p>
+    </div>
+    <div style="padding: 24px 32px;">
+      <div style="border-left: 4px solid #2563eb; padding: 12px 16px; background: #f8fafc; margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <p style="margin: 0; font-size: 12px; color: #6b7280;">Receipt Number</p>
+            <p style="margin: 2px 0; font-weight: 700; font-size: 15px;">${payment.receiptNumber || "N/A"}</p>
+            <p style="margin: 2px 0; font-size: 11px; color: #9ca3af;">Generated: ${generatedDate}</p>
+          </div>
+          <div style="background: #dcfce7; color: #166534; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700;">PAID</div>
+        </div>
+      </div>
+
+      <h3 style="font-size: 13px; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-bottom: 12px;">Customer Information</h3>
+      <table style="width: 100%; margin-bottom: 20px; font-size: 14px;">
+        <tr><td style="padding: 4px 0; color: #6b7280; width: 120px;">Name</td><td style="padding: 4px 0; font-weight: 600;">${payment.customerName || "N/A"}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Email</td><td style="padding: 4px 0;">${payment.customerEmail || "N/A"}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Phone</td><td style="padding: 4px 0;">${payment.customerPhone || "N/A"}</td></tr>
+      </table>
+
+      <h3 style="font-size: 13px; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-bottom: 12px;">Service Details</h3>
+      <table style="width: 100%; margin-bottom: 20px; font-size: 14px;">
+        <tr><td style="padding: 4px 0; color: #6b7280; width: 120px;">Service</td><td style="padding: 4px 0; font-weight: 600;">${payment.serviceName || "N/A"}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Vehicle</td><td style="padding: 4px 0;">${payment.licensePlate || "N/A"}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Service Date</td><td style="padding: 4px 0;">${serviceDate}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Service Time</td><td style="padding: 4px 0;">${payment.timeSlot || "N/A"}</td></tr>
+      </table>
+
+      <h3 style="font-size: 13px; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-bottom: 12px;">Payment Information</h3>
+      <table style="width: 100%; margin-bottom: 20px; font-size: 14px;">
+        <tr><td style="padding: 4px 0; color: #6b7280; width: 120px;">Service Amount</td><td style="padding: 4px 0;">${formatAmount(payment.amount)}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Amount Paid</td><td style="padding: 4px 0; font-weight: 700; color: #16a34a; font-size: 18px;">${formatAmount(payment.amount)}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Payment Method</td><td style="padding: 4px 0; text-transform: uppercase;">${payment.paymentMethod}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Payment Date</td><td style="padding: 4px 0;">${paymentDate}</td></tr>
+        <tr><td style="padding: 4px 0; color: #6b7280;">Confirmed By</td><td style="padding: 4px 0;">${payment.confirmedBy || "N/A"}</td></tr>
+      </table>
+    </div>
+
+    <div style="background: #f0f9ff; padding: 20px 32px; text-align: center; border-top: 1px solid #e5e7eb;">
+      <p style="font-size: 14px; font-weight: 600; color: #1e40af; margin: 0;">Thank You for Choosing PRESTIGE by Ekhaya!</p>
+      ${businessPhone || businessEmail ? `<p style="font-size: 12px; color: #6b7280; margin: 8px 0 0;">${[businessPhone, businessEmail].filter(Boolean).join(" | ")}</p>` : ""}
+      ${businessAddress ? `<p style="font-size: 12px; color: #6b7280; margin: 4px 0 0;">${businessAddress}</p>` : ""}
+    </div>
+
+    <div style="padding: 12px 32px; text-align: center; background: #f9fafb;">
+      <p style="font-size: 10px; color: #9ca3af; margin: 0;">This is a computer-generated receipt. No signature is required.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      // Send via nodemailer — same pattern as invoice sending
+      const nodemailer = await import("nodemailer");
+      let transporter;
+      if (process.env.SMTP_HOST) {
+        transporter = nodemailer.default.createTransport({
+          host: process.env.SMTP_HOST,
+          port: parseInt(process.env.SMTP_PORT || "587"),
+          secure: process.env.SMTP_SECURE === "true",
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+      } else {
+        const testAccount = await nodemailer.default.createTestAccount();
+        transporter = nodemailer.default.createTransport({
+          host: "smtp.ethereal.email",
+          port: 587,
+          secure: false,
+          auth: { user: testAccount.user, pass: testAccount.pass },
+        });
+      }
+
+      const info = await transporter.sendMail({
+        from: process.env.SMTP_FROM || `"${businessName}" <noreply@hopsvoir.com>`,
+        to: recipientEmail,
+        subject: `Receipt ${payment.receiptNumber} — ${businessName}`,
+        html: receiptHTML,
+      });
+
+      const previewUrl = nodemailer.default.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log("Receipt email preview URL:", previewUrl);
+      }
+
+      res.json({
+        success: true,
+        message: `Receipt sent to ${recipientEmail}`,
+        previewUrl: previewUrl || undefined,
+      });
+    } catch (error) {
+      console.error("Error sending receipt email:", error);
+      res.status(500).json({ message: "Failed to send receipt email" });
+    }
+  });
+
+  // List recent payments
+  app.get("/api/payments", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const { fromDate, toDate, limit } = req.query;
+      const payments = await storage.getBookingPayments(tenantId, {
+        fromDate: fromDate as string,
+        toDate: toDate as string,
+        limit: limit ? parseInt(limit as string, 10) : 50,
+      });
+      res.json({ payments });
+    } catch (error) {
+      console.error("Error fetching payments:", error);
+      res.status(500).json({ message: "Failed to fetch payments" });
+    }
+  });
+
+  // =====================
   // LOYALTY POINTS
   // =====================
 
@@ -2149,19 +2509,47 @@ export async function registerRoutes(
   // Loyalty analytics (local accounts + transaction history)
   app.get("/api/loyalty/analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const tenantId = (req as any).tenantId || "default";
-      const analytics = await storage.getLoyaltyAnalytics(tenantId);
+      const crmAnalytics = await getCRMLoyaltyAnalytics();
+
+      if (!crmAnalytics) {
+        return res.json({
+          totalAccounts: 0,
+          totalPointsIssued: 0,
+          totalPointsRedeemed: 0,
+          pointsIssuedToday: 0,
+          topEarners: [],
+        });
+      }
 
       res.json({
-        totalAccounts: analytics.totalAccounts,
-        totalPointsIssued: analytics.totalPointsIssued,
+        totalAccounts: crmAnalytics.totalMembers,
+        totalPointsIssued: crmAnalytics.totalPointsAcrossMembers,
         totalPointsRedeemed: 0,
-        pointsIssuedToday: analytics.pointsIssuedToday,
-        topEarners: analytics.topEarners,
+        pointsIssuedToday: 0,
+        topEarners: crmAnalytics.topMembers.map(m => ({
+          plateDisplay: m.memberNumber || "N/A",
+          customerName: m.customerName,
+          pointsBalance: m.loyaltyPoints,
+          totalWashes: 0,
+        })),
       });
     } catch (error) {
       console.error("Error fetching loyalty analytics:", error);
       res.status(500).json({ message: "Failed to fetch loyalty analytics" });
+    }
+  });
+
+  // Customer/member growth analytics — monthly trends from CRM
+  app.get("/api/crm/growth-analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const growth = await getCRMGrowthAnalytics();
+      if (!growth) {
+        return res.json({ months: [], totals: { totalUsers: 0, totalMembers: 0, totalBookings: 0 }, peaks: {}, growthRate: {} });
+      }
+      res.json(growth);
+    } catch (error) {
+      console.error("Error fetching growth analytics:", error);
+      res.status(500).json({ message: "Failed to fetch growth analytics" });
     }
   });
 

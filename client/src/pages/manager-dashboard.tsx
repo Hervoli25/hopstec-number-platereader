@@ -47,11 +47,13 @@ import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
   TrendingUp, Calendar, Target, ArrowRight, Zap, Settings, DollarSign,
-  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer, Award, Package
+  Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer, Award, Package,
+  CreditCard, CheckCircle2, Receipt, Printer, Download, Send
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
 import { formatDistanceToNow, format } from "date-fns";
 import logoPath from "@assets/hopsvoir_principal_logo_1769965389226.png";
+import { AreaChart, Area, BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 interface QueueStats {
   activeWashes: number;
@@ -60,7 +62,7 @@ interface QueueStats {
   activeJobs: (WashJob & { priority?: number; priorityFactors?: Record<string, number>; checklistTotal?: number; checklistDone?: number; currentStepLabel?: string | null })[];
 }
 
-interface CRMBooking {
+interface LocalBooking {
   id: string;
   bookingReference: string;
   status: string;
@@ -77,8 +79,7 @@ interface CRMBooking {
   customerPhone: string | null;
   totalAmount: number;
   notes: string | null;
-  isWithinOneHour?: boolean;
-  canCustomerModify?: boolean;
+  createdAt?: string;
 }
 
 interface AnalyticsSummary {
@@ -128,7 +129,7 @@ export default function ManagerDashboard() {
     queryKey: ["/api/analytics/summary"],
   });
 
-  const { data: crmBookings } = useQuery<CRMBooking[]>({
+  const { data: crmBookings } = useQuery<LocalBooking[]>({
     queryKey: ["/api/crm/bookings"],
   });
 
@@ -142,18 +143,30 @@ export default function ManagerDashboard() {
     queryKey: ["/api/loyalty/analytics"],
   });
 
+  const { data: growthData } = useQuery<{
+    months: { month: string; label: string; newUsers: number; newMembers: number; newBookings: number; cumulativeUsers: number; cumulativeMembers: number }[];
+    totals: { totalUsers: number; totalMembers: number; totalBookings: number };
+    peaks: { bestUserMonth: string; bestMemberMonth: string; bestBookingMonth: string };
+    growthRate: { usersLast3Months: number; membersLast3Months: number };
+  }>({
+    queryKey: ["/api/crm/growth-analytics"],
+  });
+
   const upcomingBookings = crmBookings?.filter(b => b.status === "CONFIRMED").slice(0, 5) || [];
 
   // Booking Management Dialog State
   const { toast } = useToast();
   const qClient = useQueryClient();
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
-  const [selectedBooking, setSelectedBooking] = useState<CRMBooking | null>(null);
+  const [selectedBooking, setSelectedBooking] = useState<LocalBooking | null>(null);
   const [searchDialogOpen, setSearchDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [paymentSuccessOpen, setPaymentSuccessOpen] = useState(false);
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
 
   // Edit form state
   const [editDate, setEditDate] = useState("");
@@ -161,12 +174,20 @@ export default function ManagerDashboard() {
   const [editNotes, setEditNotes] = useState("");
   const [editStatus, setEditStatus] = useState("");
 
+  // Payment form state
+  const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentConfirmedBy, setPaymentConfirmedBy] = useState("");
+  const [paymentNotes, setPaymentNotes] = useState("");
+  const [lastPayment, setLastPayment] = useState<any>(null);
+
   // Search for booking
-  const { data: searchResults, isLoading: isSearching, refetch: searchBookings, error: searchError } = useQuery<{ bookings: CRMBooking[]; error?: string; technicalError?: string }>({
+  const { data: searchResults, isLoading: isSearching, refetch: searchBookings, error: searchError } = useQuery<{ bookings: LocalBooking[]; error?: string; technicalError?: string }>({
     queryKey: ["search-bookings", searchQuery],
     queryFn: async () => {
       if (!searchQuery.trim()) return { bookings: [] };
-      const res = await fetch(`/api/manager/bookings?search=${encodeURIComponent(searchQuery)}&limit=10`, {
+      const res = await fetch(`/api/crm/bookings/manager?search=${encodeURIComponent(searchQuery)}&limit=10`, {
         credentials: "include",
       });
       if (!res.ok) {
@@ -178,10 +199,10 @@ export default function ManagerDashboard() {
     enabled: false,
   });
 
-  // Update booking mutation
+  // Update booking mutation (CRM / Ekhaya DB)
   const updateMutation = useMutation({
     mutationFn: async (updates: { id: string; data: any }) => {
-      const res = await fetch(`/api/manager/bookings/${updates.id}`, {
+      const res = await fetch(`/api/crm/bookings/${updates.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -205,10 +226,10 @@ export default function ManagerDashboard() {
     },
   });
 
-  // Cancel booking mutation
+  // Cancel booking mutation (CRM / Ekhaya DB)
   const cancelMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/manager/bookings/${id}`, {
+      const res = await fetch(`/api/crm/bookings/${id}`, {
         method: "DELETE",
         credentials: "include",
       });
@@ -227,6 +248,33 @@ export default function ManagerDashboard() {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to cancel", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Payment mutation
+  const paymentMutation = useMutation({
+    mutationFn: async (data: { bookingId: string; amount: number; paymentMethod: string; paymentReference: string; confirmedBy: string; notes: string }) => {
+      const res = await fetch(`/api/crm/bookings/${data.bookingId}/payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to confirm payment");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setLastPayment(data.payment);
+      setPaymentDialogOpen(false);
+      setPaymentSuccessOpen(true);
+      qClient.invalidateQueries({ queryKey: ["/api/crm/bookings"] });
+      qClient.invalidateQueries({ queryKey: ["search-bookings"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Payment failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -253,7 +301,7 @@ export default function ManagerDashboard() {
     },
   });
 
-  const handleBookingClick = (booking: CRMBooking) => {
+  const handleBookingClick = (booking: LocalBooking) => {
     setSelectedBooking(booking);
     setActionDialogOpen(true);
   };
@@ -265,13 +313,13 @@ export default function ManagerDashboard() {
     }
   };
 
-  const handleSelectSearchResult = (booking: CRMBooking) => {
+  const handleSelectSearchResult = (booking: LocalBooking) => {
     setSelectedBooking(booking);
     setSearchDialogOpen(false);
     setActionDialogOpen(true);
   };
 
-  const openEditDialog = (booking: CRMBooking) => {
+  const openEditDialog = (booking: LocalBooking) => {
     setEditDate(booking.bookingDate.split("T")[0]);
     setEditTimeSlot(booking.timeSlot);
     setEditNotes(booking.notes || "");
@@ -293,6 +341,119 @@ export default function ManagerDashboard() {
       return;
     }
     updateMutation.mutate({ id: selectedBooking.id, data: updates });
+  };
+
+  const openPaymentDialog = (booking: LocalBooking) => {
+    setPaymentAmount(String((booking.totalAmount || 0) / 100));
+    setPaymentMethod("cash");
+    setPaymentReference("");
+    setPaymentConfirmedBy(user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() : "");
+    setPaymentNotes("");
+    setActionDialogOpen(false);
+    setPaymentDialogOpen(true);
+  };
+
+  const handleConfirmPayment = () => {
+    if (!selectedBooking || !paymentConfirmedBy) return;
+    paymentMutation.mutate({
+      bookingId: selectedBooking.id,
+      amount: Math.round(parseFloat(paymentAmount) * 100),
+      paymentMethod,
+      paymentReference,
+      confirmedBy: paymentConfirmedBy,
+      notes: paymentNotes,
+    });
+  };
+
+  const handlePrintReceipt = () => {
+    setPaymentSuccessOpen(false);
+    setReceiptDialogOpen(true);
+  };
+
+  const getReceiptHtml = () => {
+    const receiptEl = document.getElementById("printable-receipt");
+    if (!receiptEl) return "";
+    return `<html><head><title>Receipt - ${lastPayment?.receiptNumber}</title>
+      <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; color: #333; }
+        table { border-collapse: collapse; }
+        a { color: #2563eb; }
+        @media print { body { margin: 0; padding: 20px; } }
+      </style></head><body>
+      ${receiptEl.innerHTML}
+      </body></html>`;
+  };
+
+  const printReceipt = () => {
+    const html = getReceiptHtml();
+    if (!html) return;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    printWindow.document.write(html.replace("</body>", "<script>window.print(); window.close();</script></body>"));
+    printWindow.document.close();
+  };
+
+  const downloadReceipt = () => {
+    const html = getReceiptHtml();
+    if (!html) return;
+    // Open print dialog — user selects "Save as PDF" as the destination
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    printWindow.document.write(html.replace("</body>", `
+      <script>
+        document.title = "Receipt-${lastPayment?.receiptNumber || "receipt"}";
+        window.print();
+      </script></body>`));
+    printWindow.document.close();
+    toast({ title: "Save as PDF", description: "Select 'Save as PDF' as the printer destination to download." });
+  };
+
+  const sendReceipt = async () => {
+    if (!lastPayment || !selectedBooking) return;
+    const email = lastPayment.customerEmail || selectedBooking.customerEmail;
+    if (!email) {
+      toast({ title: "No email address", description: "This customer has no email address on file.", variant: "destructive" });
+      return;
+    }
+    try {
+      const res = await fetch(`/api/crm/bookings/${selectedBooking.id}/send-receipt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ paymentId: lastPayment.id }),
+      });
+      if (res.ok) {
+        toast({ title: "Receipt sent", description: `Receipt emailed to ${email}` });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: "Send failed", description: err.message || "Could not send receipt email.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Send failed", description: "Network error — could not send receipt.", variant: "destructive" });
+    }
+  };
+
+  // Fetch existing payment for a booking and show invoice/receipt
+  const fetchPaymentForInvoice = async (bookingId: string) => {
+    try {
+      const res = await fetch(`/api/crm/bookings/${bookingId}/payment`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setLastPayment(data.payment);
+        setReceiptDialogOpen(true);
+      } else {
+        // No payment yet — offer to create one
+        toast({
+          title: "No payment recorded yet",
+          description: "Record a payment first to generate an invoice.",
+        });
+        if (selectedBooking) {
+          openPaymentDialog(selectedBooking);
+        }
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to fetch payment details", variant: "destructive" });
+    }
   };
 
   const initials = user ?
@@ -780,6 +941,111 @@ export default function ManagerDashboard() {
             </Card>
           )}
 
+          {/* Customer Growth Analytics */}
+          {growthData && growthData.months.length > 0 && (
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-blue-500" />
+                  Customer Growth
+                </h2>
+                <div className="flex gap-3 text-xs">
+                  {growthData.growthRate.usersLast3Months !== 0 && (
+                    <span className={`font-semibold ${growthData.growthRate.usersLast3Months > 0 ? "text-green-600" : "text-red-500"}`}>
+                      {growthData.growthRate.usersLast3Months > 0 ? "+" : ""}{growthData.growthRate.usersLast3Months}% users (3mo)
+                    </span>
+                  )}
+                  {growthData.growthRate.membersLast3Months !== 0 && (
+                    <span className={`font-semibold ${growthData.growthRate.membersLast3Months > 0 ? "text-green-600" : "text-red-500"}`}>
+                      {growthData.growthRate.membersLast3Months > 0 ? "+" : ""}{growthData.growthRate.membersLast3Months}% members (3mo)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="text-center p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30">
+                  <p className="text-2xl font-bold text-blue-600">{growthData.totals.totalUsers}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Total Users</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30">
+                  <p className="text-2xl font-bold text-emerald-600">{growthData.totals.totalMembers}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Active Members</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-purple-50 dark:bg-purple-950/30">
+                  <p className="text-2xl font-bold text-purple-600">{growthData.totals.totalBookings}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Total Bookings</p>
+                </div>
+              </div>
+
+              {/* Cumulative Growth Chart */}
+              <div className="mb-6">
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">Cumulative Growth (12 months)</h3>
+                <ResponsiveContainer width="100%" height={220}>
+                  <AreaChart data={growthData.months} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gradUsers" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="gradMembers" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} className="text-muted-foreground" />
+                    <YAxis tick={{ fontSize: 11 }} className="text-muted-foreground" />
+                    <Tooltip
+                      contentStyle={{ borderRadius: "8px", fontSize: "12px", border: "1px solid hsl(var(--border))", background: "hsl(var(--card))", color: "hsl(var(--card-foreground))" }}
+                      labelStyle={{ fontWeight: "bold", marginBottom: "4px" }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: "12px" }} />
+                    <Area type="monotone" dataKey="cumulativeUsers" name="Total Users" stroke="#3b82f6" fill="url(#gradUsers)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="cumulativeMembers" name="Total Members" stroke="#10b981" fill="url(#gradMembers)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Monthly New Additions Bar Chart */}
+              <div className="mb-4">
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">Monthly New Additions</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <RechartsBarChart data={growthData.months} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} className="text-muted-foreground" />
+                    <YAxis tick={{ fontSize: 11 }} className="text-muted-foreground" />
+                    <Tooltip
+                      contentStyle={{ borderRadius: "8px", fontSize: "12px", border: "1px solid hsl(var(--border))", background: "hsl(var(--card))", color: "hsl(var(--card-foreground))" }}
+                      labelStyle={{ fontWeight: "bold", marginBottom: "4px" }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: "12px" }} />
+                    <Bar dataKey="newUsers" name="New Users" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="newMembers" name="New Members" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="newBookings" name="New Bookings" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                  </RechartsBarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Peak Months */}
+              <div className="grid grid-cols-3 gap-3 pt-3 border-t">
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground">Peak Users</p>
+                  <p className="text-sm font-semibold text-blue-600">{growthData.peaks.bestUserMonth}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground">Peak Members</p>
+                  <p className="text-sm font-semibold text-emerald-600">{growthData.peaks.bestMemberMonth}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground">Peak Bookings</p>
+                  <p className="text-sm font-semibold text-purple-600">{growthData.peaks.bestBookingMonth}</p>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Quick Actions */}
           <Card className="p-6">
             <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
@@ -968,6 +1234,32 @@ export default function ManagerDashboard() {
                   View Full Details
                 </Button>
 
+                {/* Payment & Invoice — available for all statuses except CANCELLED */}
+                {selectedBooking.status !== "CANCELLED" && (
+                  <>
+                    <Button
+                      className="w-full justify-start bg-green-600 hover:bg-green-700 text-white"
+                      onClick={() => openPaymentDialog(selectedBooking)}
+                    >
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      {selectedBooking.status === "COMPLETED" ? "Record Payment / View Receipt" : "Confirm Payment"}
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={() => {
+                        setActionDialogOpen(false);
+                        fetchPaymentForInvoice(selectedBooking.id);
+                      }}
+                    >
+                      <Receipt className="h-4 w-4 mr-2" />
+                      Generate Invoice / Receipt
+                    </Button>
+                  </>
+                )}
+
+                {/* Edit & Cancel — only for non-completed, non-cancelled */}
                 {selectedBooking.status !== "COMPLETED" && selectedBooking.status !== "CANCELLED" && (
                   <>
                     <Button
@@ -1071,10 +1363,34 @@ export default function ManagerDashboard() {
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2">
             <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
               Close
             </Button>
+            {selectedBooking?.status !== "CANCELLED" && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setViewDialogOpen(false);
+                    fetchPaymentForInvoice(selectedBooking!.id);
+                  }}
+                >
+                  <Receipt className="h-4 w-4 mr-2" />
+                  Invoice
+                </Button>
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  onClick={() => {
+                    setViewDialogOpen(false);
+                    openPaymentDialog(selectedBooking!);
+                  }}
+                >
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Payment
+                </Button>
+              </>
+            )}
             {selectedBooking?.status !== "COMPLETED" && selectedBooking?.status !== "CANCELLED" && (
               <Button onClick={() => {
                 setViewDialogOpen(false);
@@ -1179,6 +1495,348 @@ export default function ManagerDashboard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Payment Confirmation Dialog */}
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-green-600" />
+              Confirm Payment
+            </DialogTitle>
+            <DialogDescription>
+              Record payment for booking #{selectedBooking?.bookingReference || selectedBooking?.id.slice(-8).toUpperCase()}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBooking && (
+            <div className="space-y-4">
+              {/* Booking Summary */}
+              <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Customer</span>
+                  <span className="font-medium">{selectedBooking.customerName || "N/A"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Vehicle</span>
+                  <span className="font-mono font-medium">{selectedBooking.licensePlate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Service</span>
+                  <span className="font-medium">{selectedBooking.serviceName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Date & Time</span>
+                  <span className="font-medium">
+                    {format(new Date(selectedBooking.bookingDate + "T00:00:00"), "MMM d")} at {selectedBooking.timeSlot}
+                  </span>
+                </div>
+              </div>
+
+              {/* Payment Method */}
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="card">Card</SelectItem>
+                    <SelectItem value="eft">EFT / Bank Transfer</SelectItem>
+                    <SelectItem value="mobile">Mobile Payment</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Amount */}
+              <div className="space-y-2">
+                <Label>Amount Paid (R)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+
+              {/* Payment Reference */}
+              {paymentMethod !== "cash" && (
+                <div className="space-y-2">
+                  <Label>Payment Reference</Label>
+                  <Input
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.target.value)}
+                    placeholder="Transaction ID, card last 4 digits, etc."
+                  />
+                </div>
+              )}
+
+              {/* Confirmed By */}
+              <div className="space-y-2">
+                <Label>Confirmed By (Staff Name)</Label>
+                <Input
+                  value={paymentConfirmedBy}
+                  onChange={(e) => setPaymentConfirmedBy(e.target.value)}
+                  placeholder="Your name"
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-2">
+                <Label>Notes (Optional)</Label>
+                <Textarea
+                  value={paymentNotes}
+                  onChange={(e) => setPaymentNotes(e.target.value)}
+                  placeholder="Any additional notes..."
+                  rows={2}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-green-600 hover:bg-green-700"
+              onClick={handleConfirmPayment}
+              disabled={paymentMutation.isPending || !paymentConfirmedBy || !paymentAmount}
+            >
+              {paymentMutation.isPending ? "Processing..." : "Confirm Payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment Success Dialog */}
+      <Dialog open={paymentSuccessOpen} onOpenChange={setPaymentSuccessOpen}>
+        <DialogContent className="max-w-sm">
+          <div className="text-center space-y-4">
+            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="h-8 w-8 text-green-600" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold">Payment Confirmed</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                The booking has been marked as completed.
+              </p>
+            </div>
+
+            {lastPayment && (
+              <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm text-left">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Receipt #</span>
+                  <span className="font-mono font-bold text-primary">{lastPayment.receiptNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-bold">R{((lastPayment.amount || 0) / 100).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Method</span>
+                  <span className="capitalize">{lastPayment.paymentMethod}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Customer</span>
+                  <span>{lastPayment.customerName || "N/A"}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setPaymentSuccessOpen(false);
+                  setSelectedBooking(null);
+                }}
+              >
+                Close
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handlePrintReceipt}
+              >
+                <Receipt className="h-4 w-4 mr-2" />
+                View Receipt
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Printable Invoice / Receipt Dialog */}
+      <Dialog open={receiptDialogOpen} onOpenChange={setReceiptDialogOpen}>
+        <DialogContent className="max-w-md max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              Tax Invoice / Receipt
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="overflow-y-auto flex-1 min-h-0">
+          {lastPayment && (
+            <div id="printable-receipt">
+              {/* Header */}
+              <div style={{ textAlign: "center", borderBottom: "3px solid #2563eb", paddingBottom: "12px", marginBottom: "20px" }}>
+                <h1 style={{ fontSize: "28px", margin: "0 0 4px", fontWeight: "bold", color: "#2563eb", letterSpacing: "3px" }}>EKHAYA CAR WASH</h1>
+                <p style={{ fontSize: "13px", color: "#666", margin: "0" }}>Premium Car Care Services</p>
+              </div>
+
+              {/* Receipt ID block */}
+              <div style={{ borderLeft: "4px solid #2563eb", padding: "12px 16px", background: "#f0f7ff", marginBottom: "20px" }}>
+                <p style={{ fontSize: "16px", fontWeight: "bold", margin: "0 0 4px", color: "#1e3a5f" }}>Receipt #{lastPayment.receiptNumber}</p>
+                <p style={{ fontSize: "12px", color: "#666", margin: "0 0 6px" }}>
+                  Generated: {format(new Date(lastPayment.createdAt), "M/d/yyyy, h:mm:ss a")}
+                </p>
+                <span style={{ display: "inline-block", background: "#16a34a", color: "white", padding: "2px 12px", borderRadius: "4px", fontSize: "12px", fontWeight: "bold", letterSpacing: "3px" }}>P A I D</span>
+              </div>
+
+              {/* Customer Information */}
+              <div style={{ marginBottom: "20px" }}>
+                <h3 style={{ fontSize: "14px", fontWeight: "bold", borderBottom: "1px solid #ddd", paddingBottom: "6px", marginBottom: "10px" }}>Customer Information</h3>
+                <table style={{ width: "100%", fontSize: "13px" }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Name:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.customerName || "Walk-in Customer"}</td>
+                    </tr>
+                    {lastPayment.customerEmail && (
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: "bold" }}>Email:</td>
+                        <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.customerEmail}</td>
+                      </tr>
+                    )}
+                    {lastPayment.customerPhone && (
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: "bold" }}>Phone:</td>
+                        <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.customerPhone}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Service Details */}
+              <div style={{ marginBottom: "20px" }}>
+                <h3 style={{ fontSize: "14px", fontWeight: "bold", borderBottom: "1px solid #ddd", paddingBottom: "6px", marginBottom: "10px" }}>Service Details</h3>
+                <table style={{ width: "100%", fontSize: "13px" }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Service:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.serviceName || "Service"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Vehicle:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.licensePlate ? `(${lastPayment.licensePlate})` : ""}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Service Date:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.bookingDate ? format(new Date(lastPayment.bookingDate + "T00:00:00"), "M/d/yyyy") : ""}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Service Time:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.timeSlot || ""}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Location:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>Ekhaya Car Wash - Main Branch</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Payment Information */}
+              <div style={{ marginBottom: "20px" }}>
+                <h3 style={{ fontSize: "14px", fontWeight: "bold", borderBottom: "1px solid #ddd", paddingBottom: "6px", marginBottom: "10px" }}>Payment Information</h3>
+                <table style={{ width: "100%", fontSize: "13px" }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Service Amount:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>R{((lastPayment.amount || 0) / 100).toFixed(2)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Amount Paid:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right", fontSize: "22px", fontWeight: "bold", color: "#16a34a" }}>R{((lastPayment.amount || 0) / 100).toFixed(2)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <table style={{ width: "100%", fontSize: "13px", marginTop: "12px" }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Payment Method:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right", textTransform: "uppercase" }}>
+                        {lastPayment.paymentMethod === "eft" ? "EFT" : lastPayment.paymentMethod === "card" ? "CARD" : lastPayment.paymentMethod === "mobile" ? "MOBILE" : "CASH"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Payment Date:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{format(new Date(lastPayment.createdAt), "M/d/yyyy, h:mm:ss a")}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>Confirmed By:</td>
+                      <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.confirmedBy}</td>
+                    </tr>
+                    {lastPayment.paymentReference && (
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: "bold" }}>Reference:</td>
+                        <td style={{ padding: "4px 0", textAlign: "right" }}>{lastPayment.paymentReference}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Thank You Footer */}
+              <div style={{ borderTop: "1px solid #ddd", paddingTop: "20px", marginTop: "10px", textAlign: "center" }}>
+                <h3 style={{ fontSize: "16px", fontWeight: "bold", color: "#2563eb", margin: "0 0 6px" }}>Thank You for Choosing PRESTIGE by Ekhaya!</h3>
+                <p style={{ fontSize: "12px", color: "#666", margin: "0 0 16px" }}>We appreciate your business and look forward to serving you again.</p>
+
+                <p style={{ fontSize: "13px", fontWeight: "bold", margin: "0 0 8px" }}>Contact Us:</p>
+                <p style={{ fontSize: "11px", color: "#555", margin: "2px 0" }}>2C Piers Road, Wynberg, Cape Town, Western Cape, 7800, South Africa</p>
+                <p style={{ fontSize: "11px", color: "#555", margin: "2px 0" }}>+27 78 613 2969</p>
+                <p style={{ fontSize: "11px", color: "#555", margin: "2px 0" }}>infos@prestigebyekhaya.com</p>
+                <p style={{ fontSize: "11px", color: "#555", margin: "2px 0" }}>Mon-Thur: 08:00-17:00, Fri-Sat: 08:00-19:30, Sun: 09:00-14:00</p>
+                <p style={{ fontSize: "11px", margin: "2px 0" }}><a href="https://prestigebyekhaya.com" style={{ color: "#2563eb" }}>https://prestigebyekhaya.com</a></p>
+              </div>
+
+              {/* Disclaimer */}
+              <div style={{ borderTop: "1px solid #eee", marginTop: "16px", paddingTop: "10px", textAlign: "center" }}>
+                <p style={{ fontSize: "10px", color: "#999", margin: "0" }}>
+                  This is an electronically generated receipt. For any queries, please contact us with receipt #{lastPayment.receiptNumber}
+                </p>
+              </div>
+            </div>
+          )}
+          </div>
+
+          <DialogFooter className="flex-shrink-0 flex-wrap gap-2 border-t pt-3">
+            <Button variant="outline" onClick={() => {
+              setReceiptDialogOpen(false);
+              setSelectedBooking(null);
+            }}>
+              Close
+            </Button>
+            <Button variant="outline" onClick={sendReceipt}>
+              <Send className="h-4 w-4 mr-2" />
+              Send
+            </Button>
+            <Button variant="outline" onClick={downloadReceipt}>
+              <Download className="h-4 w-4 mr-2" />
+              Download
+            </Button>
+            <Button onClick={printReceipt}>
+              <Printer className="h-4 w-4 mr-2" />
+              Print
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AppFooter />
     </div>
