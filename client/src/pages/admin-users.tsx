@@ -51,6 +51,7 @@ interface User {
   role: "technician" | "manager" | "admin";
   isActive: boolean;
   createdAt: string;
+  tenantId?: string;
 }
 
 interface SystemStats {

@@ -1,4 +1,4 @@
-import { eq, and, isNull, desc, gte, sql, lte, between, or, asc } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, desc, gte, lt, sql, lte, between, or, asc } from "drizzle-orm";
 import { db } from "./db";
 import {
   washJobs, washPhotos, parkingSessions, eventLogs, userRoles, users,
@@ -6,9 +6,10 @@ import {
   parkingSettings, parkingZones, frequentParkers, parkingReservations,
   businessSettings, servicePackages, customerMemberships, parkingValidations,
   customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts,
-  loyaltyTransactions, pushSubscriptions,
+  loyaltyAccounts, loyaltyTransactions, pushSubscriptions,
   suppliers, inventoryItems, inventoryConsumption, purchaseOrders,
   tenants, branches, webhookRetries, invoices,
+  bookingServices, bookingCustomers, bookingVehicles, bookings, bookingTimeSlotConfig,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -24,6 +25,7 @@ import {
   type NotificationTemplate, type InsertNotificationTemplate,
   type TechnicianTimeLog, type InsertTechnicianTimeLog,
   type StaffAlert, type InsertStaffAlert,
+  type LoyaltyAccount,
   type LoyaltyTransaction,
   type PushSubscription, type InsertPushSubscription,
   type Supplier, type InsertSupplier,
@@ -41,30 +43,35 @@ import {
   type CustomerConfirmation, type InsertCustomerConfirmation,
   type PhotoRule, type InsertPhotoRule,
   type WebhookRetry, type InsertWebhookRetry,
+  type BookingService, type InsertBookingService,
+  type BookingCustomer, type InsertBookingCustomer,
+  type BookingVehicle, type InsertBookingVehicle,
+  type Booking, type InsertBooking,
+  type BookingTimeSlotConfig, type InsertBookingTimeSlotConfig,
   WASH_STATUS_ORDER
 } from "@shared/schema";
 import { normalizePlate } from "./lib/plate-utils";
 
 export interface IStorage {
   // User roles
-  getUserRole(userId: string): Promise<UserRole | undefined>;
-  upsertUserRole(role: InsertUserRole): Promise<UserRole>;
+  getUserRole(tenantId: string, userId: string): Promise<UserRole | undefined>;
+  upsertUserRole(tenantId: string, role: InsertUserRole): Promise<UserRole>;
 
   // Users (credentials auth)
   getUserById(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
-  getUsers(): Promise<User[]>;
+  getUsers(tenantId?: string): Promise<User[]>;
 
-  // Customer job access
+  // Customer job access (token-scoped, stays global)
   createCustomerJobAccess(access: InsertCustomerJobAccess): Promise<CustomerJobAccess>;
   getCustomerJobAccessByToken(token: string): Promise<CustomerJobAccess | undefined>;
   getCustomerJobAccessByJobId(washJobId: string): Promise<CustomerJobAccess | undefined>;
   updateCustomerJobAccessViewedAt(token: string): Promise<CustomerJobAccess | undefined>;
 
   // Service checklist
-  createServiceChecklistItems(items: InsertServiceChecklistItem[]): Promise<ServiceChecklistItem[]>;
+  createServiceChecklistItems(tenantId: string, items: InsertServiceChecklistItem[]): Promise<ServiceChecklistItem[]>;
   getServiceChecklistItems(washJobId: string): Promise<ServiceChecklistItem[]>;
   updateChecklistItemConfirmed(id: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined>;
   updateChecklistItemConfirmedForJob(id: string, washJobId: string, confirmed: boolean): Promise<ServiceChecklistItem | undefined>;
@@ -75,57 +82,57 @@ export interface IStorage {
   getCustomerConfirmation(washJobId: string): Promise<CustomerConfirmation | undefined>;
 
   // Photo rules
-  getPhotoRules(): Promise<PhotoRule[]>;
-  upsertPhotoRule(rule: InsertPhotoRule): Promise<PhotoRule>;
+  getPhotoRules(tenantId: string): Promise<PhotoRule[]>;
+  upsertPhotoRule(tenantId: string, rule: InsertPhotoRule): Promise<PhotoRule>;
 
   // Wash Jobs
-  createWashJob(job: InsertWashJob): Promise<WashJob>;
-  getWashJob(id: string): Promise<WashJob | undefined>;
-  getWashJobs(filters?: { status?: string; technicianId?: string }): Promise<WashJob[]>;
-  updateWashJobStatus(id: string, status: string): Promise<WashJob | undefined>;
-  completeWashJob(id: string): Promise<WashJob | undefined>;
-  deleteWashJob(id: string): Promise<boolean>;
+  createWashJob(tenantId: string, job: InsertWashJob): Promise<WashJob>;
+  getWashJob(id: string, tenantId: string): Promise<WashJob | undefined>;
+  getWashJobs(tenantId: string, filters?: { status?: string; technicianId?: string; fromDate?: Date }): Promise<WashJob[]>;
+  updateWashJobStatus(id: string, status: string, tenantId?: string): Promise<WashJob | undefined>;
+  completeWashJob(id: string, tenantId?: string): Promise<WashJob | undefined>;
+  deleteWashJob(id: string, tenantId?: string): Promise<boolean>;
 
   // Wash Photos
-  addWashPhoto(photo: InsertWashPhoto): Promise<WashPhoto>;
+  addWashPhoto(tenantId: string, photo: InsertWashPhoto): Promise<WashPhoto>;
   getWashPhotos(washJobId: string): Promise<WashPhoto[]>;
 
   // Parking Sessions
-  createParkingEntry(session: InsertParkingSession): Promise<ParkingSession>;
-  findOpenParkingSession(plateNormalized: string): Promise<ParkingSession | undefined>;
-  closeParkingSession(id: string, exitPhotoUrl?: string, calculatedFee?: number): Promise<ParkingSession | undefined>;
-  getParkingSessions(filters?: { open?: boolean; plateSearch?: string; fromDate?: Date; toDate?: Date; zoneId?: string }): Promise<ParkingSession[]>;
-  getParkingSession(id: string): Promise<ParkingSession | undefined>;
-  updateParkingSession(id: string, data: Partial<InsertParkingSession>): Promise<ParkingSession | undefined>;
+  createParkingEntry(tenantId: string, session: InsertParkingSession): Promise<ParkingSession>;
+  findOpenParkingSession(tenantId: string, plateNormalized: string): Promise<ParkingSession | undefined>;
+  closeParkingSession(id: string, exitPhotoUrl?: string, calculatedFee?: number, tenantId?: string): Promise<ParkingSession | undefined>;
+  getParkingSessions(tenantId: string, filters?: { open?: boolean; plateSearch?: string; fromDate?: Date; toDate?: Date; zoneId?: string }): Promise<ParkingSession[]>;
+  getParkingSession(id: string, tenantId?: string): Promise<ParkingSession | undefined>;
+  updateParkingSession(id: string, data: Partial<InsertParkingSession>, tenantId?: string): Promise<ParkingSession | undefined>;
 
   // Parking Settings
-  getParkingSettings(): Promise<ParkingSettings | undefined>;
-  upsertParkingSettings(settings: InsertParkingSettings): Promise<ParkingSettings>;
+  getParkingSettings(tenantId: string): Promise<ParkingSettings | undefined>;
+  upsertParkingSettings(tenantId: string, settings: InsertParkingSettings): Promise<ParkingSettings>;
 
   // Parking Zones
-  createParkingZone(zone: InsertParkingZone): Promise<ParkingZone>;
-  getParkingZones(activeOnly?: boolean): Promise<ParkingZone[]>;
-  getParkingZone(id: string): Promise<ParkingZone | undefined>;
-  updateParkingZone(id: string, data: Partial<InsertParkingZone>): Promise<ParkingZone | undefined>;
-  getZoneOccupancy(zoneId: string): Promise<number>;
+  createParkingZone(tenantId: string, zone: InsertParkingZone): Promise<ParkingZone>;
+  getParkingZones(tenantId: string, activeOnly?: boolean): Promise<ParkingZone[]>;
+  getParkingZone(id: string, tenantId?: string): Promise<ParkingZone | undefined>;
+  updateParkingZone(id: string, data: Partial<InsertParkingZone>, tenantId?: string): Promise<ParkingZone | undefined>;
+  getZoneOccupancy(tenantId: string, zoneId: string): Promise<number>;
 
   // Frequent Parkers
-  getOrCreateFrequentParker(plateNormalized: string, plateDisplay: string): Promise<FrequentParker>;
-  getFrequentParker(plateNormalized: string): Promise<FrequentParker | undefined>;
-  updateFrequentParker(id: string, data: Partial<InsertFrequentParker>): Promise<FrequentParker | undefined>;
-  getFrequentParkers(filters?: { isVip?: boolean; hasMonthlyPass?: boolean }): Promise<FrequentParker[]>;
-  incrementParkerVisit(plateNormalized: string, amountSpent?: number): Promise<FrequentParker | undefined>;
+  getOrCreateFrequentParker(tenantId: string, plateNormalized: string, plateDisplay: string): Promise<FrequentParker>;
+  getFrequentParker(tenantId: string, plateNormalized: string): Promise<FrequentParker | undefined>;
+  updateFrequentParker(id: string, data: Partial<InsertFrequentParker>, tenantId?: string): Promise<FrequentParker | undefined>;
+  getFrequentParkers(tenantId: string, filters?: { isVip?: boolean; hasMonthlyPass?: boolean }): Promise<FrequentParker[]>;
+  incrementParkerVisit(tenantId: string, plateNormalized: string, amountSpent?: number): Promise<FrequentParker | undefined>;
 
   // Parking Reservations
-  createParkingReservation(reservation: InsertParkingReservation): Promise<ParkingReservation>;
-  getParkingReservations(filters?: { status?: string; fromDate?: Date; toDate?: Date }): Promise<ParkingReservation[]>;
-  getParkingReservation(id: string): Promise<ParkingReservation | undefined>;
-  getParkingReservationByCode(code: string): Promise<ParkingReservation | undefined>;
-  updateParkingReservation(id: string, data: Partial<InsertParkingReservation>): Promise<ParkingReservation | undefined>;
-  checkInReservation(id: string, parkingSessionId: string): Promise<ParkingReservation | undefined>;
+  createParkingReservation(tenantId: string, reservation: InsertParkingReservation): Promise<ParkingReservation>;
+  getParkingReservations(tenantId: string, filters?: { status?: string; fromDate?: Date; toDate?: Date }): Promise<ParkingReservation[]>;
+  getParkingReservation(id: string, tenantId?: string): Promise<ParkingReservation | undefined>;
+  getParkingReservationByCode(code: string, tenantId?: string): Promise<ParkingReservation | undefined>;
+  updateParkingReservation(id: string, data: Partial<InsertParkingReservation>, tenantId?: string): Promise<ParkingReservation | undefined>;
+  checkInReservation(id: string, parkingSessionId: string, tenantId?: string): Promise<ParkingReservation | undefined>;
 
   // Parking Analytics
-  getParkingAnalytics(): Promise<{
+  getParkingAnalytics(tenantId: string): Promise<{
     totalActiveSessions: number;
     totalCapacity: number;
     occupancyRate: number;
@@ -137,79 +144,79 @@ export interface IStorage {
   }>;
 
   // Business Settings
-  getBusinessSettings(): Promise<BusinessSettings | undefined>;
-  upsertBusinessSettings(settings: InsertBusinessSettings): Promise<BusinessSettings>;
+  getBusinessSettings(tenantId: string): Promise<BusinessSettings | undefined>;
+  upsertBusinessSettings(tenantId: string, settings: InsertBusinessSettings): Promise<BusinessSettings>;
 
   // Service Packages
-  createServicePackage(pkg: InsertServicePackage): Promise<ServicePackage>;
-  getServicePackages(activeOnly?: boolean): Promise<ServicePackage[]>;
-  getServicePackage(id: string): Promise<ServicePackage | undefined>;
-  updateServicePackage(id: string, data: Partial<InsertServicePackage>): Promise<ServicePackage | undefined>;
+  createServicePackage(tenantId: string, pkg: InsertServicePackage): Promise<ServicePackage>;
+  getServicePackages(tenantId: string, activeOnly?: boolean): Promise<ServicePackage[]>;
+  getServicePackage(id: string, tenantId?: string): Promise<ServicePackage | undefined>;
+  updateServicePackage(id: string, data: Partial<InsertServicePackage>, tenantId?: string): Promise<ServicePackage | undefined>;
 
   // Customer Memberships
-  createCustomerMembership(membership: InsertCustomerMembership): Promise<CustomerMembership>;
-  getCustomerMemberships(filters?: { status?: string; plateNormalized?: string }): Promise<CustomerMembership[]>;
-  getCustomerMembership(id: string): Promise<CustomerMembership | undefined>;
-  getActiveMembershipForPlate(plateNormalized: string): Promise<CustomerMembership | undefined>;
-  updateCustomerMembership(id: string, data: Partial<InsertCustomerMembership>): Promise<CustomerMembership | undefined>;
-  incrementMembershipWashUsed(id: string): Promise<CustomerMembership | undefined>;
+  createCustomerMembership(tenantId: string, membership: InsertCustomerMembership): Promise<CustomerMembership>;
+  getCustomerMemberships(tenantId: string, filters?: { status?: string; plateNormalized?: string }): Promise<CustomerMembership[]>;
+  getCustomerMembership(id: string, tenantId?: string): Promise<CustomerMembership | undefined>;
+  getActiveMembershipForPlate(tenantId: string, plateNormalized: string): Promise<CustomerMembership | undefined>;
+  updateCustomerMembership(id: string, data: Partial<InsertCustomerMembership>, tenantId?: string): Promise<CustomerMembership | undefined>;
+  incrementMembershipWashUsed(id: string, tenantId?: string): Promise<CustomerMembership | undefined>;
 
   // Parking Validations
-  createParkingValidation(validation: InsertParkingValidation): Promise<ParkingValidation>;
-  getParkingValidations(parkingSessionId: string): Promise<ParkingValidation[]>;
+  createParkingValidation(tenantId: string, validation: InsertParkingValidation): Promise<ParkingValidation>;
+  getParkingValidations(tenantId: string, parkingSessionId: string): Promise<ParkingValidation[]>;
 
   // Customer Notifications
-  createNotification(notification: InsertCustomerNotification): Promise<CustomerNotification>;
-  getNotifications(filters?: { status?: string; type?: string; customerPhone?: string; limit?: number }): Promise<CustomerNotification[]>;
-  getNotification(id: string): Promise<CustomerNotification | undefined>;
+  createNotification(tenantId: string, notification: InsertCustomerNotification): Promise<CustomerNotification>;
+  getNotifications(tenantId: string, filters?: { status?: string; type?: string; customerPhone?: string; limit?: number }): Promise<CustomerNotification[]>;
+  getNotification(id: string, tenantId?: string): Promise<CustomerNotification | undefined>;
   updateNotificationStatus(id: string, status: string, externalId?: string, failureReason?: string): Promise<CustomerNotification | undefined>;
   getPendingNotifications(limit?: number): Promise<CustomerNotification[]>;
 
   // Notification Templates
-  createNotificationTemplate(template: InsertNotificationTemplate): Promise<NotificationTemplate>;
-  getNotificationTemplates(activeOnly?: boolean): Promise<NotificationTemplate[]>;
-  getNotificationTemplate(code: string): Promise<NotificationTemplate | undefined>;
-  updateNotificationTemplate(id: string, data: Partial<InsertNotificationTemplate>): Promise<NotificationTemplate | undefined>;
+  createNotificationTemplate(tenantId: string, template: InsertNotificationTemplate): Promise<NotificationTemplate>;
+  getNotificationTemplates(tenantId: string, activeOnly?: boolean): Promise<NotificationTemplate[]>;
+  getNotificationTemplate(tenantId: string, code: string): Promise<NotificationTemplate | undefined>;
+  updateNotificationTemplate(id: string, data: Partial<InsertNotificationTemplate>, tenantId?: string): Promise<NotificationTemplate | undefined>;
 
   // Membership lookup by plate (for CRM integration)
-  findMembershipByPlate(plateNormalized: string): Promise<CustomerMembership | undefined>;
-  findMembershipByPhone(phone: string): Promise<CustomerMembership | undefined>;
-  findMembershipByEmail(email: string): Promise<CustomerMembership | undefined>;
+  findMembershipByPlate(tenantId: string, plateNormalized: string): Promise<CustomerMembership | undefined>;
+  findMembershipByPhone(tenantId: string, phone: string): Promise<CustomerMembership | undefined>;
+  findMembershipByEmail(tenantId: string, email: string): Promise<CustomerMembership | undefined>;
 
   // Push Subscriptions
-  savePushSubscription(sub: InsertPushSubscription): Promise<PushSubscription>;
-  getPushSubscriptionsByUser(userId: string): Promise<PushSubscription[]>;
+  savePushSubscription(tenantId: string, sub: InsertPushSubscription): Promise<PushSubscription>;
+  getPushSubscriptionsByUser(tenantId: string, userId: string): Promise<PushSubscription[]>;
   getPushSubscriptionsByCustomerToken(customerToken: string): Promise<PushSubscription[]>;
-  getPushSubscriptionsByRole(role: string): Promise<PushSubscription[]>;
+  getPushSubscriptionsByRole(tenantId: string, role: string): Promise<PushSubscription[]>;
   deletePushSubscription(id: string): Promise<void>;
 
   // Suppliers
-  createSupplier(supplier: InsertSupplier): Promise<Supplier>;
-  getSuppliers(activeOnly?: boolean): Promise<Supplier[]>;
-  getSupplier(id: string): Promise<Supplier | undefined>;
-  updateSupplier(id: string, data: Partial<InsertSupplier>): Promise<Supplier | undefined>;
+  createSupplier(tenantId: string, supplier: InsertSupplier): Promise<Supplier>;
+  getSuppliers(tenantId: string, activeOnly?: boolean): Promise<Supplier[]>;
+  getSupplier(id: string, tenantId?: string): Promise<Supplier | undefined>;
+  updateSupplier(id: string, data: Partial<InsertSupplier>, tenantId?: string): Promise<Supplier | undefined>;
 
   // Inventory Items
-  createInventoryItem(item: InsertInventoryItem): Promise<InventoryItem>;
-  getInventoryItems(filters?: { category?: string; lowStock?: boolean; active?: boolean }): Promise<InventoryItem[]>;
-  getInventoryItem(id: string): Promise<InventoryItem | undefined>;
-  updateInventoryItem(id: string, data: Partial<InsertInventoryItem>): Promise<InventoryItem | undefined>;
-  adjustInventoryStock(id: string, quantityChange: number): Promise<InventoryItem | undefined>;
+  createInventoryItem(tenantId: string, item: InsertInventoryItem): Promise<InventoryItem>;
+  getInventoryItems(tenantId: string, filters?: { category?: string; lowStock?: boolean; active?: boolean }): Promise<InventoryItem[]>;
+  getInventoryItem(id: string, tenantId?: string): Promise<InventoryItem | undefined>;
+  updateInventoryItem(id: string, data: Partial<InsertInventoryItem>, tenantId?: string): Promise<InventoryItem | undefined>;
+  adjustInventoryStock(id: string, quantityChange: number, tenantId?: string): Promise<InventoryItem | undefined>;
 
   // Inventory Consumption
-  logInventoryConsumption(consumption: InsertInventoryConsumption): Promise<InventoryConsumption>;
-  getInventoryConsumption(filters?: { itemId?: string; fromDate?: Date; toDate?: Date }): Promise<InventoryConsumption[]>;
-  autoConsumeForWashJob(washJobId: string, serviceCode: string, createdBy: string): Promise<void>;
+  logInventoryConsumption(tenantId: string, consumption: InsertInventoryConsumption): Promise<InventoryConsumption>;
+  getInventoryConsumption(tenantId: string, filters?: { itemId?: string; fromDate?: Date; toDate?: Date }): Promise<InventoryConsumption[]>;
+  autoConsumeForWashJob(tenantId: string, washJobId: string, serviceCode: string, createdBy: string): Promise<void>;
 
   // Purchase Orders
-  createPurchaseOrder(order: InsertPurchaseOrder): Promise<PurchaseOrder>;
-  getPurchaseOrders(filters?: { status?: string; supplierId?: string }): Promise<PurchaseOrder[]>;
-  getPurchaseOrder(id: string): Promise<PurchaseOrder | undefined>;
-  updatePurchaseOrder(id: string, data: Partial<InsertPurchaseOrder>): Promise<PurchaseOrder | undefined>;
-  receivePurchaseOrder(id: string): Promise<PurchaseOrder | undefined>;
+  createPurchaseOrder(tenantId: string, order: InsertPurchaseOrder): Promise<PurchaseOrder>;
+  getPurchaseOrders(tenantId: string, filters?: { status?: string; supplierId?: string }): Promise<PurchaseOrder[]>;
+  getPurchaseOrder(id: string, tenantId?: string): Promise<PurchaseOrder | undefined>;
+  updatePurchaseOrder(id: string, data: Partial<InsertPurchaseOrder>, tenantId?: string): Promise<PurchaseOrder | undefined>;
+  receivePurchaseOrder(id: string, tenantId?: string): Promise<PurchaseOrder | undefined>;
 
   // Inventory Analytics
-  getInventoryAnalytics(): Promise<{
+  getInventoryAnalytics(tenantId: string): Promise<{
     totalItems: number;
     lowStockItems: number;
     totalStockValue: number;
@@ -217,29 +224,99 @@ export interface IStorage {
     monthlyConsumptionCost: number;
     profitMarginByService: { serviceCode: string; avgCost: number; avgRevenue: number; margin: number }[];
   }>;
-  getLowStockItems(): Promise<InventoryItem[]>;
+  getLowStockItems(tenantId: string): Promise<InventoryItem[]>;
 
-  // Tenants
+  // Technician Time Logs
+  clockIn(tenantId: string, technicianId: string, notes?: string): Promise<TechnicianTimeLog>;
+  clockOut(logId: string, tenantId?: string): Promise<TechnicianTimeLog | undefined>;
+  getActiveTimeLog(tenantId: string, technicianId: string): Promise<TechnicianTimeLog | undefined>;
+  getTimeLogs(tenantId: string, filters?: { technicianId?: string; fromDate?: Date; toDate?: Date; limit?: number }): Promise<TechnicianTimeLog[]>;
+  addBreakLog(logId: string, breakEntry: { type: "lunch" | "short" | "absent"; notes?: string }, tenantId?: string): Promise<TechnicianTimeLog | undefined>;
+  endBreakLog(logId: string, tenantId?: string): Promise<TechnicianTimeLog | undefined>;
+
+  // Staff Alerts
+  createStaffAlert(tenantId: string, data: { technicianId: string; type: "running_late" | "absent" | "emergency" | "other"; message?: string; estimatedArrival?: string }): Promise<StaffAlert>;
+  getStaffAlerts(tenantId: string, filters?: { unacknowledgedOnly?: boolean; technicianId?: string }): Promise<StaffAlert[]>;
+  acknowledgeStaffAlert(alertId: string, acknowledgedBy: string, tenantId?: string): Promise<StaffAlert | undefined>;
+
+  // Loyalty Accounts
+  getLoyaltyAccountByPlate(tenantId: string, plateNormalized: string): Promise<LoyaltyAccount | undefined>;
+  getOrCreateLoyaltyAccount(tenantId: string, plateNormalized: string, plateDisplay: string, customerData?: { name?: string; phone?: string; email?: string }): Promise<LoyaltyAccount>;
+  creditLoyaltyPoints(tenantId: string, accountId: string, points: number): Promise<LoyaltyAccount | undefined>;
+  getLoyaltyAnalytics(tenantId: string): Promise<{ totalAccounts: number; totalPointsIssued: number; pointsIssuedToday: number; topEarners: { plateDisplay: string; customerName: string | null; pointsBalance: number; totalWashes: number }[] }>;
+
+  // Loyalty Transactions
+  getLoyaltyTransactions(tenantId: string, filters?: { type?: string; limit?: number }): Promise<LoyaltyTransaction[]>;
+  logLoyaltyTransaction(tenantId: string, data: { crmUserId: string; memberNumber: string; type: "earn_wash" | "earn_bonus" | "adjust"; points: number; balanceAfter: number; washJobId?: string; serviceCode?: string; description?: string; createdBy?: string }): Promise<LoyaltyTransaction>;
+
+  // Technician Performance
+  getTechnicianPerformance(tenantId: string): Promise<{ technicianId: string; technicianName: string; avgRating: number; totalRatings: number; issueCount: number; issuePercent: number; recentFeedback: { rating: number | null; notes: string | null; issueReported: string | null; createdAt: Date | null; plateDisplay: string }[] }[]>;
+
+  // ===== Booking System (tenant-isolated) =====
+
+  // Booking Services (tenant service catalog)
+  createBookingService(tenantId: string, service: Omit<InsertBookingService, "tenantId">): Promise<BookingService>;
+  getBookingServices(tenantId: string, activeOnly?: boolean): Promise<BookingService[]>;
+  getBookingService(id: string, tenantId?: string): Promise<BookingService | undefined>;
+  updateBookingService(id: string, data: Partial<InsertBookingService>, tenantId?: string): Promise<BookingService | undefined>;
+
+  // Booking Customers
+  createBookingCustomer(tenantId: string, customer: Omit<InsertBookingCustomer, "tenantId">): Promise<BookingCustomer>;
+  getBookingCustomers(tenantId: string, filters?: { search?: string; limit?: number }): Promise<BookingCustomer[]>;
+  getBookingCustomer(id: string, tenantId?: string): Promise<BookingCustomer | undefined>;
+  getBookingCustomerByEmail(tenantId: string, email: string): Promise<BookingCustomer | undefined>;
+  updateBookingCustomer(id: string, data: Partial<InsertBookingCustomer>, tenantId?: string): Promise<BookingCustomer | undefined>;
+
+  // Booking Vehicles
+  createBookingVehicle(tenantId: string, vehicle: Omit<InsertBookingVehicle, "tenantId">): Promise<BookingVehicle>;
+  getBookingVehicles(tenantId: string, customerId?: string): Promise<BookingVehicle[]>;
+  getBookingVehicleByPlate(tenantId: string, plateNormalized: string): Promise<BookingVehicle | undefined>;
+
+  // Bookings
+  createBooking(tenantId: string, booking: Omit<InsertBooking, "tenantId">): Promise<Booking>;
+  getBookings(tenantId: string, filters?: { status?: string; fromDate?: string; toDate?: string; search?: string; customerId?: string; limit?: number }): Promise<Booking[]>;
+  getBooking(id: string, tenantId?: string): Promise<Booking | undefined>;
+  updateBooking(id: string, data: Partial<InsertBooking>, tenantId?: string): Promise<Booking | undefined>;
+  cancelBooking(id: string, reason?: string, tenantId?: string): Promise<Booking | undefined>;
+  getTodayBookings(tenantId: string): Promise<Booking[]>;
+  getUpcomingBookings(tenantId: string, days?: number): Promise<Booking[]>;
+  getBookingsByPlate(tenantId: string, plateNormalized: string): Promise<Booking[]>;
+
+  // Time Slot Config
+  getTimeSlotConfig(tenantId: string): Promise<BookingTimeSlotConfig[]>;
+  upsertTimeSlotConfig(tenantId: string, configs: InsertBookingTimeSlotConfig[]): Promise<BookingTimeSlotConfig[]>;
+  getAvailableTimeSlots(tenantId: string, date: string): Promise<{ time: string; available: number; maxConcurrent: number }[]>;
+
+  // Booking Analytics
+  getBookingAnalytics(tenantId: string): Promise<{
+    todayBookings: number;
+    weekBookings: number;
+    monthBookings: number;
+    completionRate: number;
+    bookingRevenue: number;
+  }>;
+
+  // Tenants (admin-level, stays global)
   createTenant(tenant: InsertTenant): Promise<Tenant>;
   getTenants(): Promise<Tenant[]>;
   getTenant(id: string): Promise<Tenant | undefined>;
   getTenantBySlug(slug: string): Promise<Tenant | undefined>;
   updateTenant(id: string, data: Partial<InsertTenant>): Promise<Tenant | undefined>;
 
-  // Branches
+  // Branches (already scoped)
   createBranch(branch: InsertBranch): Promise<Branch>;
   getBranches(tenantId: string): Promise<Branch[]>;
   getBranch(id: string): Promise<Branch | undefined>;
   updateBranch(id: string, data: Partial<InsertBranch>): Promise<Branch | undefined>;
 
-  // Invoices
+  // Invoices (admin-level, stays global)
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
   getInvoices(filters?: { tenantId?: string; status?: string }): Promise<Invoice[]>;
   getInvoice(id: string): Promise<Invoice | undefined>;
   updateInvoice(id: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   getInvoicesByTenant(tenantId: string): Promise<Invoice[]>;
 
-  // Tenant Stats
+  // Tenant Stats (already scoped)
   getTenantStats(tenantId: string): Promise<{
     userCount: number;
     washCount: number;
@@ -248,10 +325,10 @@ export interface IStorage {
   }>;
 
   // Event Logs
-  logEvent(event: InsertEventLog): Promise<EventLog>;
-  getEvents(filters?: { plate?: string; type?: string; limit?: number }): Promise<EventLog[]>;
+  logEvent(tenantId: string, event: InsertEventLog): Promise<EventLog>;
+  getEvents(tenantId: string, filters?: { plate?: string; type?: string; limit?: number }): Promise<EventLog[]>;
 
-  // Webhook Retries
+  // Webhook Retries (system-level, stays global)
   createWebhookRetry(retry: InsertWebhookRetry): Promise<WebhookRetry>;
   getPendingWebhookRetries(limit?: number): Promise<WebhookRetry[]>;
   updateWebhookRetry(id: string, data: Partial<{ attempts: number; lastError: string | null; nextRetryAt: Date | null }>): Promise<WebhookRetry | undefined>;
@@ -259,7 +336,7 @@ export interface IStorage {
   getWebhookRetries(limit?: number): Promise<WebhookRetry[]>;
 
   // Analytics
-  getAnalyticsSummary(): Promise<{
+  getAnalyticsSummary(tenantId: string): Promise<{
     todayWashes: number;
     weekWashes: number;
     monthWashes: number;
@@ -267,18 +344,24 @@ export interface IStorage {
     avgTimePerStage: Record<string, number>;
     technicianStats: { userId: string; name: string; count: number }[];
   }>;
+
+  // Revenue Summary
+  getRevenueSummary(tenantId: string): Promise<any>;
+
+  // Customer Insights
+  getCustomerInsights(tenantId: string): Promise<any>;
 }
 
 export class DatabaseStorage implements IStorage {
   // User Roles
-  async getUserRole(userId: string): Promise<UserRole | undefined> {
-    const [role] = await db.select().from(userRoles).where(eq(userRoles.userId, userId));
+  async getUserRole(tenantId: string, userId: string): Promise<UserRole | undefined> {
+    const [role] = await db.select().from(userRoles).where(and(eq(userRoles.userId, userId), eq(userRoles.tenantId, tenantId)));
     return role;
   }
 
-  async upsertUserRole(role: InsertUserRole): Promise<UserRole> {
+  async upsertUserRole(tenantId: string, role: InsertUserRole): Promise<UserRole> {
     // Check if role exists first to avoid ON CONFLICT issues
-    const existing = await this.getUserRole(role.userId);
+    const existing = await this.getUserRole(tenantId, role.userId);
     
     if (existing) {
       // Update existing role
@@ -292,7 +375,7 @@ export class DatabaseStorage implements IStorage {
       // Insert new role
       const [result] = await db
         .insert(userRoles)
-        .values(role)
+        .values({ ...role, tenantId })
         .returning();
       return result;
     }
@@ -323,7 +406,10 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async getUsers(): Promise<User[]> {
+  async getUsers(tenantId?: string): Promise<User[]> {
+    if (tenantId) {
+      return db.select().from(users).where(eq(users.tenantId, tenantId)).orderBy(desc(users.createdAt));
+    }
     return db.select().from(users).orderBy(desc(users.createdAt));
   }
 
@@ -353,9 +439,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Service checklist
-  async createServiceChecklistItems(items: InsertServiceChecklistItem[]): Promise<ServiceChecklistItem[]> {
+  async createServiceChecklistItems(tenantId: string, items: InsertServiceChecklistItem[]): Promise<ServiceChecklistItem[]> {
     if (items.length === 0) return [];
-    return db.insert(serviceChecklistItems).values(items).returning();
+    return db.insert(serviceChecklistItems).values(items.map(i => ({ ...i, tenantId }))).returning();
   }
 
   async getServiceChecklistItems(washJobId: string): Promise<ServiceChecklistItem[]> {
@@ -411,46 +497,46 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Photo rules
-  async getPhotoRules(): Promise<PhotoRule[]> {
-    return db.select().from(photoRules);
+  async getPhotoRules(tenantId: string): Promise<PhotoRule[]> {
+    return db.select().from(photoRules).where(eq(photoRules.tenantId, tenantId));
   }
 
-  async upsertPhotoRule(rule: InsertPhotoRule): Promise<PhotoRule> {
-    const existing = await db.select().from(photoRules).where(eq(photoRules.step, rule.step));
-    
+  async upsertPhotoRule(tenantId: string, rule: InsertPhotoRule): Promise<PhotoRule> {
+    const existing = await db.select().from(photoRules).where(and(eq(photoRules.step, rule.step), eq(photoRules.tenantId, tenantId)));
+
     if (existing.length > 0) {
       const [result] = await db
         .update(photoRules)
         .set({ rule: rule.rule, updatedBy: rule.updatedBy, updatedAt: new Date() })
-        .where(eq(photoRules.step, rule.step))
+        .where(and(eq(photoRules.step, rule.step), eq(photoRules.tenantId, tenantId)))
         .returning();
       return result;
     } else {
-      const [result] = await db.insert(photoRules).values(rule).returning();
+      const [result] = await db.insert(photoRules).values({ ...rule, tenantId }).returning();
       return result;
     }
   }
 
   // Wash Jobs
-  async createWashJob(job: InsertWashJob): Promise<WashJob> {
+  async createWashJob(tenantId: string, job: InsertWashJob): Promise<WashJob> {
     const plateNormalized = normalizePlate(job.plateDisplay);
     const stageTimestamps = { received: new Date().toISOString() };
     const [result] = await db
       .insert(washJobs)
-      .values({ ...job, plateNormalized, stageTimestamps })
+      .values({ ...job, tenantId, plateNormalized, stageTimestamps })
       .returning();
     return result;
   }
 
-  async getWashJob(id: string): Promise<WashJob | undefined> {
-    const [job] = await db.select().from(washJobs).where(eq(washJobs.id, id));
+  async getWashJob(id: string, tenantId: string): Promise<WashJob | undefined> {
+    const [job] = await db.select().from(washJobs).where(and(eq(washJobs.id, id), eq(washJobs.tenantId, tenantId)));
     return job;
   }
 
-  async getWashJobs(filters?: { status?: string; technicianId?: string; fromDate?: Date }): Promise<WashJob[]> {
+  async getWashJobs(tenantId: string, filters?: { status?: string; technicianId?: string; fromDate?: Date }): Promise<WashJob[]> {
     let query = db.select().from(washJobs);
 
-    const conditions = [];
+    const conditions = [eq(washJobs.tenantId, tenantId)];
     if (filters?.status) {
       conditions.push(eq(washJobs.status, filters.status as any));
     }
@@ -461,16 +547,16 @@ export class DatabaseStorage implements IStorage {
       conditions.push(gte(washJobs.createdAt, filters.fromDate));
     }
 
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
-    }
+    query = query.where(and(...conditions)) as any;
 
     return query.orderBy(desc(washJobs.createdAt));
   }
 
-  async updateWashJobStatus(id: string, status: string): Promise<WashJob | undefined> {
+  async updateWashJobStatus(id: string, status: string, tenantId?: string): Promise<WashJob | undefined> {
     // Get current job to update stage timestamps
-    const [current] = await db.select().from(washJobs).where(eq(washJobs.id, id));
+    const conditions = [eq(washJobs.id, id)];
+    if (tenantId) conditions.push(eq(washJobs.tenantId, tenantId));
+    const [current] = await db.select().from(washJobs).where(and(...conditions));
     if (!current) return undefined;
     
     const timestamps = (current.stageTimestamps || {}) as Record<string, string>;
@@ -488,9 +574,11 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async completeWashJob(id: string): Promise<WashJob | undefined> {
+  async completeWashJob(id: string, tenantId?: string): Promise<WashJob | undefined> {
     // Get current job to update stage timestamps
-    const [current] = await db.select().from(washJobs).where(eq(washJobs.id, id));
+    const conditions = [eq(washJobs.id, id)];
+    if (tenantId) conditions.push(eq(washJobs.tenantId, tenantId));
+    const [current] = await db.select().from(washJobs).where(and(...conditions));
     if (!current) return undefined;
     
     const timestamps = (current.stageTimestamps || {}) as Record<string, string>;
@@ -509,7 +597,7 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async deleteWashJob(id: string): Promise<boolean> {
+  async deleteWashJob(id: string, tenantId?: string): Promise<boolean> {
     // Delete related records first, then the job
     await db.delete(washPhotos).where(eq(washPhotos.washJobId, id));
     await db.delete(customerJobAccess).where(eq(customerJobAccess.washJobId, id));
@@ -521,8 +609,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Wash Photos
-  async addWashPhoto(photo: InsertWashPhoto): Promise<WashPhoto> {
-    const [result] = await db.insert(washPhotos).values(photo).returning();
+  async addWashPhoto(tenantId: string, photo: InsertWashPhoto): Promise<WashPhoto> {
+    const [result] = await db.insert(washPhotos).values({ ...photo, tenantId }).returning();
     return result;
   }
 
@@ -531,27 +619,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Parking Sessions
-  async createParkingEntry(session: InsertParkingSession): Promise<ParkingSession> {
+  async createParkingEntry(tenantId: string, session: InsertParkingSession): Promise<ParkingSession> {
     const plateNormalized = normalizePlate(session.plateDisplay);
     const [result] = await db
       .insert(parkingSessions)
-      .values({ ...session, plateNormalized })
+      .values({ ...session, tenantId, plateNormalized })
       .returning();
     return result;
   }
 
-  async findOpenParkingSession(plateNormalized: string): Promise<ParkingSession | undefined> {
+  async findOpenParkingSession(tenantId: string, plateNormalized: string): Promise<ParkingSession | undefined> {
     const [session] = await db
       .select()
       .from(parkingSessions)
       .where(and(
+        eq(parkingSessions.tenantId, tenantId),
         eq(parkingSessions.plateNormalized, plateNormalized),
         isNull(parkingSessions.exitAt)
       ));
     return session;
   }
 
-  async closeParkingSession(id: string, exitPhotoUrl?: string, calculatedFee?: number): Promise<ParkingSession | undefined> {
+  async closeParkingSession(id: string, exitPhotoUrl?: string, calculatedFee?: number, tenantId?: string): Promise<ParkingSession | undefined> {
+    const conditions = [eq(parkingSessions.id, id)];
+    if (tenantId) conditions.push(eq(parkingSessions.tenantId, tenantId));
     const [result] = await db
       .update(parkingSessions)
       .set({
@@ -560,14 +651,14 @@ export class DatabaseStorage implements IStorage {
         calculatedFee: calculatedFee || null,
         updatedAt: new Date()
       })
-      .where(eq(parkingSessions.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
-  async getParkingSessions(filters?: { open?: boolean; plateSearch?: string; fromDate?: Date; toDate?: Date; zoneId?: string }): Promise<ParkingSession[]> {
+  async getParkingSessions(tenantId: string, filters?: { open?: boolean; plateSearch?: string; fromDate?: Date; toDate?: Date; zoneId?: string }): Promise<ParkingSession[]> {
     let query = db.select().from(parkingSessions);
-    const conditions = [];
+    const conditions = [eq(parkingSessions.tenantId, tenantId)];
 
     if (filters?.open === true) {
       conditions.push(isNull(parkingSessions.exitAt));
@@ -592,35 +683,37 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(parkingSessions.zoneId, filters.zoneId));
     }
 
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
-    }
+    query = query.where(and(...conditions)) as any;
 
     return query.orderBy(desc(parkingSessions.entryAt));
   }
 
-  async getParkingSession(id: string): Promise<ParkingSession | undefined> {
-    const [session] = await db.select().from(parkingSessions).where(eq(parkingSessions.id, id));
+  async getParkingSession(id: string, tenantId?: string): Promise<ParkingSession | undefined> {
+    const conditions = [eq(parkingSessions.id, id)];
+    if (tenantId) conditions.push(eq(parkingSessions.tenantId, tenantId));
+    const [session] = await db.select().from(parkingSessions).where(and(...conditions));
     return session;
   }
 
-  async updateParkingSession(id: string, data: Partial<InsertParkingSession>): Promise<ParkingSession | undefined> {
+  async updateParkingSession(id: string, data: Partial<InsertParkingSession>, tenantId?: string): Promise<ParkingSession | undefined> {
+    const conditions = [eq(parkingSessions.id, id)];
+    if (tenantId) conditions.push(eq(parkingSessions.tenantId, tenantId));
     const [result] = await db
       .update(parkingSessions)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(parkingSessions.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
   // Parking Settings
-  async getParkingSettings(): Promise<ParkingSettings | undefined> {
-    const [settings] = await db.select().from(parkingSettings).limit(1);
+  async getParkingSettings(tenantId: string): Promise<ParkingSettings | undefined> {
+    const [settings] = await db.select().from(parkingSettings).where(eq(parkingSettings.tenantId, tenantId)).limit(1);
     return settings;
   }
 
-  async upsertParkingSettings(settings: InsertParkingSettings): Promise<ParkingSettings> {
-    const existing = await this.getParkingSettings();
+  async upsertParkingSettings(tenantId: string, settings: InsertParkingSettings): Promise<ParkingSettings> {
+    const existing = await this.getParkingSettings(tenantId);
     if (existing) {
       const [result] = await db
         .update(parkingSettings)
@@ -629,52 +722,56 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return result;
     } else {
-      const [result] = await db.insert(parkingSettings).values(settings).returning();
+      const [result] = await db.insert(parkingSettings).values({ ...settings, tenantId }).returning();
       return result;
     }
   }
 
   // Parking Zones
-  async createParkingZone(zone: InsertParkingZone): Promise<ParkingZone> {
-    const [result] = await db.insert(parkingZones).values(zone).returning();
+  async createParkingZone(tenantId: string, zone: InsertParkingZone): Promise<ParkingZone> {
+    const [result] = await db.insert(parkingZones).values({ ...zone, tenantId }).returning();
     return result;
   }
 
-  async getParkingZones(activeOnly = true): Promise<ParkingZone[]> {
-    if (activeOnly) {
-      return db.select().from(parkingZones).where(eq(parkingZones.isActive, true)).orderBy(asc(parkingZones.name));
-    }
-    return db.select().from(parkingZones).orderBy(asc(parkingZones.name));
+  async getParkingZones(tenantId: string, activeOnly = true): Promise<ParkingZone[]> {
+    const conditions = [eq(parkingZones.tenantId, tenantId)];
+    if (activeOnly) conditions.push(eq(parkingZones.isActive, true));
+    return db.select().from(parkingZones).where(and(...conditions)).orderBy(asc(parkingZones.name));
   }
 
-  async getParkingZone(id: string): Promise<ParkingZone | undefined> {
-    const [zone] = await db.select().from(parkingZones).where(eq(parkingZones.id, id));
+  async getParkingZone(id: string, tenantId?: string): Promise<ParkingZone | undefined> {
+    const conditions = [eq(parkingZones.id, id)];
+    if (tenantId) conditions.push(eq(parkingZones.tenantId, tenantId));
+    const [zone] = await db.select().from(parkingZones).where(and(...conditions));
     return zone;
   }
 
-  async updateParkingZone(id: string, data: Partial<InsertParkingZone>): Promise<ParkingZone | undefined> {
+  async updateParkingZone(id: string, data: Partial<InsertParkingZone>, tenantId?: string): Promise<ParkingZone | undefined> {
+    const conditions = [eq(parkingZones.id, id)];
+    if (tenantId) conditions.push(eq(parkingZones.tenantId, tenantId));
     const [result] = await db
       .update(parkingZones)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(parkingZones.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
-  async getZoneOccupancy(zoneId: string): Promise<number> {
+  async getZoneOccupancy(tenantId: string, zoneId: string): Promise<number> {
     const [result] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(parkingSessions)
-      .where(and(eq(parkingSessions.zoneId, zoneId), isNull(parkingSessions.exitAt)));
+      .where(and(eq(parkingSessions.tenantId, tenantId), eq(parkingSessions.zoneId, zoneId), isNull(parkingSessions.exitAt)));
     return result?.count || 0;
   }
 
   // Frequent Parkers
-  async getOrCreateFrequentParker(plateNormalized: string, plateDisplay: string): Promise<FrequentParker> {
-    const existing = await this.getFrequentParker(plateNormalized);
+  async getOrCreateFrequentParker(tenantId: string, plateNormalized: string, plateDisplay: string): Promise<FrequentParker> {
+    const existing = await this.getFrequentParker(tenantId, plateNormalized);
     if (existing) return existing;
 
     const [result] = await db.insert(frequentParkers).values({
+      tenantId,
       plateNormalized,
       plateDisplay,
       visitCount: 1,
@@ -683,22 +780,24 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async getFrequentParker(plateNormalized: string): Promise<FrequentParker | undefined> {
-    const [parker] = await db.select().from(frequentParkers).where(eq(frequentParkers.plateNormalized, plateNormalized));
+  async getFrequentParker(tenantId: string, plateNormalized: string): Promise<FrequentParker | undefined> {
+    const [parker] = await db.select().from(frequentParkers).where(and(eq(frequentParkers.tenantId, tenantId), eq(frequentParkers.plateNormalized, plateNormalized)));
     return parker;
   }
 
-  async updateFrequentParker(id: string, data: Partial<InsertFrequentParker>): Promise<FrequentParker | undefined> {
+  async updateFrequentParker(id: string, data: Partial<InsertFrequentParker>, tenantId?: string): Promise<FrequentParker | undefined> {
+    const conditions = [eq(frequentParkers.id, id)];
+    if (tenantId) conditions.push(eq(frequentParkers.tenantId, tenantId));
     const [result] = await db
       .update(frequentParkers)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(frequentParkers.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
-  async getFrequentParkers(filters?: { isVip?: boolean; hasMonthlyPass?: boolean }): Promise<FrequentParker[]> {
-    const conditions = [];
+  async getFrequentParkers(tenantId: string, filters?: { isVip?: boolean; hasMonthlyPass?: boolean }): Promise<FrequentParker[]> {
+    const conditions = [eq(frequentParkers.tenantId, tenantId)];
 
     if (filters?.isVip !== undefined) {
       conditions.push(eq(frequentParkers.isVip, filters.isVip));
@@ -708,15 +807,11 @@ export class DatabaseStorage implements IStorage {
       conditions.push(gte(frequentParkers.monthlyPassExpiry, new Date()));
     }
 
-    if (conditions.length > 0) {
-      return db.select().from(frequentParkers).where(and(...conditions)).orderBy(desc(frequentParkers.visitCount));
-    }
-
-    return db.select().from(frequentParkers).orderBy(desc(frequentParkers.visitCount));
+    return db.select().from(frequentParkers).where(and(...conditions)).orderBy(desc(frequentParkers.visitCount));
   }
 
-  async incrementParkerVisit(plateNormalized: string, amountSpent = 0): Promise<FrequentParker | undefined> {
-    const parker = await this.getFrequentParker(plateNormalized);
+  async incrementParkerVisit(tenantId: string, plateNormalized: string, amountSpent = 0): Promise<FrequentParker | undefined> {
+    const parker = await this.getFrequentParker(tenantId, plateNormalized);
     if (!parker) return undefined;
 
     const [result] = await db
@@ -733,17 +828,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Parking Reservations
-  async createParkingReservation(reservation: InsertParkingReservation): Promise<ParkingReservation> {
+  async createParkingReservation(tenantId: string, reservation: InsertParkingReservation): Promise<ParkingReservation> {
     const plateNormalized = reservation.plateDisplay ? normalizePlate(reservation.plateDisplay) : null;
     const [result] = await db
       .insert(parkingReservations)
-      .values({ ...reservation, plateNormalized })
+      .values({ ...reservation, tenantId, plateNormalized })
       .returning();
     return result;
   }
 
-  async getParkingReservations(filters?: { status?: string; fromDate?: Date; toDate?: Date }): Promise<ParkingReservation[]> {
-    const conditions = [];
+  async getParkingReservations(tenantId: string, filters?: { status?: string; fromDate?: Date; toDate?: Date }): Promise<ParkingReservation[]> {
+    const conditions = [eq(parkingReservations.tenantId, tenantId)];
 
     if (filters?.status) {
       conditions.push(eq(parkingReservations.status, filters.status));
@@ -757,73 +852,78 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lte(parkingReservations.reservedUntil, filters.toDate));
     }
 
-    if (conditions.length > 0) {
-      return db.select().from(parkingReservations).where(and(...conditions)).orderBy(asc(parkingReservations.reservedFrom));
-    }
-
-    return db.select().from(parkingReservations).orderBy(asc(parkingReservations.reservedFrom));
+    return db.select().from(parkingReservations).where(and(...conditions)).orderBy(asc(parkingReservations.reservedFrom));
   }
 
-  async getParkingReservation(id: string): Promise<ParkingReservation | undefined> {
-    const [reservation] = await db.select().from(parkingReservations).where(eq(parkingReservations.id, id));
+  async getParkingReservation(id: string, tenantId?: string): Promise<ParkingReservation | undefined> {
+    const conditions = [eq(parkingReservations.id, id)];
+    if (tenantId) conditions.push(eq(parkingReservations.tenantId, tenantId));
+    const [reservation] = await db.select().from(parkingReservations).where(and(...conditions));
     return reservation;
   }
 
-  async getParkingReservationByCode(code: string): Promise<ParkingReservation | undefined> {
-    const [reservation] = await db.select().from(parkingReservations).where(eq(parkingReservations.confirmationCode, code));
+  async getParkingReservationByCode(code: string, tenantId?: string): Promise<ParkingReservation | undefined> {
+    const conditions = [eq(parkingReservations.confirmationCode, code)];
+    if (tenantId) conditions.push(eq(parkingReservations.tenantId, tenantId));
+    const [reservation] = await db.select().from(parkingReservations).where(and(...conditions));
     return reservation;
   }
 
-  async updateParkingReservation(id: string, data: Partial<InsertParkingReservation>): Promise<ParkingReservation | undefined> {
+  async updateParkingReservation(id: string, data: Partial<InsertParkingReservation>, tenantId?: string): Promise<ParkingReservation | undefined> {
+    const conditions = [eq(parkingReservations.id, id)];
+    if (tenantId) conditions.push(eq(parkingReservations.tenantId, tenantId));
     const [result] = await db
       .update(parkingReservations)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(parkingReservations.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
-  async checkInReservation(id: string, parkingSessionId: string): Promise<ParkingReservation | undefined> {
+  async checkInReservation(id: string, parkingSessionId: string, tenantId?: string): Promise<ParkingReservation | undefined> {
+    const conditions = [eq(parkingReservations.id, id)];
+    if (tenantId) conditions.push(eq(parkingReservations.tenantId, tenantId));
     const [result] = await db
       .update(parkingReservations)
       .set({ status: "checked_in", parkingSessionId, updatedAt: new Date() })
-      .where(eq(parkingReservations.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
   // Parking Analytics
-  async getParkingAnalytics() {
+  async getParkingAnalytics(tenantId: string) {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tf = eq(parkingSessions.tenantId, tenantId);
 
     // Active sessions count
     const [activeResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(parkingSessions)
-      .where(isNull(parkingSessions.exitAt));
+      .where(and(tf, isNull(parkingSessions.exitAt)));
 
     // Get settings for capacity
-    const settings = await this.getParkingSettings();
+    const settings = await this.getParkingSettings(tenantId);
     const totalCapacity = settings?.totalCapacity || 50;
 
     // Today's revenue (sum of calculated fees for closed sessions)
     const [revenueResult] = await db
       .select({ total: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int` })
       .from(parkingSessions)
-      .where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+      .where(and(tf, gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
 
     // Today entries
     const [entriesResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(parkingSessions)
-      .where(gte(parkingSessions.entryAt, todayStart));
+      .where(and(tf, gte(parkingSessions.entryAt, todayStart)));
 
     // Today exits
     const [exitsResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(parkingSessions)
-      .where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+      .where(and(tf, gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
 
     // Average duration for closed sessions today
     const [avgDurationResult] = await db
@@ -831,13 +931,13 @@ export class DatabaseStorage implements IStorage {
         avgMinutes: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${parkingSessions.exitAt} - ${parkingSessions.entryAt})) / 60)::int, 0)`
       })
       .from(parkingSessions)
-      .where(and(gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
+      .where(and(tf, gte(parkingSessions.exitAt, todayStart), sql`${parkingSessions.exitAt} IS NOT NULL`));
 
     // Zone occupancy
-    const zones = await this.getParkingZones();
+    const zones = await this.getParkingZones(tenantId);
     const zoneOccupancy = await Promise.all(
       zones.map(async (zone) => {
-        const occupied = await this.getZoneOccupancy(zone.id);
+        const occupied = await this.getZoneOccupancy(tenantId, zone.id);
         return {
           zoneId: zone.id,
           zoneName: zone.name,
@@ -862,15 +962,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Event Logs
-  async logEvent(event: InsertEventLog): Promise<EventLog> {
-    const [result] = await db.insert(eventLogs).values(event).returning();
+  async logEvent(tenantId: string, event: InsertEventLog): Promise<EventLog> {
+    const [result] = await db.insert(eventLogs).values({ ...event, tenantId }).returning();
     return result;
   }
 
-  async getEvents(filters?: { plate?: string; type?: string; limit?: number }): Promise<EventLog[]> {
+  async getEvents(tenantId: string, filters?: { plate?: string; type?: string; limit?: number }): Promise<EventLog[]> {
     let query = db.select().from(eventLogs);
-    
-    const conditions = [];
+
+    const conditions = [eq(eventLogs.tenantId, tenantId)];
     if (filters?.plate) {
       const normalized = normalizePlate(filters.plate);
       conditions.push(sql`${eventLogs.plateNormalized} ILIKE ${'%' + normalized + '%'}`);
@@ -878,17 +978,15 @@ export class DatabaseStorage implements IStorage {
     if (filters?.type) {
       conditions.push(eq(eventLogs.type, filters.type));
     }
-    
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
-    }
-    
+
+    query = query.where(and(...conditions)) as any;
+
     query = query.orderBy(desc(eventLogs.createdAt)) as any;
-    
+
     if (filters?.limit) {
       query = query.limit(filters.limit) as any;
     }
-    
+
     return query;
   }
 
@@ -938,42 +1036,43 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Analytics
-  async getAnalyticsSummary() {
+  async getAnalyticsSummary(tenantId: string) {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekStart = new Date(todayStart);
     weekStart.setDate(weekStart.getDate() - 7);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const tf = eq(washJobs.tenantId, tenantId);
 
     // Count washes
     const [todayResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(washJobs)
-      .where(gte(washJobs.createdAt, todayStart));
+      .where(and(tf, gte(washJobs.createdAt, todayStart)));
 
     const [weekResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(washJobs)
-      .where(gte(washJobs.createdAt, weekStart));
+      .where(and(tf, gte(washJobs.createdAt, weekStart)));
 
     const [monthResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(washJobs)
-      .where(gte(washJobs.createdAt, monthStart));
+      .where(and(tf, gte(washJobs.createdAt, monthStart)));
 
     // Average cycle time for completed jobs
     const [avgResult] = await db
-      .select({ 
-        avgMinutes: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${washJobs.endAt} - ${washJobs.startAt})) / 60)::int, 0)` 
+      .select({
+        avgMinutes: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${washJobs.endAt} - ${washJobs.startAt})) / 60)::int, 0)`
       })
       .from(washJobs)
-      .where(eq(washJobs.status, "complete"));
+      .where(and(tf, eq(washJobs.status, "complete")));
 
     // Get completed jobs with stage timestamps for detailed KPIs
     const completedJobs = await db
       .select({ stageTimestamps: washJobs.stageTimestamps })
       .from(washJobs)
-      .where(eq(washJobs.status, "complete"));
+      .where(and(tf, eq(washJobs.status, "complete")));
 
     // Calculate average time per stage
     const stageTimeKPIs: Record<string, { avgSeconds: number; count: number }> = {};
@@ -1013,12 +1112,12 @@ export class DatabaseStorage implements IStorage {
 
     // Get technician stats
     const techStats = await db
-      .select({ 
+      .select({
         technicianId: washJobs.technicianId,
         count: sql<number>`count(*)::int`
       })
       .from(washJobs)
-      .where(gte(washJobs.createdAt, monthStart))
+      .where(and(tf, gte(washJobs.createdAt, monthStart)))
       .groupBy(washJobs.technicianId);
 
     return {
@@ -1035,14 +1134,259 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  async getRevenueSummary(tenantId: string) {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - 7);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastWeekStart = new Date(weekStart);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    const wf = eq(washJobs.tenantId, tenantId);
+    const pf = eq(parkingSessions.tenantId, tenantId);
+
+    // Wash revenue by period
+    const [todayWash] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`, count: sql<number>`count(*)::int` })
+      .from(washJobs).where(and(wf, gte(washJobs.createdAt, todayStart)));
+    const [weekWash] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`, count: sql<number>`count(*)::int` })
+      .from(washJobs).where(and(wf, gte(washJobs.createdAt, weekStart)));
+    const [monthWash] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`, count: sql<number>`count(*)::int` })
+      .from(washJobs).where(and(wf, gte(washJobs.createdAt, monthStart)));
+
+    // Previous periods for comparison
+    const [lastWeekWash] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int` })
+      .from(washJobs).where(and(wf, gte(washJobs.createdAt, lastWeekStart), lt(washJobs.createdAt, weekStart)));
+    const [lastMonthWash] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int` })
+      .from(washJobs).where(and(wf, gte(washJobs.createdAt, lastMonthStart), lt(washJobs.createdAt, monthStart)));
+
+    // Parking revenue by period
+    const [todayParking] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int`, count: sql<number>`count(*)::int` })
+      .from(parkingSessions).where(and(pf, gte(parkingSessions.exitAt, todayStart), isNotNull(parkingSessions.calculatedFee)));
+    const [weekParking] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int` })
+      .from(parkingSessions).where(and(pf, gte(parkingSessions.exitAt, weekStart), isNotNull(parkingSessions.calculatedFee)));
+    const [monthParking] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int` })
+      .from(parkingSessions).where(and(pf, gte(parkingSessions.exitAt, monthStart), isNotNull(parkingSessions.calculatedFee)));
+
+    // Revenue by service package (this month)
+    const byPackage = await db
+      .select({
+        packageName: washJobs.packageName,
+        serviceCode: washJobs.serviceCode,
+        total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(washJobs)
+      .where(and(wf, gte(washJobs.createdAt, monthStart), isNotNull(washJobs.price)))
+      .groupBy(washJobs.packageName, washJobs.serviceCode);
+
+    // Revenue by hour today
+    const hourlyToday = await db
+      .select({
+        hour: sql<number>`EXTRACT(HOUR FROM ${washJobs.createdAt})::int`,
+        total: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(washJobs)
+      .where(and(wf, gte(washJobs.createdAt, todayStart)))
+      .groupBy(sql`EXTRACT(HOUR FROM ${washJobs.createdAt})`);
+
+    // Daily revenue trend (last 7 days)
+    const dailyWash = await db
+      .select({
+        day: sql<string>`TO_CHAR(${washJobs.createdAt}, 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(washJobs)
+      .where(and(wf, gte(washJobs.createdAt, weekStart)))
+      .groupBy(sql`TO_CHAR(${washJobs.createdAt}, 'YYYY-MM-DD')`)
+      .orderBy(sql`TO_CHAR(${washJobs.createdAt}, 'YYYY-MM-DD')`);
+
+    const dailyParking = await db
+      .select({
+        day: sql<string>`TO_CHAR(${parkingSessions.exitAt}, 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int`,
+      })
+      .from(parkingSessions)
+      .where(and(pf, gte(parkingSessions.exitAt, weekStart), isNotNull(parkingSessions.calculatedFee)))
+      .groupBy(sql`TO_CHAR(${parkingSessions.exitAt}, 'YYYY-MM-DD')`);
+
+    // Inventory COGS this month
+    const [monthlyCOGS] = await db
+      .select({ total: sql<number>`COALESCE(SUM(${inventoryConsumption.quantity} * ${inventoryConsumption.costAtTime} / 100), 0)::int` })
+      .from(inventoryConsumption)
+      .where(and(eq(inventoryConsumption.tenantId, tenantId), gte(inventoryConsumption.createdAt, monthStart)));
+
+    // Merge daily trends
+    const parkingMap = new Map(dailyParking.map((d) => [d.day, d.revenue]));
+    const dailyTrend = dailyWash.map((d) => ({
+      day: d.day,
+      washRevenue: d.revenue,
+      parkingRevenue: parkingMap.get(d.day) || 0,
+      total: d.revenue + (parkingMap.get(d.day) || 0),
+      washCount: d.count,
+    }));
+
+    return {
+      today: { wash: todayWash.total, parking: todayParking.total, total: todayWash.total + todayParking.total, washCount: todayWash.count, parkingCount: todayParking.count },
+      week: { wash: weekWash.total, parking: weekParking.total, total: weekWash.total + weekParking.total, washCount: weekWash.count },
+      month: { wash: monthWash.total, parking: monthParking.total, total: monthWash.total + monthParking.total, washCount: monthWash.count, cogs: monthlyCOGS.total, grossProfit: monthWash.total + monthParking.total - monthlyCOGS.total },
+      comparison: {
+        weekVsLastWeek: lastWeekWash.total > 0 ? Math.round(((weekWash.total - lastWeekWash.total) / lastWeekWash.total) * 100) : null,
+        monthVsLastMonth: lastMonthWash.total > 0 ? Math.round(((monthWash.total - lastMonthWash.total) / lastMonthWash.total) * 100) : null,
+      },
+      byPackage: byPackage.map((p) => ({ name: p.packageName || p.serviceCode || "Unknown", revenue: p.total, count: p.count })),
+      hourlyToday: hourlyToday.map((h) => ({ hour: h.hour, revenue: h.total, count: h.count })),
+      dailyTrend,
+    };
+  }
+
+  async getCustomerInsights(tenantId: string) {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const sixtyDaysAgo = new Date(now);
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const wf = eq(washJobs.tenantId, tenantId);
+
+    // Total unique customers all time
+    const [totalCustomers] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${washJobs.plateNormalized})::int` })
+      .from(washJobs).where(wf);
+
+    // New customers this month (first wash in last 30 days)
+    const newCustomersResult = await db
+      .select({ plate: washJobs.plateNormalized, firstVisit: sql<string>`MIN(${washJobs.createdAt})` })
+      .from(washJobs).where(wf)
+      .groupBy(washJobs.plateNormalized)
+      .having(sql`MIN(${washJobs.createdAt}) >= ${thirtyDaysAgo}`);
+
+    // Per-customer stats
+    const customerStats = await db
+      .select({
+        plate: washJobs.plateNormalized,
+        plateDisplay: sql<string>`MAX(${washJobs.plateDisplay})`,
+        visitCount: sql<number>`COUNT(*)::int`,
+        totalSpent: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        lastVisit: sql<string>`MAX(${washJobs.createdAt})`,
+        firstVisit: sql<string>`MIN(${washJobs.createdAt})`,
+      })
+      .from(washJobs).where(wf)
+      .groupBy(washJobs.plateNormalized);
+
+    // Ratings per customer
+    const ratingsResult = await db
+      .select({
+        plate: washJobs.plateNormalized,
+        avgRating: sql<number>`COALESCE(AVG(${customerConfirmations.rating}), 0)::numeric(3,1)`,
+        ratingCount: sql<number>`COUNT(${customerConfirmations.rating})::int`,
+      })
+      .from(customerConfirmations)
+      .innerJoin(washJobs, eq(customerConfirmations.washJobId, washJobs.id))
+      .where(and(isNotNull(customerConfirmations.rating), wf))
+      .groupBy(washJobs.plateNormalized);
+    const ratingsMap = new Map(ratingsResult.map((r) => [r.plate, { avgRating: Number(r.avgRating), count: r.ratingCount }]));
+
+    // Parker data (names, VIP)
+    const parkerData = await db
+      .select({ plate: frequentParkers.plateNormalized, customerName: frequentParkers.customerName, isVip: frequentParkers.isVip })
+      .from(frequentParkers).where(eq(frequentParkers.tenantId, tenantId));
+    const parkerMap = new Map(parkerData.map((p) => [p.plate, p]));
+
+    // Segment customers
+    let oneTimers = 0, regulars = 0, vips = 0, churned = 0, activeThisMonth = 0;
+
+    const enrichedCustomers = customerStats.map((c) => {
+      const lastVisitDate = new Date(c.lastVisit);
+      const daysSinceLastVisit = Math.floor((now.getTime() - lastVisitDate.getTime()) / (1000 * 60 * 60 * 24));
+      const rating = ratingsMap.get(c.plate);
+      const parker = parkerMap.get(c.plate);
+
+      let segment: "one_timer" | "regular" | "vip" | "churned" = "one_timer";
+      if (c.visitCount === 1) {
+        if (daysSinceLastVisit > 60) { segment = "churned"; churned++; }
+        else { segment = "one_timer"; oneTimers++; }
+      } else if (parker?.isVip || c.totalSpent > 500000 || c.visitCount >= 10) {
+        segment = "vip"; vips++;
+      } else if (daysSinceLastVisit > 60) {
+        segment = "churned"; churned++;
+      } else {
+        segment = "regular"; regulars++;
+      }
+      if (daysSinceLastVisit <= 30) activeThisMonth++;
+
+      return {
+        plate: c.plate, plateDisplay: c.plateDisplay, customerName: parker?.customerName || null,
+        visitCount: c.visitCount, totalSpent: c.totalSpent,
+        lastVisit: c.lastVisit, firstVisit: c.firstVisit, daysSinceLastVisit,
+        avgRating: rating?.avgRating || null, ratingCount: rating?.count || 0,
+        segment, isVip: parker?.isVip || false,
+      };
+    });
+
+    // Retention rate: of customers active 30-60 days ago, how many came back in last 30 days
+    const activeLastMonth = await db
+      .select({ plate: washJobs.plateNormalized })
+      .from(washJobs)
+      .where(and(wf, gte(washJobs.createdAt, sixtyDaysAgo), lt(washJobs.createdAt, thirtyDaysAgo)))
+      .groupBy(washJobs.plateNormalized);
+    const activeNowPlates = new Set(enrichedCustomers.filter((c) => c.daysSinceLastVisit <= 30).map((c) => c.plate));
+    const retained = activeLastMonth.filter((c) => activeNowPlates.has(c.plate)).length;
+    const retentionRate = activeLastMonth.length > 0 ? Math.round((retained / activeLastMonth.length) * 100) : null;
+
+    // Avg visit frequency (customers with 2+ visits)
+    const multiVisitors = enrichedCustomers.filter((c) => c.visitCount >= 2);
+    let avgFrequencyDays: number | null = null;
+    if (multiVisitors.length > 0) {
+      const totalSpan = multiVisitors.reduce((sum, c) => {
+        const span = (new Date(c.lastVisit).getTime() - new Date(c.firstVisit).getTime()) / (1000 * 60 * 60 * 24);
+        return sum + (span / (c.visitCount - 1));
+      }, 0);
+      avgFrequencyDays = Math.round(totalSpan / multiVisitors.length);
+    }
+
+    // Revenue split: new vs returning this month
+    const newPlates = new Set(newCustomersResult.map((n) => n.plate));
+    const monthWashes = await db
+      .select({ plate: washJobs.plateNormalized, revenue: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int` })
+      .from(washJobs).where(and(wf, gte(washJobs.createdAt, thirtyDaysAgo))).groupBy(washJobs.plateNormalized);
+    let newCustomerRevenue = 0, returningCustomerRevenue = 0;
+    for (const w of monthWashes) {
+      if (newPlates.has(w.plate)) newCustomerRevenue += w.revenue;
+      else returningCustomerRevenue += w.revenue;
+    }
+
+    return {
+      totalCustomers: totalCustomers.count,
+      newCustomers: newCustomersResult.length,
+      activeThisMonth,
+      retentionRate,
+      avgFrequencyDays,
+      segments: { oneTimers, regulars, vips, churned },
+      topSpenders: [...enrichedCustomers].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10),
+      topFrequent: [...enrichedCustomers].sort((a, b) => b.visitCount - a.visitCount).slice(0, 10),
+      revenueByType: { newCustomerRevenue, returningCustomerRevenue },
+      customers: enrichedCustomers,
+    };
+  }
+
   // Business Settings
-  async getBusinessSettings(): Promise<BusinessSettings | undefined> {
-    const [settings] = await db.select().from(businessSettings).limit(1);
+  async getBusinessSettings(tenantId: string): Promise<BusinessSettings | undefined> {
+    const [settings] = await db.select().from(businessSettings).where(eq(businessSettings.tenantId, tenantId)).limit(1);
     return settings;
   }
 
-  async upsertBusinessSettings(settings: InsertBusinessSettings): Promise<BusinessSettings> {
-    const existing = await this.getBusinessSettings();
+  async upsertBusinessSettings(tenantId: string, settings: InsertBusinessSettings): Promise<BusinessSettings> {
+    const existing = await this.getBusinessSettings(tenantId);
     if (existing) {
       const [result] = await db
         .update(businessSettings)
@@ -1051,54 +1395,58 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return result;
     } else {
-      const [result] = await db.insert(businessSettings).values(settings).returning();
+      const [result] = await db.insert(businessSettings).values({ ...settings, tenantId }).returning();
       return result;
     }
   }
 
   // Service Packages
-  async createServicePackage(pkg: InsertServicePackage): Promise<ServicePackage> {
+  async createServicePackage(tenantId: string, pkg: InsertServicePackage): Promise<ServicePackage> {
     const insertData = {
       ...pkg,
+      tenantId,
       services: pkg.services ? (pkg.services as string[]) : []
     };
     const [result] = await db.insert(servicePackages).values(insertData as any).returning();
     return result;
   }
 
-  async getServicePackages(activeOnly = true): Promise<ServicePackage[]> {
-    if (activeOnly) {
-      return db.select().from(servicePackages).where(eq(servicePackages.isActive, true)).orderBy(asc(servicePackages.sortOrder));
-    }
-    return db.select().from(servicePackages).orderBy(asc(servicePackages.sortOrder));
+  async getServicePackages(tenantId: string, activeOnly = true): Promise<ServicePackage[]> {
+    const conditions = [eq(servicePackages.tenantId, tenantId)];
+    if (activeOnly) conditions.push(eq(servicePackages.isActive, true));
+    return db.select().from(servicePackages).where(and(...conditions)).orderBy(asc(servicePackages.sortOrder));
   }
 
-  async getServicePackage(id: string): Promise<ServicePackage | undefined> {
-    const [pkg] = await db.select().from(servicePackages).where(eq(servicePackages.id, id));
+  async getServicePackage(id: string, tenantId?: string): Promise<ServicePackage | undefined> {
+    const conditions = [eq(servicePackages.id, id)];
+    if (tenantId) conditions.push(eq(servicePackages.tenantId, tenantId));
+    const [pkg] = await db.select().from(servicePackages).where(and(...conditions));
     return pkg;
   }
 
-  async updateServicePackage(id: string, data: Partial<InsertServicePackage>): Promise<ServicePackage | undefined> {
+  async updateServicePackage(id: string, data: Partial<InsertServicePackage>, tenantId?: string): Promise<ServicePackage | undefined> {
     const updateData: any = { ...data, updatedAt: new Date() };
     if (data.services) {
       updateData.services = data.services as string[];
     }
+    const conditions = [eq(servicePackages.id, id)];
+    if (tenantId) conditions.push(eq(servicePackages.tenantId, tenantId));
     const [result] = await db
       .update(servicePackages)
       .set(updateData)
-      .where(eq(servicePackages.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
   // Customer Memberships
-  async createCustomerMembership(membership: InsertCustomerMembership): Promise<CustomerMembership> {
-    const [result] = await db.insert(customerMemberships).values(membership).returning();
+  async createCustomerMembership(tenantId: string, membership: InsertCustomerMembership): Promise<CustomerMembership> {
+    const [result] = await db.insert(customerMemberships).values({ ...membership, tenantId }).returning();
     return result;
   }
 
-  async getCustomerMemberships(filters?: { status?: string; plateNormalized?: string }): Promise<CustomerMembership[]> {
-    const conditions = [];
+  async getCustomerMemberships(tenantId: string, filters?: { status?: string; plateNormalized?: string }): Promise<CustomerMembership[]> {
+    const conditions = [eq(customerMemberships.tenantId, tenantId)];
 
     if (filters?.status) {
       conditions.push(eq(customerMemberships.status, filters.status));
@@ -1108,23 +1456,22 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(customerMemberships.plateNormalized, filters.plateNormalized));
     }
 
-    if (conditions.length > 0) {
-      return db.select().from(customerMemberships).where(and(...conditions)).orderBy(desc(customerMemberships.createdAt));
-    }
-
-    return db.select().from(customerMemberships).orderBy(desc(customerMemberships.createdAt));
+    return db.select().from(customerMemberships).where(and(...conditions)).orderBy(desc(customerMemberships.createdAt));
   }
 
-  async getCustomerMembership(id: string): Promise<CustomerMembership | undefined> {
-    const [membership] = await db.select().from(customerMemberships).where(eq(customerMemberships.id, id));
+  async getCustomerMembership(id: string, tenantId?: string): Promise<CustomerMembership | undefined> {
+    const conditions = [eq(customerMemberships.id, id)];
+    if (tenantId) conditions.push(eq(customerMemberships.tenantId, tenantId));
+    const [membership] = await db.select().from(customerMemberships).where(and(...conditions));
     return membership;
   }
 
-  async getActiveMembershipForPlate(plateNormalized: string): Promise<CustomerMembership | undefined> {
+  async getActiveMembershipForPlate(tenantId: string, plateNormalized: string): Promise<CustomerMembership | undefined> {
     const [membership] = await db
       .select()
       .from(customerMemberships)
       .where(and(
+        eq(customerMemberships.tenantId, tenantId),
         eq(customerMemberships.plateNormalized, plateNormalized),
         eq(customerMemberships.status, "active"),
         gte(customerMemberships.expiryDate, new Date())
@@ -1132,48 +1479,52 @@ export class DatabaseStorage implements IStorage {
     return membership;
   }
 
-  async updateCustomerMembership(id: string, data: Partial<InsertCustomerMembership>): Promise<CustomerMembership | undefined> {
+  async updateCustomerMembership(id: string, data: Partial<InsertCustomerMembership>, tenantId?: string): Promise<CustomerMembership | undefined> {
+    const conditions: any[] = [eq(customerMemberships.id, id)];
+    if (tenantId) conditions.push(eq(customerMemberships.tenantId, tenantId));
     const [result] = await db
       .update(customerMemberships)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(customerMemberships.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
-  async incrementMembershipWashUsed(id: string): Promise<CustomerMembership | undefined> {
-    const membership = await this.getCustomerMembership(id);
+  async incrementMembershipWashUsed(id: string, tenantId?: string): Promise<CustomerMembership | undefined> {
+    const membership = await this.getCustomerMembership(id, tenantId);
     if (!membership) return undefined;
 
+    const conditions: any[] = [eq(customerMemberships.id, id)];
+    if (tenantId) conditions.push(eq(customerMemberships.tenantId, tenantId));
     const [result] = await db
       .update(customerMemberships)
       .set({
         washesUsed: (membership.washesUsed || 0) + 1,
         updatedAt: new Date()
       })
-      .where(eq(customerMemberships.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
   // Parking Validations
-  async createParkingValidation(validation: InsertParkingValidation): Promise<ParkingValidation> {
-    const [result] = await db.insert(parkingValidations).values(validation).returning();
+  async createParkingValidation(tenantId: string, validation: InsertParkingValidation): Promise<ParkingValidation> {
+    const [result] = await db.insert(parkingValidations).values({ ...validation, tenantId }).returning();
     return result;
   }
 
-  async getParkingValidations(parkingSessionId: string): Promise<ParkingValidation[]> {
-    return db.select().from(parkingValidations).where(eq(parkingValidations.parkingSessionId, parkingSessionId));
+  async getParkingValidations(tenantId: string, parkingSessionId: string): Promise<ParkingValidation[]> {
+    return db.select().from(parkingValidations).where(and(eq(parkingValidations.tenantId, tenantId), eq(parkingValidations.parkingSessionId, parkingSessionId)));
   }
 
   // Customer Notifications
-  async createNotification(notification: InsertCustomerNotification): Promise<CustomerNotification> {
-    const [result] = await db.insert(customerNotifications).values(notification).returning();
+  async createNotification(tenantId: string, notification: InsertCustomerNotification): Promise<CustomerNotification> {
+    const [result] = await db.insert(customerNotifications).values({ ...notification, tenantId }).returning();
     return result;
   }
 
-  async getNotifications(filters?: { status?: string; type?: string; customerPhone?: string; limit?: number }): Promise<CustomerNotification[]> {
-    const conditions = [];
+  async getNotifications(tenantId: string, filters?: { status?: string; type?: string; customerPhone?: string; limit?: number }): Promise<CustomerNotification[]> {
+    const conditions: any[] = [eq(customerNotifications.tenantId, tenantId)];
 
     if (filters?.status) {
       conditions.push(eq(customerNotifications.status, filters.status));
@@ -1186,9 +1537,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     let query = db.select().from(customerNotifications);
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
-    }
+    query = query.where(and(...conditions)) as any;
     query = query.orderBy(desc(customerNotifications.createdAt)) as any;
 
     if (filters?.limit) {
@@ -1198,8 +1547,10 @@ export class DatabaseStorage implements IStorage {
     return query;
   }
 
-  async getNotification(id: string): Promise<CustomerNotification | undefined> {
-    const [notification] = await db.select().from(customerNotifications).where(eq(customerNotifications.id, id));
+  async getNotification(id: string, tenantId?: string): Promise<CustomerNotification | undefined> {
+    const conditions: any[] = [eq(customerNotifications.id, id)];
+    if (tenantId) conditions.push(eq(customerNotifications.tenantId, tenantId));
+    const [notification] = await db.select().from(customerNotifications).where(and(...conditions));
     return notification;
   }
 
@@ -1241,38 +1592,42 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Notification Templates
-  async createNotificationTemplate(template: InsertNotificationTemplate): Promise<NotificationTemplate> {
-    const [result] = await db.insert(notificationTemplates).values(template).returning();
+  async createNotificationTemplate(tenantId: string, template: InsertNotificationTemplate): Promise<NotificationTemplate> {
+    const [result] = await db.insert(notificationTemplates).values({ ...template, tenantId }).returning();
     return result;
   }
 
-  async getNotificationTemplates(activeOnly = true): Promise<NotificationTemplate[]> {
+  async getNotificationTemplates(tenantId: string, activeOnly = true): Promise<NotificationTemplate[]> {
+    const conditions: any[] = [eq(notificationTemplates.tenantId, tenantId)];
     if (activeOnly) {
-      return db.select().from(notificationTemplates).where(eq(notificationTemplates.isActive, true));
+      conditions.push(eq(notificationTemplates.isActive, true));
     }
-    return db.select().from(notificationTemplates);
+    return db.select().from(notificationTemplates).where(and(...conditions));
   }
 
-  async getNotificationTemplate(code: string): Promise<NotificationTemplate | undefined> {
-    const [template] = await db.select().from(notificationTemplates).where(eq(notificationTemplates.code, code));
+  async getNotificationTemplate(tenantId: string, code: string): Promise<NotificationTemplate | undefined> {
+    const [template] = await db.select().from(notificationTemplates).where(and(eq(notificationTemplates.tenantId, tenantId), eq(notificationTemplates.code, code)));
     return template;
   }
 
-  async updateNotificationTemplate(id: string, data: Partial<InsertNotificationTemplate>): Promise<NotificationTemplate | undefined> {
+  async updateNotificationTemplate(id: string, data: Partial<InsertNotificationTemplate>, tenantId?: string): Promise<NotificationTemplate | undefined> {
+    const conditions: any[] = [eq(notificationTemplates.id, id)];
+    if (tenantId) conditions.push(eq(notificationTemplates.tenantId, tenantId));
     const [result] = await db
       .update(notificationTemplates)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(notificationTemplates.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
   // Membership lookup by plate (for CRM integration)
-  async findMembershipByPlate(plateNormalized: string): Promise<CustomerMembership | undefined> {
+  async findMembershipByPlate(tenantId: string, plateNormalized: string): Promise<CustomerMembership | undefined> {
     const [membership] = await db
       .select()
       .from(customerMemberships)
       .where(and(
+        eq(customerMemberships.tenantId, tenantId),
         eq(customerMemberships.plateNormalized, plateNormalized),
         eq(customerMemberships.status, "active"),
         gte(customerMemberships.expiryDate, new Date())
@@ -1280,11 +1635,12 @@ export class DatabaseStorage implements IStorage {
     return membership;
   }
 
-  async findMembershipByPhone(phone: string): Promise<CustomerMembership | undefined> {
+  async findMembershipByPhone(tenantId: string, phone: string): Promise<CustomerMembership | undefined> {
     const [membership] = await db
       .select()
       .from(customerMemberships)
       .where(and(
+        eq(customerMemberships.tenantId, tenantId),
         eq(customerMemberships.customerPhone, phone),
         eq(customerMemberships.status, "active"),
         gte(customerMemberships.expiryDate, new Date())
@@ -1296,8 +1652,9 @@ export class DatabaseStorage implements IStorage {
   // Technician Time Logs
   // ==========================================
 
-  async clockIn(technicianId: string, notes?: string): Promise<TechnicianTimeLog> {
+  async clockIn(tenantId: string, technicianId: string, notes?: string): Promise<TechnicianTimeLog> {
     const [log] = await db.insert(technicianTimeLogs).values({
+      tenantId,
       technicianId,
       clockInAt: new Date(),
       notes: notes || null,
@@ -1306,13 +1663,14 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async clockOut(logId: string): Promise<TechnicianTimeLog | undefined> {
-    const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+  async clockOut(logId: string, tenantId?: string): Promise<TechnicianTimeLog | undefined> {
+    const conditions: any[] = [eq(technicianTimeLogs.id, logId)];
+    if (tenantId) conditions.push(eq(technicianTimeLogs.tenantId, tenantId));
+    const [existing] = await db.select().from(technicianTimeLogs).where(and(...conditions));
     if (!existing || existing.clockOutAt) return undefined;
 
     const clockOut = new Date();
     const totalMs = clockOut.getTime() - existing.clockInAt.getTime();
-    // Subtract completed break times
     const breakMinutes = (existing.breakLogs || []).reduce((acc: number, b: any) => {
       return acc + (b.durationMinutes || 0);
     }, 0);
@@ -1320,51 +1678,55 @@ export class DatabaseStorage implements IStorage {
 
     const [updated] = await db.update(technicianTimeLogs)
       .set({ clockOutAt: clockOut, totalMinutes: Math.max(0, totalMinutes), updatedAt: new Date() })
-      .where(eq(technicianTimeLogs.id, logId))
+      .where(and(...conditions))
       .returning();
     return updated;
   }
 
-  async getActiveTimeLog(technicianId: string): Promise<TechnicianTimeLog | undefined> {
+  async getActiveTimeLog(tenantId: string, technicianId: string): Promise<TechnicianTimeLog | undefined> {
     const [log] = await db.select().from(technicianTimeLogs)
-      .where(and(eq(technicianTimeLogs.technicianId, technicianId), isNull(technicianTimeLogs.clockOutAt)))
+      .where(and(eq(technicianTimeLogs.tenantId, tenantId), eq(technicianTimeLogs.technicianId, technicianId), isNull(technicianTimeLogs.clockOutAt)))
       .orderBy(desc(technicianTimeLogs.clockInAt))
       .limit(1);
     return log;
   }
 
-  async getTimeLogs(filters?: { technicianId?: string; fromDate?: Date; toDate?: Date; limit?: number }): Promise<TechnicianTimeLog[]> {
-    const conditions: any[] = [];
+  async getTimeLogs(tenantId: string, filters?: { technicianId?: string; fromDate?: Date; toDate?: Date; limit?: number }): Promise<TechnicianTimeLog[]> {
+    const conditions: any[] = [eq(technicianTimeLogs.tenantId, tenantId)];
     if (filters?.technicianId) conditions.push(eq(technicianTimeLogs.technicianId, filters.technicianId));
     if (filters?.fromDate) conditions.push(gte(technicianTimeLogs.clockInAt, filters.fromDate));
     if (filters?.toDate) conditions.push(lte(technicianTimeLogs.clockInAt, filters.toDate));
 
     let query = db.select().from(technicianTimeLogs);
-    if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+    query = query.where(and(...conditions)) as any;
     query = query.orderBy(desc(technicianTimeLogs.clockInAt)) as any;
     if (filters?.limit) query = query.limit(filters.limit) as any;
     return query;
   }
 
-  async addBreakLog(logId: string, breakEntry: { type: "lunch" | "short" | "absent"; notes?: string }): Promise<TechnicianTimeLog | undefined> {
-    const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+  async addBreakLog(logId: string, breakEntry: { type: "lunch" | "short" | "absent"; notes?: string }, tenantId?: string): Promise<TechnicianTimeLog | undefined> {
+    const conditions: any[] = [eq(technicianTimeLogs.id, logId)];
+    if (tenantId) conditions.push(eq(technicianTimeLogs.tenantId, tenantId));
+    const [existing] = await db.select().from(technicianTimeLogs).where(and(...conditions));
     if (!existing) return undefined;
 
     const updatedBreaks = [...(existing.breakLogs || []), { ...breakEntry, startAt: new Date().toISOString() }];
     const [updated] = await db.update(technicianTimeLogs)
       .set({ breakLogs: updatedBreaks, updatedAt: new Date() })
-      .where(eq(technicianTimeLogs.id, logId))
+      .where(and(...conditions))
       .returning();
     return updated;
   }
 
-  async endBreakLog(logId: string): Promise<TechnicianTimeLog | undefined> {
-    const [existing] = await db.select().from(technicianTimeLogs).where(eq(technicianTimeLogs.id, logId));
+  async endBreakLog(logId: string, tenantId?: string): Promise<TechnicianTimeLog | undefined> {
+    const conditions: any[] = [eq(technicianTimeLogs.id, logId)];
+    if (tenantId) conditions.push(eq(technicianTimeLogs.tenantId, tenantId));
+    const [existing] = await db.select().from(technicianTimeLogs).where(and(...conditions));
     if (!existing) return undefined;
 
     const breaks = [...(existing.breakLogs || [])];
     const lastBreak = breaks[breaks.length - 1];
-    if (!lastBreak || lastBreak.endAt) return existing; // No active break
+    if (!lastBreak || lastBreak.endAt) return existing;
 
     const endAt = new Date().toISOString();
     const durationMinutes = Math.floor((new Date(endAt).getTime() - new Date(lastBreak.startAt).getTime()) / 60000);
@@ -1372,7 +1734,7 @@ export class DatabaseStorage implements IStorage {
 
     const [updated] = await db.update(technicianTimeLogs)
       .set({ breakLogs: breaks, updatedAt: new Date() })
-      .where(eq(technicianTimeLogs.id, logId))
+      .where(and(...conditions))
       .returning();
     return updated;
   }
@@ -1381,13 +1743,14 @@ export class DatabaseStorage implements IStorage {
   // Staff Alerts (running late, absent, etc.)
   // ==========================================
 
-  async createStaffAlert(data: {
+  async createStaffAlert(tenantId: string, data: {
     technicianId: string;
     type: "running_late" | "absent" | "emergency" | "other";
     message?: string;
     estimatedArrival?: string;
   }): Promise<StaffAlert> {
     const [alert] = await db.insert(staffAlerts).values({
+      tenantId,
       technicianId: data.technicianId,
       type: data.type,
       message: data.message || null,
@@ -1397,30 +1760,33 @@ export class DatabaseStorage implements IStorage {
     return alert;
   }
 
-  async getStaffAlerts(filters?: { unacknowledgedOnly?: boolean; technicianId?: string }): Promise<StaffAlert[]> {
-    const conditions: any[] = [];
+  async getStaffAlerts(tenantId: string, filters?: { unacknowledgedOnly?: boolean; technicianId?: string }): Promise<StaffAlert[]> {
+    const conditions: any[] = [eq(staffAlerts.tenantId, tenantId)];
     if (filters?.unacknowledgedOnly) conditions.push(eq(staffAlerts.acknowledged, false));
     if (filters?.technicianId) conditions.push(eq(staffAlerts.technicianId, filters.technicianId));
 
     let query: any = db.select().from(staffAlerts);
-    if (conditions.length > 0) query = query.where(and(...conditions));
+    query = query.where(and(...conditions));
     query = query.orderBy(desc(staffAlerts.createdAt));
     return await query;
   }
 
-  async acknowledgeStaffAlert(alertId: string, acknowledgedBy: string): Promise<StaffAlert | undefined> {
+  async acknowledgeStaffAlert(alertId: string, acknowledgedBy: string, tenantId?: string): Promise<StaffAlert | undefined> {
+    const conditions: any[] = [eq(staffAlerts.id, alertId)];
+    if (tenantId) conditions.push(eq(staffAlerts.tenantId, tenantId));
     const [updated] = await db.update(staffAlerts)
       .set({ acknowledged: true, acknowledgedBy, acknowledgedAt: new Date() })
-      .where(eq(staffAlerts.id, alertId))
+      .where(and(...conditions))
       .returning();
     return updated;
   }
 
-  async findMembershipByEmail(email: string): Promise<CustomerMembership | undefined> {
+  async findMembershipByEmail(tenantId: string, email: string): Promise<CustomerMembership | undefined> {
     const [membership] = await db
       .select()
       .from(customerMemberships)
       .where(and(
+        eq(customerMemberships.tenantId, tenantId),
         eq(customerMemberships.customerEmail, email),
         eq(customerMemberships.status, "active"),
         gte(customerMemberships.expiryDate, new Date())
@@ -1429,22 +1795,112 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ==========================================
-  // Loyalty Transactions (local audit log — points live in CRM)
+  // Loyalty Accounts (local — replaces CRM loyalty)
   // ==========================================
 
-  async getLoyaltyTransactions(filters?: {
+  async getLoyaltyAccountByPlate(tenantId: string, plateNormalized: string): Promise<LoyaltyAccount | undefined> {
+    const [result] = await db.select().from(loyaltyAccounts).where(and(
+      eq(loyaltyAccounts.tenantId, tenantId),
+      eq(loyaltyAccounts.plateNormalized, plateNormalized)
+    ));
+    return result;
+  }
+
+  async getOrCreateLoyaltyAccount(tenantId: string, plateNormalized: string, plateDisplay: string, customerData?: { name?: string; phone?: string; email?: string }): Promise<LoyaltyAccount> {
+    // Check if account already exists
+    const existing = await this.getLoyaltyAccountByPlate(tenantId, plateNormalized);
+    if (existing) return existing;
+
+    // Generate a membership number
+    const memberNumber = `LYL-${Date.now().toString(36).toUpperCase()}`;
+
+    const [account] = await db.insert(loyaltyAccounts).values({
+      tenantId,
+      plateNormalized,
+      plateDisplay,
+      customerName: customerData?.name || null,
+      customerPhone: customerData?.phone || null,
+      customerEmail: customerData?.email || null,
+      membershipNumber: memberNumber,
+      tier: "basic",
+      pointsBalance: 0,
+      lifetimePoints: 0,
+      totalWashes: 0,
+    } as any).returning();
+    return account;
+  }
+
+  async creditLoyaltyPoints(tenantId: string, accountId: string, points: number): Promise<LoyaltyAccount | undefined> {
+    const [result] = await db.update(loyaltyAccounts).set({
+      pointsBalance: sql`${loyaltyAccounts.pointsBalance} + ${points}`,
+      lifetimePoints: sql`${loyaltyAccounts.lifetimePoints} + ${points}`,
+      totalWashes: sql`${loyaltyAccounts.totalWashes} + 1`,
+      updatedAt: new Date(),
+    } as any).where(and(
+      eq(loyaltyAccounts.id, accountId),
+      eq(loyaltyAccounts.tenantId, tenantId)
+    )).returning();
+    return result;
+  }
+
+  async getLoyaltyAnalytics(tenantId: string): Promise<{
+    totalAccounts: number;
+    totalPointsIssued: number;
+    pointsIssuedToday: number;
+    topEarners: { plateDisplay: string; customerName: string | null; pointsBalance: number; totalWashes: number }[];
+  }> {
+    const tf = eq(loyaltyAccounts.tenantId, tenantId);
+
+    const [accountCount] = await db.select({ count: sql<number>`count(*)::int` }).from(loyaltyAccounts).where(tf);
+    const [pointsSum] = await db.select({ total: sql<number>`COALESCE(SUM(${loyaltyAccounts.lifetimePoints}), 0)::int` }).from(loyaltyAccounts).where(tf);
+
+    // Points issued today from transactions
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const [todayPoints] = await db.select({
+      total: sql<number>`COALESCE(SUM(${loyaltyTransactions.points}), 0)::int`
+    }).from(loyaltyTransactions).where(and(
+      eq(loyaltyTransactions.tenantId, tenantId),
+      gte(loyaltyTransactions.createdAt, todayStart),
+      sql`${loyaltyTransactions.points} > 0`
+    ));
+
+    // Top earners
+    const topEarners = await db.select({
+      plateDisplay: loyaltyAccounts.plateDisplay,
+      customerName: loyaltyAccounts.customerName,
+      pointsBalance: loyaltyAccounts.pointsBalance,
+      totalWashes: loyaltyAccounts.totalWashes,
+    }).from(loyaltyAccounts).where(tf).orderBy(desc(loyaltyAccounts.lifetimePoints)).limit(10);
+
+    return {
+      totalAccounts: accountCount?.count || 0,
+      totalPointsIssued: pointsSum?.total || 0,
+      pointsIssuedToday: todayPoints?.total || 0,
+      topEarners: topEarners.map(e => ({
+        plateDisplay: e.plateDisplay,
+        customerName: e.customerName,
+        pointsBalance: e.pointsBalance || 0,
+        totalWashes: e.totalWashes || 0,
+      })),
+    };
+  }
+
+  // ==========================================
+  // Loyalty Transactions (local audit log)
+  // ==========================================
+
+  async getLoyaltyTransactions(tenantId: string, filters?: {
     type?: string;
     limit?: number;
   }): Promise<LoyaltyTransaction[]> {
-    const conditions: any[] = [];
+    const conditions: any[] = [eq(loyaltyTransactions.tenantId, tenantId)];
     if (filters?.type) {
       conditions.push(eq(loyaltyTransactions.type, filters.type as any));
     }
 
     let query = db.select().from(loyaltyTransactions);
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
-    }
+    query = query.where(and(...conditions)) as any;
     query = (query as any).orderBy(desc(loyaltyTransactions.createdAt));
     if (filters?.limit) {
       query = (query as any).limit(filters.limit);
@@ -1452,7 +1908,7 @@ export class DatabaseStorage implements IStorage {
     return query;
   }
 
-  async logLoyaltyTransaction(data: {
+  async logLoyaltyTransaction(tenantId: string, data: {
     crmUserId: string;
     memberNumber: string;
     type: "earn_wash" | "earn_bonus" | "adjust";
@@ -1464,7 +1920,8 @@ export class DatabaseStorage implements IStorage {
     createdBy?: string;
   }): Promise<LoyaltyTransaction> {
     const [transaction] = await db.insert(loyaltyTransactions).values({
-      loyaltyAccountId: data.crmUserId, // store CRM userId for reference
+      tenantId,
+      loyaltyAccountId: data.crmUserId,
       type: data.type,
       points: data.points,
       balanceAfter: data.balanceAfter,
@@ -1479,7 +1936,7 @@ export class DatabaseStorage implements IStorage {
   // Technician Performance (ratings aggregation)
   // ==========================================
 
-  async getTechnicianPerformance(): Promise<{
+  async getTechnicianPerformance(tenantId: string): Promise<{
     technicianId: string;
     technicianName: string;
     avgRating: number;
@@ -1488,7 +1945,7 @@ export class DatabaseStorage implements IStorage {
     issuePercent: number;
     recentFeedback: { rating: number | null; notes: string | null; issueReported: string | null; createdAt: Date | null; plateDisplay: string }[];
   }[]> {
-    // Get all confirmations joined with wash jobs
+    // Get all confirmations joined with wash jobs for this tenant
     const results = await db
       .select({
         technicianId: washJobs.technicianId,
@@ -1500,7 +1957,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(customerConfirmations)
       .innerJoin(washJobs, eq(customerConfirmations.washJobId, washJobs.id))
-      .where(sql`${washJobs.technicianId} IS NOT NULL`)
+      .where(and(eq(washJobs.tenantId, tenantId), sql`${washJobs.technicianId} IS NOT NULL`))
       .orderBy(desc(customerConfirmations.createdAt));
 
     // Group by technician
@@ -1559,11 +2016,11 @@ export class DatabaseStorage implements IStorage {
   // Push Subscriptions
   // ==========================================
 
-  async savePushSubscription(sub: InsertPushSubscription): Promise<PushSubscription> {
+  async savePushSubscription(tenantId: string, sub: InsertPushSubscription): Promise<PushSubscription> {
     // Upsert by endpoint
     const [result] = await db
       .insert(pushSubscriptions)
-      .values(sub)
+      .values({ ...sub, tenantId })
       .onConflictDoUpdate({
         target: pushSubscriptions.endpoint,
         set: {
@@ -1577,21 +2034,20 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async getPushSubscriptionsByUser(userId: string): Promise<PushSubscription[]> {
-    return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+  async getPushSubscriptionsByUser(tenantId: string, userId: string): Promise<PushSubscription[]> {
+    return db.select().from(pushSubscriptions).where(and(eq(pushSubscriptions.tenantId, tenantId), eq(pushSubscriptions.userId, userId)));
   }
 
   async getPushSubscriptionsByCustomerToken(customerToken: string): Promise<PushSubscription[]> {
     return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.customerToken, customerToken));
   }
 
-  async getPushSubscriptionsByRole(role: string): Promise<PushSubscription[]> {
-    // Join with userRoles to find subscriptions belonging to users with the given role
+  async getPushSubscriptionsByRole(tenantId: string, role: string): Promise<PushSubscription[]> {
     const results = await db
       .select({ subscription: pushSubscriptions })
       .from(pushSubscriptions)
       .innerJoin(userRoles, eq(pushSubscriptions.userId, userRoles.userId))
-      .where(eq(userRoles.role, role as any));
+      .where(and(eq(pushSubscriptions.tenantId, tenantId), eq(userRoles.role, role as any)));
     return results.map((r) => r.subscription);
   }
 
@@ -1601,101 +2057,104 @@ export class DatabaseStorage implements IStorage {
 
   // ─── Suppliers ────────────────────────────────────────────────────────
 
-  async createSupplier(supplier: InsertSupplier): Promise<Supplier> {
-    const [result] = await db.insert(suppliers).values(supplier).returning();
+  async createSupplier(tenantId: string, supplier: InsertSupplier): Promise<Supplier> {
+    const [result] = await db.insert(suppliers).values({ ...supplier, tenantId }).returning();
     return result;
   }
 
-  async getSuppliers(activeOnly?: boolean): Promise<Supplier[]> {
-    if (activeOnly) {
-      return db.select().from(suppliers).where(eq(suppliers.isActive, true)).orderBy(asc(suppliers.name));
-    }
-    return db.select().from(suppliers).orderBy(asc(suppliers.name));
+  async getSuppliers(tenantId: string, activeOnly?: boolean): Promise<Supplier[]> {
+    const conditions: any[] = [eq(suppliers.tenantId, tenantId)];
+    if (activeOnly) conditions.push(eq(suppliers.isActive, true));
+    return db.select().from(suppliers).where(and(...conditions)).orderBy(asc(suppliers.name));
   }
 
-  async getSupplier(id: string): Promise<Supplier | undefined> {
-    const [result] = await db.select().from(suppliers).where(eq(suppliers.id, id));
+  async getSupplier(id: string, tenantId?: string): Promise<Supplier | undefined> {
+    const conditions: any[] = [eq(suppliers.id, id)];
+    if (tenantId) conditions.push(eq(suppliers.tenantId, tenantId));
+    const [result] = await db.select().from(suppliers).where(and(...conditions));
     return result;
   }
 
-  async updateSupplier(id: string, data: Partial<InsertSupplier>): Promise<Supplier | undefined> {
-    const [result] = await db.update(suppliers).set({ ...data, updatedAt: new Date() }).where(eq(suppliers.id, id)).returning();
+  async updateSupplier(id: string, data: Partial<InsertSupplier>, tenantId?: string): Promise<Supplier | undefined> {
+    const conditions: any[] = [eq(suppliers.id, id)];
+    if (tenantId) conditions.push(eq(suppliers.tenantId, tenantId));
+    const [result] = await db.update(suppliers).set({ ...data, updatedAt: new Date() }).where(and(...conditions)).returning();
     return result;
   }
 
   // ─── Inventory Items ──────────────────────────────────────────────────
 
-  async createInventoryItem(item: InsertInventoryItem): Promise<InventoryItem> {
-    const [result] = await db.insert(inventoryItems).values(item).returning();
+  async createInventoryItem(tenantId: string, item: InsertInventoryItem): Promise<InventoryItem> {
+    const [result] = await db.insert(inventoryItems).values({ ...item, tenantId }).returning();
     return result;
   }
 
-  async getInventoryItems(filters?: { category?: string; lowStock?: boolean; active?: boolean }): Promise<InventoryItem[]> {
-    const conditions = [];
+  async getInventoryItems(tenantId: string, filters?: { category?: string; lowStock?: boolean; active?: boolean }): Promise<InventoryItem[]> {
+    const conditions: any[] = [eq(inventoryItems.tenantId, tenantId)];
     if (filters?.category) conditions.push(eq(inventoryItems.category, filters.category as any));
     if (filters?.active !== undefined) conditions.push(eq(inventoryItems.isActive, filters.active));
     if (filters?.lowStock) {
       conditions.push(sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`);
     }
-    if (conditions.length > 0) {
-      return db.select().from(inventoryItems).where(and(...conditions)).orderBy(asc(inventoryItems.name));
-    }
-    return db.select().from(inventoryItems).orderBy(asc(inventoryItems.name));
+    return db.select().from(inventoryItems).where(and(...conditions)).orderBy(asc(inventoryItems.name));
   }
 
-  async getInventoryItem(id: string): Promise<InventoryItem | undefined> {
-    const [result] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+  async getInventoryItem(id: string, tenantId?: string): Promise<InventoryItem | undefined> {
+    const conditions: any[] = [eq(inventoryItems.id, id)];
+    if (tenantId) conditions.push(eq(inventoryItems.tenantId, tenantId));
+    const [result] = await db.select().from(inventoryItems).where(and(...conditions));
     return result;
   }
 
-  async updateInventoryItem(id: string, data: Partial<InsertInventoryItem>): Promise<InventoryItem | undefined> {
-    const [result] = await db.update(inventoryItems).set({ ...data, updatedAt: new Date() }).where(eq(inventoryItems.id, id)).returning();
+  async updateInventoryItem(id: string, data: Partial<InsertInventoryItem>, tenantId?: string): Promise<InventoryItem | undefined> {
+    const conditions: any[] = [eq(inventoryItems.id, id)];
+    if (tenantId) conditions.push(eq(inventoryItems.tenantId, tenantId));
+    const [result] = await db.update(inventoryItems).set({ ...data, updatedAt: new Date() }).where(and(...conditions)).returning();
     return result;
   }
 
-  async adjustInventoryStock(id: string, quantityChange: number): Promise<InventoryItem | undefined> {
+  async adjustInventoryStock(id: string, quantityChange: number, tenantId?: string): Promise<InventoryItem | undefined> {
+    const conditions: any[] = [eq(inventoryItems.id, id)];
+    if (tenantId) conditions.push(eq(inventoryItems.tenantId, tenantId));
     const [result] = await db
       .update(inventoryItems)
       .set({
         currentStock: sql`${inventoryItems.currentStock} + ${quantityChange}`,
         updatedAt: new Date(),
       })
-      .where(eq(inventoryItems.id, id))
+      .where(and(...conditions))
       .returning();
     return result;
   }
 
   // ─── Inventory Consumption ────────────────────────────────────────────
 
-  async logInventoryConsumption(consumption: InsertInventoryConsumption): Promise<InventoryConsumption> {
-    const [result] = await db.insert(inventoryConsumption).values(consumption).returning();
+  async logInventoryConsumption(tenantId: string, consumption: InsertInventoryConsumption): Promise<InventoryConsumption> {
+    const [result] = await db.insert(inventoryConsumption).values({ ...consumption, tenantId }).returning();
     // Decrement stock
-    await this.adjustInventoryStock(consumption.inventoryItemId, -consumption.quantity);
+    await this.adjustInventoryStock(consumption.inventoryItemId, -consumption.quantity, tenantId);
     return result;
   }
 
-  async getInventoryConsumption(filters?: { itemId?: string; fromDate?: Date; toDate?: Date }): Promise<InventoryConsumption[]> {
-    const conditions = [];
+  async getInventoryConsumption(tenantId: string, filters?: { itemId?: string; fromDate?: Date; toDate?: Date }): Promise<InventoryConsumption[]> {
+    const conditions: any[] = [eq(inventoryConsumption.tenantId, tenantId)];
     if (filters?.itemId) conditions.push(eq(inventoryConsumption.inventoryItemId, filters.itemId));
     if (filters?.fromDate) conditions.push(gte(inventoryConsumption.createdAt, filters.fromDate));
     if (filters?.toDate) conditions.push(lte(inventoryConsumption.createdAt, filters.toDate));
-    if (conditions.length > 0) {
-      return db.select().from(inventoryConsumption).where(and(...conditions)).orderBy(desc(inventoryConsumption.createdAt));
-    }
-    return db.select().from(inventoryConsumption).orderBy(desc(inventoryConsumption.createdAt));
+    return db.select().from(inventoryConsumption).where(and(...conditions)).orderBy(desc(inventoryConsumption.createdAt));
   }
 
-  async autoConsumeForWashJob(washJobId: string, serviceCode: string, createdBy: string): Promise<void> {
-    // Find all active inventory items that have a consumption mapping for this service code
+  async autoConsumeForWashJob(tenantId: string, washJobId: string, serviceCode: string, createdBy: string): Promise<void> {
+    // Find all active inventory items for this tenant that have a consumption mapping
     const items = await db.select().from(inventoryItems).where(
-      and(eq(inventoryItems.isActive, true), sql`${inventoryItems.consumptionMap} IS NOT NULL`)
+      and(eq(inventoryItems.tenantId, tenantId), eq(inventoryItems.isActive, true), sql`${inventoryItems.consumptionMap} IS NOT NULL`)
     );
 
     for (const item of items) {
       const map = item.consumptionMap as Record<string, number> | null;
       if (!map || !map[serviceCode]) continue;
       const quantity = map[serviceCode];
-      await this.logInventoryConsumption({
+      await this.logInventoryConsumption(tenantId, {
         inventoryItemId: item.id,
         washJobId,
         quantity,
@@ -1707,46 +2166,48 @@ export class DatabaseStorage implements IStorage {
 
   // ─── Purchase Orders ──────────────────────────────────────────────────
 
-  async createPurchaseOrder(order: InsertPurchaseOrder): Promise<PurchaseOrder> {
-    const [result] = await db.insert(purchaseOrders).values(order as any).returning();
+  async createPurchaseOrder(tenantId: string, order: InsertPurchaseOrder): Promise<PurchaseOrder> {
+    const [result] = await db.insert(purchaseOrders).values({ ...(order as any), tenantId }).returning();
     return result;
   }
 
-  async getPurchaseOrders(filters?: { status?: string; supplierId?: string }): Promise<PurchaseOrder[]> {
-    const conditions = [];
+  async getPurchaseOrders(tenantId: string, filters?: { status?: string; supplierId?: string }): Promise<PurchaseOrder[]> {
+    const conditions: any[] = [eq(purchaseOrders.tenantId, tenantId)];
     if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
     if (filters?.supplierId) conditions.push(eq(purchaseOrders.supplierId, filters.supplierId));
-    if (conditions.length > 0) {
-      return db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt));
-    }
-    return db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt));
+    return db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt));
   }
 
-  async getPurchaseOrder(id: string): Promise<PurchaseOrder | undefined> {
-    const [result] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, id));
+  async getPurchaseOrder(id: string, tenantId?: string): Promise<PurchaseOrder | undefined> {
+    const conditions: any[] = [eq(purchaseOrders.id, id)];
+    if (tenantId) conditions.push(eq(purchaseOrders.tenantId, tenantId));
+    const [result] = await db.select().from(purchaseOrders).where(and(...conditions));
     return result;
   }
 
-  async updatePurchaseOrder(id: string, data: Partial<InsertPurchaseOrder>): Promise<PurchaseOrder | undefined> {
-    const [result] = await db.update(purchaseOrders).set({ ...data, updatedAt: new Date() } as any).where(eq(purchaseOrders.id, id)).returning();
+  async updatePurchaseOrder(id: string, data: Partial<InsertPurchaseOrder>, tenantId?: string): Promise<PurchaseOrder | undefined> {
+    const conditions: any[] = [eq(purchaseOrders.id, id)];
+    if (tenantId) conditions.push(eq(purchaseOrders.tenantId, tenantId));
+    const [result] = await db.update(purchaseOrders).set({ ...data, updatedAt: new Date() } as any).where(and(...conditions)).returning();
     return result;
   }
 
-  async receivePurchaseOrder(id: string): Promise<PurchaseOrder | undefined> {
-    const po = await this.getPurchaseOrder(id);
+  async receivePurchaseOrder(id: string, tenantId?: string): Promise<PurchaseOrder | undefined> {
+    const po = await this.getPurchaseOrder(id, tenantId);
     if (!po) return undefined;
 
-    // Mark as received
+    const conditions: any[] = [eq(purchaseOrders.id, id)];
+    if (tenantId) conditions.push(eq(purchaseOrders.tenantId, tenantId));
     const [result] = await db
       .update(purchaseOrders)
       .set({ status: "received", receivedAt: new Date(), updatedAt: new Date() })
-      .where(eq(purchaseOrders.id, id))
+      .where(and(...conditions))
       .returning();
 
     // Increment stock for each line item
     const items = (po.items || []) as Array<{ inventoryItemId: string; quantity: number }>;
     for (const lineItem of items) {
-      await this.adjustInventoryStock(lineItem.inventoryItemId, lineItem.quantity * 100); // convert to hundredths
+      await this.adjustInventoryStock(lineItem.inventoryItemId, lineItem.quantity * 100, tenantId);
     }
 
     return result;
@@ -1754,7 +2215,7 @@ export class DatabaseStorage implements IStorage {
 
   // ─── Inventory Analytics ──────────────────────────────────────────────
 
-  async getInventoryAnalytics(): Promise<{
+  async getInventoryAnalytics(tenantId: string): Promise<{
     totalItems: number;
     lowStockItems: number;
     totalStockValue: number;
@@ -1762,20 +2223,23 @@ export class DatabaseStorage implements IStorage {
     monthlyConsumptionCost: number;
     profitMarginByService: { serviceCode: string; avgCost: number; avgRevenue: number; margin: number }[];
   }> {
+    const tf = eq(inventoryItems.tenantId, tenantId);
+    const cf = eq(inventoryConsumption.tenantId, tenantId);
+
     // Total active items
-    const [totalResult] = await db.select({ count: sql<number>`count(*)::int` }).from(inventoryItems).where(eq(inventoryItems.isActive, true));
+    const [totalResult] = await db.select({ count: sql<number>`count(*)::int` }).from(inventoryItems).where(and(tf, eq(inventoryItems.isActive, true)));
     const totalItems = totalResult?.count || 0;
 
     // Low stock items
     const [lowResult] = await db.select({ count: sql<number>`count(*)::int` }).from(inventoryItems).where(
-      and(eq(inventoryItems.isActive, true), sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`)
+      and(tf, eq(inventoryItems.isActive, true), sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`)
     );
     const lowStockItems = lowResult?.count || 0;
 
-    // Total stock value (sum of currentStock/100 * costPerUnit)
+    // Total stock value
     const [valueResult] = await db.select({
       total: sql<number>`coalesce(sum((${inventoryItems.currentStock}::numeric / 100) * ${inventoryItems.costPerUnit}), 0)::int`
-    }).from(inventoryItems).where(eq(inventoryItems.isActive, true));
+    }).from(inventoryItems).where(and(tf, eq(inventoryItems.isActive, true)));
     const totalStockValue = valueResult?.total || 0;
 
     // Top consumed items (last 30 days)
@@ -1788,7 +2252,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(inventoryConsumption)
       .innerJoin(inventoryItems, eq(inventoryConsumption.inventoryItemId, inventoryItems.id))
-      .where(gte(inventoryConsumption.createdAt, thirtyDaysAgo))
+      .where(and(cf, gte(inventoryConsumption.createdAt, thirtyDaysAgo)))
       .groupBy(inventoryConsumption.inventoryItemId, inventoryItems.name)
       .orderBy(sql`sum(${inventoryConsumption.quantity}) desc`)
       .limit(10);
@@ -1797,7 +2261,7 @@ export class DatabaseStorage implements IStorage {
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const [costResult] = await db.select({
       total: sql<number>`coalesce(sum((${inventoryConsumption.quantity}::numeric / 100) * ${inventoryConsumption.costAtTime}), 0)::int`
-    }).from(inventoryConsumption).where(gte(inventoryConsumption.createdAt, startOfMonth));
+    }).from(inventoryConsumption).where(and(cf, gte(inventoryConsumption.createdAt, startOfMonth)));
     const monthlyConsumptionCost = costResult?.total || 0;
 
     return {
@@ -1806,13 +2270,14 @@ export class DatabaseStorage implements IStorage {
       totalStockValue,
       topConsumedItems: topConsumed.map(t => ({ itemId: t.itemId, itemName: t.itemName ?? "", totalQuantity: t.totalQuantity })),
       monthlyConsumptionCost,
-      profitMarginByService: [], // Requires wash revenue data - populated later
+      profitMarginByService: [],
     };
   }
 
-  async getLowStockItems(): Promise<InventoryItem[]> {
+  async getLowStockItems(tenantId: string): Promise<InventoryItem[]> {
     return db.select().from(inventoryItems).where(
       and(
+        eq(inventoryItems.tenantId, tenantId),
         eq(inventoryItems.isActive, true),
         sql`${inventoryItems.currentStock} <= ${inventoryItems.minimumStock}`,
         sql`${inventoryItems.minimumStock} > 0`
@@ -1897,6 +2362,277 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoicesByTenant(tenantId: string): Promise<Invoice[]> {
     return db.select().from(invoices).where(eq(invoices.tenantId, tenantId)).orderBy(desc(invoices.createdAt));
+  }
+
+  // ─── Tenant Stats ─────────────────────────────────────────────────────
+
+  // ─── Booking Services ─────────────────────────────────────────────────
+
+  async createBookingService(tenantId: string, service: Omit<InsertBookingService, "tenantId">): Promise<BookingService> {
+    const [result] = await db.insert(bookingServices).values({ ...service, tenantId } as any).returning();
+    return result;
+  }
+
+  async getBookingServices(tenantId: string, activeOnly?: boolean): Promise<BookingService[]> {
+    const conditions = [eq(bookingServices.tenantId, tenantId)];
+    if (activeOnly) conditions.push(eq(bookingServices.isActive, true));
+    return db.select().from(bookingServices).where(and(...conditions)).orderBy(asc(bookingServices.sortOrder));
+  }
+
+  async getBookingService(id: string, tenantId?: string): Promise<BookingService | undefined> {
+    const conditions = [eq(bookingServices.id, id)];
+    if (tenantId) conditions.push(eq(bookingServices.tenantId, tenantId));
+    const [result] = await db.select().from(bookingServices).where(and(...conditions));
+    return result;
+  }
+
+  async updateBookingService(id: string, data: Partial<InsertBookingService>, tenantId?: string): Promise<BookingService | undefined> {
+    const conditions = [eq(bookingServices.id, id)];
+    if (tenantId) conditions.push(eq(bookingServices.tenantId, tenantId));
+    const [result] = await db.update(bookingServices).set({ ...data, updatedAt: new Date() } as any).where(and(...conditions)).returning();
+    return result;
+  }
+
+  // ─── Booking Customers ───────────────────────────────────────────────
+
+  async createBookingCustomer(tenantId: string, customer: Omit<InsertBookingCustomer, "tenantId">): Promise<BookingCustomer> {
+    const [result] = await db.insert(bookingCustomers).values({ ...customer, tenantId } as any).returning();
+    return result;
+  }
+
+  async getBookingCustomers(tenantId: string, filters?: { search?: string; limit?: number }): Promise<BookingCustomer[]> {
+    const conditions = [eq(bookingCustomers.tenantId, tenantId)];
+    if (filters?.search) {
+      const search = `%${filters.search}%`;
+      conditions.push(
+        or(
+          sql`${bookingCustomers.name} ILIKE ${search}`,
+          sql`${bookingCustomers.email} ILIKE ${search}`,
+          sql`${bookingCustomers.phone} ILIKE ${search}`,
+          sql`${bookingCustomers.plateNormalized} ILIKE ${search}`
+        ) as any
+      );
+    }
+    let query = db.select().from(bookingCustomers).where(and(...conditions)).orderBy(desc(bookingCustomers.createdAt));
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    return query;
+  }
+
+  async getBookingCustomer(id: string, tenantId?: string): Promise<BookingCustomer | undefined> {
+    const conditions = [eq(bookingCustomers.id, id)];
+    if (tenantId) conditions.push(eq(bookingCustomers.tenantId, tenantId));
+    const [result] = await db.select().from(bookingCustomers).where(and(...conditions));
+    return result;
+  }
+
+  async getBookingCustomerByEmail(tenantId: string, email: string): Promise<BookingCustomer | undefined> {
+    const [result] = await db.select().from(bookingCustomers).where(and(eq(bookingCustomers.tenantId, tenantId), eq(bookingCustomers.email, email)));
+    return result;
+  }
+
+  async updateBookingCustomer(id: string, data: Partial<InsertBookingCustomer>, tenantId?: string): Promise<BookingCustomer | undefined> {
+    const conditions = [eq(bookingCustomers.id, id)];
+    if (tenantId) conditions.push(eq(bookingCustomers.tenantId, tenantId));
+    const [result] = await db.update(bookingCustomers).set({ ...data, updatedAt: new Date() } as any).where(and(...conditions)).returning();
+    return result;
+  }
+
+  // ─── Booking Vehicles ────────────────────────────────────────────────
+
+  async createBookingVehicle(tenantId: string, vehicle: Omit<InsertBookingVehicle, "tenantId">): Promise<BookingVehicle> {
+    const [result] = await db.insert(bookingVehicles).values({ ...vehicle, tenantId } as any).returning();
+    return result;
+  }
+
+  async getBookingVehicles(tenantId: string, customerId?: string): Promise<BookingVehicle[]> {
+    const conditions = [eq(bookingVehicles.tenantId, tenantId)];
+    if (customerId) conditions.push(eq(bookingVehicles.customerId, customerId));
+    return db.select().from(bookingVehicles).where(and(...conditions)).orderBy(desc(bookingVehicles.createdAt));
+  }
+
+  async getBookingVehicleByPlate(tenantId: string, plateNormalized: string): Promise<BookingVehicle | undefined> {
+    const [result] = await db.select().from(bookingVehicles).where(and(eq(bookingVehicles.tenantId, tenantId), eq(bookingVehicles.licensePlate, plateNormalized)));
+    return result;
+  }
+
+  // ─── Bookings ────────────────────────────────────────────────────────
+
+  async createBooking(tenantId: string, booking: Omit<InsertBooking, "tenantId">): Promise<Booking> {
+    // tenantId is added by the method, not the caller
+    const [result] = await db.insert(bookings).values({ ...booking, tenantId } as any).returning();
+    return result;
+  }
+
+  async getBookings(tenantId: string, filters?: { status?: string; fromDate?: string; toDate?: string; search?: string; customerId?: string; limit?: number }): Promise<Booking[]> {
+    const conditions = [eq(bookings.tenantId, tenantId)];
+    if (filters?.status) conditions.push(eq(bookings.status, filters.status as any));
+    if (filters?.fromDate) conditions.push(gte(bookings.bookingDate, filters.fromDate));
+    if (filters?.toDate) conditions.push(lte(bookings.bookingDate, filters.toDate));
+    if (filters?.customerId) conditions.push(eq(bookings.customerId, filters.customerId));
+    let query = db.select().from(bookings).where(and(...conditions)).orderBy(desc(bookings.bookingDate), asc(bookings.timeSlot));
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    return query;
+  }
+
+  async getBooking(id: string, tenantId?: string): Promise<Booking | undefined> {
+    const conditions = [eq(bookings.id, id)];
+    if (tenantId) conditions.push(eq(bookings.tenantId, tenantId));
+    const [result] = await db.select().from(bookings).where(and(...conditions));
+    return result;
+  }
+
+  async updateBooking(id: string, data: Partial<InsertBooking>, tenantId?: string): Promise<Booking | undefined> {
+    const conditions = [eq(bookings.id, id)];
+    if (tenantId) conditions.push(eq(bookings.tenantId, tenantId));
+    const [result] = await db.update(bookings).set({ ...data, updatedAt: new Date() } as any).where(and(...conditions)).returning();
+    return result;
+  }
+
+  async cancelBooking(id: string, reason?: string, tenantId?: string): Promise<Booking | undefined> {
+    const conditions = [eq(bookings.id, id)];
+    if (tenantId) conditions.push(eq(bookings.tenantId, tenantId));
+    const [result] = await db.update(bookings).set({
+      status: "cancelled" as any,
+      cancelledAt: new Date(),
+      cancelReason: reason || null,
+      updatedAt: new Date(),
+    }).where(and(...conditions)).returning();
+    return result;
+  }
+
+  async getTodayBookings(tenantId: string): Promise<Booking[]> {
+    const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+    return db.select().from(bookings).where(and(
+      eq(bookings.tenantId, tenantId),
+      eq(bookings.bookingDate, today),
+      sql`${bookings.status} IN ('confirmed', 'in_progress', 'ready_for_pickup')`
+    )).orderBy(asc(bookings.timeSlot));
+  }
+
+  async getUpcomingBookings(tenantId: string, days: number = 7): Promise<Booking[]> {
+    const today = new Date().toISOString().split("T")[0];
+    const futureDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    return db.select().from(bookings).where(and(
+      eq(bookings.tenantId, tenantId),
+      gte(bookings.bookingDate, today),
+      lte(bookings.bookingDate, futureDate),
+      sql`${bookings.status} IN ('confirmed', 'in_progress')`
+    )).orderBy(asc(bookings.bookingDate), asc(bookings.timeSlot));
+  }
+
+  async getBookingsByPlate(tenantId: string, plateNormalized: string): Promise<Booking[]> {
+    // Join bookings with vehicles to find by plate
+    const vehicles = await db.select().from(bookingVehicles).where(
+      and(eq(bookingVehicles.tenantId, tenantId), eq(bookingVehicles.licensePlate, plateNormalized))
+    );
+    if (vehicles.length === 0) return [];
+    const vehicleIds = vehicles.map(v => v.id);
+    return db.select().from(bookings).where(and(
+      eq(bookings.tenantId, tenantId),
+      sql`${bookings.vehicleId} = ANY(${vehicleIds})`
+    )).orderBy(desc(bookings.bookingDate));
+  }
+
+  // ─── Time Slot Config ────────────────────────────────────────────────
+
+  async getTimeSlotConfig(tenantId: string): Promise<BookingTimeSlotConfig[]> {
+    return db.select().from(bookingTimeSlotConfig).where(eq(bookingTimeSlotConfig.tenantId, tenantId)).orderBy(asc(bookingTimeSlotConfig.dayOfWeek));
+  }
+
+  async upsertTimeSlotConfig(tenantId: string, configs: InsertBookingTimeSlotConfig[]): Promise<BookingTimeSlotConfig[]> {
+    // Delete existing config for this tenant, then insert new
+    await db.delete(bookingTimeSlotConfig).where(eq(bookingTimeSlotConfig.tenantId, tenantId));
+    if (configs.length === 0) return [];
+    const values = configs.map(c => ({ ...c, tenantId }));
+    return db.insert(bookingTimeSlotConfig).values(values as any).returning();
+  }
+
+  async getAvailableTimeSlots(tenantId: string, date: string): Promise<{ time: string; available: number; maxConcurrent: number }[]> {
+    // Get the day of week for the requested date
+    const dayOfWeek = new Date(date).getDay(); // 0=Sunday..6=Saturday
+
+    // Get time slot config for this day
+    const configs = await db.select().from(bookingTimeSlotConfig).where(and(
+      eq(bookingTimeSlotConfig.tenantId, tenantId),
+      eq(bookingTimeSlotConfig.dayOfWeek, dayOfWeek),
+      eq(bookingTimeSlotConfig.isActive, true)
+    ));
+
+    if (configs.length === 0) return [];
+
+    // Generate all possible time slots from config
+    const slots: { time: string; maxConcurrent: number }[] = [];
+    for (const config of configs) {
+      const [startH, startM] = config.startTime.split(":").map(Number);
+      const [endH, endM] = config.endTime.split(":").map(Number);
+      const startMinutes = startH * 60 + startM;
+      const endMinutes = endH * 60 + endM;
+      const interval = config.slotIntervalMinutes;
+
+      for (let m = startMinutes; m < endMinutes; m += interval) {
+        const h = Math.floor(m / 60);
+        const min = m % 60;
+        const time = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+        slots.push({ time, maxConcurrent: config.maxConcurrentBookings });
+      }
+    }
+
+    // Count existing bookings per slot for this date
+    const existingBookings = await db.select({
+      timeSlot: bookings.timeSlot,
+      count: sql<number>`count(*)::int`,
+    }).from(bookings).where(and(
+      eq(bookings.tenantId, tenantId),
+      eq(bookings.bookingDate, date),
+      sql`${bookings.status} NOT IN ('cancelled', 'no_show')`
+    )).groupBy(bookings.timeSlot);
+
+    const bookingCounts = new Map(existingBookings.map(b => [b.timeSlot, b.count]));
+
+    return slots.map(slot => {
+      const booked = bookingCounts.get(slot.time) || 0;
+      return {
+        time: slot.time,
+        available: Math.max(0, slot.maxConcurrent - booked),
+        maxConcurrent: slot.maxConcurrent,
+      };
+    });
+  }
+
+  // ─── Booking Analytics ───────────────────────────────────────────────
+
+  async getBookingAnalytics(tenantId: string): Promise<{
+    todayBookings: number;
+    weekBookings: number;
+    monthBookings: number;
+    completionRate: number;
+    bookingRevenue: number;
+  }> {
+    const tf = eq(bookings.tenantId, tenantId);
+    const today = new Date().toISOString().split("T")[0];
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+    const [todayResult] = await db.select({ count: sql<number>`count(*)::int` }).from(bookings).where(and(tf, eq(bookings.bookingDate, today)));
+    const [weekResult] = await db.select({ count: sql<number>`count(*)::int` }).from(bookings).where(and(tf, gte(bookings.bookingDate, weekAgo)));
+    const [monthResult] = await db.select({ count: sql<number>`count(*)::int` }).from(bookings).where(and(tf, gte(bookings.bookingDate, monthAgo)));
+
+    // Completion rate: completed / (completed + cancelled + no_show) for last 30 days
+    const [completedCount] = await db.select({ count: sql<number>`count(*)::int` }).from(bookings).where(and(tf, gte(bookings.bookingDate, monthAgo), eq(bookings.status, "completed" as any)));
+    const [totalFinished] = await db.select({ count: sql<number>`count(*)::int` }).from(bookings).where(and(tf, gte(bookings.bookingDate, monthAgo), sql`${bookings.status} IN ('completed', 'cancelled', 'no_show')`));
+
+    const completionRate = totalFinished.count > 0 ? Math.round((completedCount.count / totalFinished.count) * 100) : 0;
+
+    // Revenue from completed bookings this month
+    const [revenueResult] = await db.select({ total: sql<number>`COALESCE(SUM(${bookings.totalAmount}), 0)::int` }).from(bookings).where(and(tf, gte(bookings.bookingDate, monthAgo), eq(bookings.status, "completed" as any)));
+
+    return {
+      todayBookings: todayResult?.count || 0,
+      weekBookings: weekResult?.count || 0,
+      monthBookings: monthResult?.count || 0,
+      completionRate,
+      bookingRevenue: revenueResult?.total || 0,
+    };
   }
 
   // ─── Tenant Stats ─────────────────────────────────────────────────────

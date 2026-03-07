@@ -23,6 +23,7 @@ import { z } from "zod";
 import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE, SERVICE_PACKAGES, VEHICLE_SIZES } from "@shared/schema";
 import type { ServiceCode, WashStatus, VehicleSize } from "@shared/schema";
 import {
+  // CRM functions — used ONLY by /api/crm/* routes (Ekhaya's own system)
   getUpcomingBookings,
   getTodayBookings,
   findBookingByPlate,
@@ -38,16 +39,6 @@ import {
   getBookingWithMembership,
   getUpcomingBookingsWithMemberships,
   findCRMCustomerByPlate,
-  findCRMMembershipByPlate,
-  creditCRMLoyaltyPoints,
-  getCRMLoyaltyAnalytics,
-  getManagerBookings,
-  getBookingById,
-  updateBooking,
-  cancelBooking,
-  isTimeSlotAvailable,
-  getCRMServices,
-  getAvailableTimeSlots
 } from "./lib/booking-db";
 import {
   calculateParkingFee,
@@ -179,7 +170,7 @@ export async function registerRoutes(
         tenantId = tenant.id;
 
         // Check if this is the first user for the tenant — make them manager
-        const existingUsers = await storage.getUsers();
+        const existingUsers = await storage.getUsers(tenantId);
         const tenantUsers = existingUsers.filter((u) => u.tenantId === tenant.id);
         if (tenantUsers.length === 0) {
           role = "manager";
@@ -296,7 +287,8 @@ export async function registerRoutes(
       }
       // For Replit auth, get from userRoles table
       const userId = req.user?.claims?.sub;
-      const userRole = await storage.getUserRole(userId);
+      const tenantId = (req as any).tenantId || "default";
+      const userRole = await storage.getUserRole(tenantId, userId);
       res.json({ role: userRole?.role || "technician" });
     } catch (error) {
       console.error("Error fetching user role:", error);
@@ -308,6 +300,7 @@ export async function registerRoutes(
   app.get("/api/user/me", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user?.claims?.sub;
+      const tenantId = (req as any).tenantId || "default";
       let role = "technician";
       let userDetails = null;
 
@@ -317,7 +310,7 @@ export async function registerRoutes(
         userDetails = await storage.getUserById(userId);
       } else {
         // For Replit auth, get from userRoles table
-        const userRole = await storage.getUserRole(userId);
+        const userRole = await storage.getUserRole(tenantId, userId);
         role = userRole?.role || "technician";
       }
 
@@ -359,6 +352,7 @@ export async function registerRoutes(
   // Create wash job
   app.post("/api/wash-jobs", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const result = createWashJobSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: result.error.errors[0].message });
@@ -398,13 +392,16 @@ export async function registerRoutes(
         resolvedSteps = cfg?.steps || [];
       }
 
-      const job = await storage.createWashJob({
+      const job = await storage.createWashJob(tenantId, {
         plateDisplay: displayPlate(plateDisplay),
         plateNormalized: normalizePlate(plateDisplay),
         countryHint,
         technicianId: userId,
         status: "received",
         serviceCode: resolvedServiceCode,
+        packageName: resolvedPackageName,
+        vehicleSize: vehicleSize || null,
+        price: resolvedPrice ? resolvedPrice * 100 : null, // store in cents
         startAt: new Date(),
       });
 
@@ -420,7 +417,7 @@ export async function registerRoutes(
 
       // Auto-populate service checklist items based on resolved steps
       if (resolvedSteps.length > 0) {
-        await storage.createServiceChecklistItems(
+        await storage.createServiceChecklistItems(tenantId,
           resolvedSteps.map((label, index) => ({
             washJobId: job.id,
             label,
@@ -433,7 +430,7 @@ export async function registerRoutes(
 
       // Save initial photo if provided
       if (photoUrl) {
-        await storage.addWashPhoto({
+        await storage.addWashPhoto(tenantId, {
           washJobId: job.id,
           url: photoUrl,
           statusAtTime: "received",
@@ -441,7 +438,7 @@ export async function registerRoutes(
       }
 
       // Log event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "wash_created",
         plateDisplay: job.plateDisplay,
         plateNormalized: job.plateNormalized,
@@ -464,7 +461,7 @@ export async function registerRoutes(
           body: `${job.plateDisplay} — ${job.serviceCode} added to queue`,
           url: "/manager/dashboard",
           tag: `new-job-${job.id}`,
-        });
+        }, tenantId);
       } catch (_pushErr) { /* non-blocking */ }
 
       // Return job with customer tracking URL and service info
@@ -486,14 +483,15 @@ export async function registerRoutes(
   // Get wash jobs
   app.get("/api/wash-jobs", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { status, my } = req.query;
       const userId = req.user?.claims?.sub;
-      
+
       const filters: any = {};
       if (status) filters.status = status;
       if (my === "true" || my === "") filters.technicianId = userId;
 
-      const jobs = await storage.getWashJobs(filters);
+      const jobs = await storage.getWashJobs(tenantId, filters);
       res.json(jobs);
     } catch (error) {
       console.error("Error fetching wash jobs:", error);
@@ -502,9 +500,10 @@ export async function registerRoutes(
   });
 
   // Get single wash job
-  app.get("/api/wash-jobs/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/wash-jobs/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const job = await storage.getWashJob(req.params.id as string);
+      const tenantId = (req as any).tenantId || "default";
+      const job = await storage.getWashJob(req.params.id as string, tenantId);
       if (!job) {
         return res.status(404).json({ message: "Job not found" });
       }
@@ -520,6 +519,7 @@ export async function registerRoutes(
   // Update wash job status
   app.patch("/api/wash-jobs/:id/status", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const result = updateStatusSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: result.error.errors[0].message });
@@ -529,7 +529,7 @@ export async function registerRoutes(
       const userId = req.user?.claims?.sub;
 
       // Get current job to validate transition
-      const currentJob = await storage.getWashJob(req.params.id as string);
+      const currentJob = await storage.getWashJob(req.params.id as string, tenantId);
       if (!currentJob) {
         return res.status(404).json({ message: "Job not found" });
       }
@@ -552,9 +552,9 @@ export async function registerRoutes(
 
       let job;
       if (status === "complete") {
-        job = await storage.completeWashJob(req.params.id);
+        job = await storage.completeWashJob(req.params.id, tenantId);
       } else {
-        job = await storage.updateWashJobStatus(req.params.id, status);
+        job = await storage.updateWashJobStatus(req.params.id, status, tenantId);
       }
 
       if (!job) {
@@ -562,7 +562,7 @@ export async function registerRoutes(
       }
 
       // Log event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "wash_status_update",
         plateDisplay: job.plateDisplay,
         plateNormalized: job.plateNormalized,
@@ -578,68 +578,66 @@ export async function registerRoutes(
       // Fire CRM webhook (non-blocking)
       fireWebhook("wash_status_update", { jobId: job.id, plate: job.plateDisplay, plateNormalized: job.plateNormalized, status, serviceCode: job.serviceCode }).catch(() => {});
 
-      // === AUTO-CREDIT LOYALTY POINTS ON COMPLETION (CRM) ===
+      // === AUTO-CREDIT LOYALTY POINTS ON COMPLETION (LOCAL) ===
       if (status === "complete" && job) {
         try {
           const svcCode = (job.serviceCode || "STANDARD") as ServiceCode;
           const basePoints = LOYALTY_POINTS_PER_SERVICE[svcCode] || 0;
 
           if (basePoints > 0) {
-            // Look up CRM membership to get multiplier and userId
-            const membership = await findCRMMembershipByPlate(job.plateNormalized);
+            // Get or create local loyalty account for this plate
+            const loyaltyAccount = await storage.getOrCreateLoyaltyAccount(
+              tenantId, job.plateNormalized, job.plateDisplay
+            );
 
-            if (membership) {
-              // Apply loyalty multiplier (e.g. Premium = 2x)
-              const pointsToAward = Math.round(basePoints * membership.loyaltyMultiplier);
+            const pointsToAward = basePoints;
 
-              // Credit points directly to CRM User.loyaltyPoints
-              const creditResult = await creditCRMLoyaltyPoints(membership.userId, pointsToAward);
-              const newBalance = creditResult?.newBalance ?? (membership.loyaltyPoints + pointsToAward);
+            // Credit points to local loyalty account
+            const updatedAccount = await storage.creditLoyaltyPoints(tenantId, loyaltyAccount.id, pointsToAward);
+            const newBalance = updatedAccount?.pointsBalance || (loyaltyAccount.pointsBalance || 0) + pointsToAward;
 
-              // Log transaction locally for audit trail
-              await storage.logLoyaltyTransaction({
-                crmUserId: membership.userId,
-                memberNumber: membership.memberNumber,
-                type: "earn_wash",
+            // Log transaction locally
+            await storage.logLoyaltyTransaction(tenantId, {
+              crmUserId: loyaltyAccount.id,
+              memberNumber: loyaltyAccount.membershipNumber,
+              type: "earn_wash",
+              points: pointsToAward,
+              balanceAfter: newBalance,
+              washJobId: job.id,
+              serviceCode: svcCode,
+              description: `Earned ${pointsToAward} points for ${SERVICE_TYPE_CONFIG[svcCode].label}`,
+              createdBy: userId,
+            });
+
+            // Log the loyalty event
+            await storage.logEvent(tenantId, {
+              type: "loyalty_points_earned",
+              plateDisplay: job.plateDisplay,
+              plateNormalized: job.plateNormalized,
+              washJobId: job.id,
+              userId,
+              payloadJson: {
                 points: pointsToAward,
-                balanceAfter: newBalance,
-                washJobId: job.id,
                 serviceCode: svcCode,
-                description: `Earned ${pointsToAward} points for ${SERVICE_TYPE_CONFIG[svcCode].label}${membership.loyaltyMultiplier > 1 ? ` (${membership.loyaltyMultiplier}x multiplier)` : ""}`,
-                createdBy: userId,
-              });
+                balanceAfter: newBalance,
+                memberNumber: loyaltyAccount.membershipNumber,
+                tier: loyaltyAccount.tier,
+              },
+            });
 
-              // Log the loyalty event
-              await storage.logEvent({
-                type: "loyalty_points_earned",
-                plateDisplay: job.plateDisplay,
-                plateNormalized: job.plateNormalized,
-                washJobId: job.id,
-                userId,
-                payloadJson: {
-                  points: pointsToAward,
-                  serviceCode: svcCode,
-                  balanceAfter: newBalance,
-                  memberNumber: membership.memberNumber,
-                  tierName: membership.tierName,
-                  loyaltyMultiplier: membership.loyaltyMultiplier,
-                },
-              });
-
-              // Broadcast loyalty update
-              broadcastEvent({
-                type: "loyalty_points_earned",
-                washJobId: job.id,
-                points: pointsToAward,
-                balance: newBalance,
-                memberNumber: membership.memberNumber,
-              });
-            }
+            // Broadcast loyalty update
+            broadcastEvent({
+              type: "loyalty_points_earned",
+              washJobId: job.id,
+              points: pointsToAward,
+              balance: newBalance,
+              memberNumber: loyaltyAccount.membershipNumber,
+            });
 
             // Also increment local membership wash count if applicable
-            const localMembership = await storage.getActiveMembershipForPlate(job.plateNormalized);
+            const localMembership = await storage.getActiveMembershipForPlate(tenantId, job.plateNormalized);
             if (localMembership) {
-              await storage.incrementMembershipWashUsed(localMembership.id);
+              await storage.incrementMembershipWashUsed(localMembership.id, tenantId);
             }
           }
         } catch (loyaltyErr) {
@@ -649,18 +647,18 @@ export async function registerRoutes(
 
         // === AUTO-QUEUE "CAR READY" SMS/WHATSAPP NOTIFICATION ===
         try {
-          const membership = await findCRMMembershipByPlate(job.plateNormalized);
-          const customerPhone = membership?.customerPhone;
-          const customerName = membership?.customerName;
+          const loyaltyAccount = await storage.getLoyaltyAccountByPlate(tenantId, job.plateNormalized);
+          const customerPhone = loyaltyAccount?.customerPhone;
+          const customerName = loyaltyAccount?.customerName;
           if (customerPhone) {
-            await storage.createNotification({
+            await storage.createNotification(tenantId, {
               customerName: customerName || undefined,
               customerPhone,
-              customerEmail: membership?.customerEmail || undefined,
+              customerEmail: loyaltyAccount?.customerEmail || undefined,
               plateNormalized: job.plateNormalized,
               channel: "sms",
               type: "wash_complete",
-              message: `Hi ${customerName || "there"}! Your vehicle (${job.plateDisplay}) is ready for pickup. Thank you for choosing Prestige by Ekhaya!`,
+              message: `Hi ${customerName || "there"}! Your vehicle (${job.plateDisplay}) is ready for pickup.`,
               washJobId: job.id,
               status: "pending",
             });
@@ -685,7 +683,7 @@ export async function registerRoutes(
         // === AUTO-CONSUME INVENTORY ON WASH COMPLETION ===
         try {
           const svcCode = (job.serviceCode || "STANDARD") as string;
-          await storage.autoConsumeForWashJob(job.id, svcCode, userId);
+          await storage.autoConsumeForWashJob(tenantId, job.id, svcCode, userId);
         } catch (_invErr) {
           console.error("Inventory auto-consumption failed (non-blocking):", _invErr);
         }
@@ -701,18 +699,19 @@ export async function registerRoutes(
   // Delete wash job (manager/admin only)
   app.delete("/api/wash-jobs/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const job = await storage.getWashJob(req.params.id);
+      const tenantId = (req as any).tenantId || "default";
+      const job = await storage.getWashJob(req.params.id, tenantId);
       if (!job) {
         return res.status(404).json({ message: "Job not found" });
       }
 
-      const deleted = await storage.deleteWashJob(req.params.id);
+      const deleted = await storage.deleteWashJob(req.params.id, tenantId);
       if (!deleted) {
         return res.status(500).json({ message: "Failed to delete job" });
       }
 
       // Log the deletion event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "wash_deleted",
         plateDisplay: job.plateDisplay,
         plateNormalized: job.plateNormalized,
@@ -730,6 +729,7 @@ export async function registerRoutes(
 
   // Send custom SMS/WhatsApp notification (manager/admin only)
   app.post("/api/notifications/send", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    const tenantId = (req as any).tenantId || "default";
     const schema = z.object({
       customerPhone: z.string().min(1),
       message: z.string().min(1),
@@ -739,7 +739,7 @@ export async function registerRoutes(
     if (!result.success) return res.status(400).json({ message: result.error.errors[0].message });
 
     try {
-      const notification = await storage.createNotification({
+      const notification = await storage.createNotification(tenantId, {
         customerPhone: result.data.customerPhone,
         channel: result.data.channel,
         type: "custom",
@@ -766,6 +766,7 @@ export async function registerRoutes(
 
   // Staff push subscription (authenticated)
   app.post("/api/push/subscribe", isAuthenticated, async (req: any, res) => {
+    const tenantId = (req as any).tenantId || "default";
     const schema = z.object({
       endpoint: z.string().url(),
       p256dh: z.string().min(1),
@@ -776,7 +777,7 @@ export async function registerRoutes(
 
     try {
       const userId = req.user?.claims?.sub || req.user?.id;
-      const sub = await storage.savePushSubscription({
+      const sub = await storage.savePushSubscription(tenantId, {
         endpoint: result.data.endpoint,
         p256dh: result.data.p256dh,
         auth: result.data.auth,
@@ -804,7 +805,8 @@ export async function registerRoutes(
     if (!result.success) return res.status(400).json({ message: result.error.errors[0].message });
 
     try {
-      const sub = await storage.savePushSubscription({
+      const tenantId = (req as any).tenantId || "default";
+      const sub = await storage.savePushSubscription(tenantId, {
         endpoint: result.data.endpoint,
         p256dh: result.data.p256dh,
         auth: result.data.auth,
@@ -822,10 +824,10 @@ export async function registerRoutes(
   // =====================
 
   // Helper: get priority-sorted active jobs for today
-  async function getSortedActiveJobs() {
+  async function getSortedActiveJobs(tenantId?: string) {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const allJobs = await storage.getWashJobs({ fromDate: todayStart });
+    const allJobs = await storage.getWashJobs(tenantId || "default", { fromDate: todayStart });
     const active = allJobs.filter(j => j.status !== "complete");
     const withPriority = await Promise.all(
       active.map(async (job) => {
@@ -842,10 +844,11 @@ export async function registerRoutes(
   }
 
   // Queue position for authenticated users (technicians/managers)
-  app.get("/api/wash-jobs/:id/queue-position", isAuthenticated, async (req, res) => {
+  app.get("/api/wash-jobs/:id/queue-position", isAuthenticated, async (req: any, res) => {
     try {
-      const analytics = await storage.getAnalyticsSummary();
-      const sortedJobs = await getSortedActiveJobs();
+      const tenantId = (req as any).tenantId || "default";
+      const analytics = await storage.getAnalyticsSummary(tenantId);
+      const sortedJobs = await getSortedActiveJobs(tenantId);
       const result = getQueuePosition(req.params.id as string, sortedJobs, analytics.avgCycleTimeMinutes);
       if (!result) return res.status(404).json({ message: "Job not in active queue" });
       res.json(result);
@@ -861,8 +864,9 @@ export async function registerRoutes(
       const access = await storage.getCustomerJobAccessByToken(req.params.token);
       if (!access) return res.status(404).json({ message: "Invalid token" });
 
-      const analytics = await storage.getAnalyticsSummary();
-      const sortedJobs = await getSortedActiveJobs();
+      const tenantId = (req as any).tenantId || "default";
+      const analytics = await storage.getAnalyticsSummary(tenantId);
+      const sortedJobs = await getSortedActiveJobs(tenantId);
       const result = getQueuePosition(access.washJobId, sortedJobs, analytics.avgCycleTimeMinutes);
       if (!result) return res.json({ position: 0, estimatedMinutes: 0, totalInQueue: 0, estimatedReadyAt: null });
       res.json(result);
@@ -875,25 +879,26 @@ export async function registerRoutes(
   // Add photo to wash job
   app.post("/api/wash-jobs/:id/photos", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { photo } = req.body;
       if (!photo) {
         return res.status(400).json({ message: "Photo is required" });
       }
 
-      const job = await storage.getWashJob(req.params.id);
+      const job = await storage.getWashJob(req.params.id, tenantId);
       if (!job) {
         return res.status(404).json({ message: "Job not found" });
       }
 
       const saved = await savePhoto(photo);
-      const washPhoto = await storage.addWashPhoto({
+      const washPhoto = await storage.addWashPhoto(tenantId, {
         washJobId: job.id,
         url: saved.url,
         statusAtTime: job.status as any,
       });
 
       // Log event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "wash_photo",
         plateDisplay: job.plateDisplay,
         plateNormalized: job.plateNormalized,
@@ -928,6 +933,7 @@ export async function registerRoutes(
   // Confirm/unconfirm a checklist item (technician marks step done)
   app.patch("/api/wash-jobs/:id/checklist/:itemId/confirm", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { confirmed } = req.body;
       const item = await storage.updateChecklistItemConfirmedForJob(
         req.params.itemId,
@@ -938,9 +944,9 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Checklist item not found" });
       }
       // Auto-advance job from "received" to "high_pressure_wash" on first checklist action
-      let job = await storage.getWashJob(req.params.id);
+      let job = await storage.getWashJob(req.params.id, tenantId);
       if (job && job.status === "received") {
-        job = await storage.updateWashJobStatus(req.params.id, "high_pressure_wash") || job;
+        job = await storage.updateWashJobStatus(req.params.id, "high_pressure_wash", tenantId) || job;
         broadcastEvent({ type: "wash_status_update", job });
       }
       // Broadcast checklist update to SSE clients
@@ -955,6 +961,7 @@ export async function registerRoutes(
   // Skip a checklist item with optional reason
   app.patch("/api/wash-jobs/:id/checklist/:itemId/skip", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { reason } = req.body;
       const item = await storage.skipChecklistItem(
         req.params.itemId,
@@ -965,9 +972,9 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Checklist item not found" });
       }
       // Auto-advance job from "received" to "high_pressure_wash" on first checklist action
-      let job = await storage.getWashJob(req.params.id);
+      let job = await storage.getWashJob(req.params.id, tenantId);
       if (job && job.status === "received") {
-        job = await storage.updateWashJobStatus(req.params.id, "high_pressure_wash") || job;
+        job = await storage.updateWashJobStatus(req.params.id, "high_pressure_wash", tenantId) || job;
         broadcastEvent({ type: "wash_status_update", job });
       }
       // Broadcast checklist update to SSE clients
@@ -982,8 +989,9 @@ export async function registerRoutes(
   // Get available service packages (for service selection UI)
   app.get("/api/service-packages", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       // Return both custom tenant packages from DB and built-in packages
-      const dbPackages = await storage.getServicePackages(true);
+      const dbPackages = await storage.getServicePackages(tenantId, true);
       const builtIn = Object.entries(SERVICE_PACKAGES).map(([code, pkg]) => ({
         code,
         name: pkg.label,
@@ -1036,6 +1044,7 @@ export async function registerRoutes(
   // Parking entry
   app.post("/api/parking/entry", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const result = parkingSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: result.error.errors[0].message });
@@ -1044,9 +1053,9 @@ export async function registerRoutes(
       const { plateDisplay, countryHint, photo } = result.data;
       const userId = req.user?.claims?.sub;
       const normalized = normalizePlate(plateDisplay);
-      
+
       // Check for existing open session
-      const existing = await storage.findOpenParkingSession(normalized);
+      const existing = await storage.findOpenParkingSession(tenantId, normalized);
       if (existing) {
         return res.status(409).json({ 
           message: "Vehicle already has an open parking session",
@@ -1065,7 +1074,7 @@ export async function registerRoutes(
         }
       }
 
-      const session = await storage.createParkingEntry({
+      const session = await storage.createParkingEntry(tenantId, {
         plateDisplay: displayPlate(plateDisplay),
         plateNormalized: normalized,
         countryHint,
@@ -1075,7 +1084,7 @@ export async function registerRoutes(
       });
 
       // Log event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "parking_entry",
         plateDisplay: session.plateDisplay,
         plateNormalized: session.plateNormalized,
@@ -1100,6 +1109,7 @@ export async function registerRoutes(
   // Parking exit
   app.post("/api/parking/exit", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const result = parkingSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: result.error.errors[0].message });
@@ -1110,7 +1120,7 @@ export async function registerRoutes(
       const normalized = normalizePlate(plateDisplay);
 
       // Find open session
-      const session = await storage.findOpenParkingSession(normalized);
+      const session = await storage.findOpenParkingSession(tenantId, normalized);
       if (!session) {
         return res.status(404).json({
           message: "No open parking session found for this plate"
@@ -1129,24 +1139,24 @@ export async function registerRoutes(
       }
 
       // Calculate fee with business settings
-      const settings = await storage.getParkingSettings();
-      const businessSettings = await storage.getBusinessSettings();
-      const parker = await storage.getFrequentParker(normalized);
-      const validations = await storage.getParkingValidations(session.id);
+      const settings = await storage.getParkingSettings(tenantId);
+      const businessSettings = await storage.getBusinessSettings(tenantId);
+      const parker = await storage.getFrequentParker(tenantId, normalized);
+      const validations = await storage.getParkingValidations(tenantId, session.id);
       const feeResult = calculateParkingFee(session, settings || null, parker, businessSettings, validations);
 
-      const closedSession = await storage.closeParkingSession(session.id, exitPhotoUrl, feeResult.finalFee);
+      const closedSession = await storage.closeParkingSession(session.id, exitPhotoUrl, feeResult.finalFee, tenantId);
       if (!closedSession) {
         return res.status(500).json({ message: "Failed to close parking session" });
       }
 
       // Update frequent parker stats
       if (parker) {
-        await storage.incrementParkerVisit(normalized, feeResult.finalFee);
+        await storage.incrementParkerVisit(tenantId, normalized, feeResult.finalFee);
       }
 
       // Log event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "parking_exit",
         plateDisplay: session.plateDisplay,
         plateNormalized: session.plateNormalized,
@@ -1177,8 +1187,9 @@ export async function registerRoutes(
   });
 
   // Get parking sessions with enriched data
-  app.get("/api/parking/sessions", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/sessions", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { open, plateSearch, fromDate, toDate, zoneId } = req.query;
       const filters: any = {};
       if (open === "true") filters.open = true;
@@ -1188,13 +1199,13 @@ export async function registerRoutes(
       if (toDate) filters.toDate = new Date(toDate as string);
       if (zoneId) filters.zoneId = zoneId as string;
 
-      const sessions = await storage.getParkingSessions(filters);
-      const settings = await storage.getParkingSettings();
+      const sessions = await storage.getParkingSessions(tenantId, filters);
+      const settings = await storage.getParkingSettings(tenantId);
 
       // Enrich sessions with duration and fee calculations
       const enrichedSessions = await Promise.all(
         sessions.map(async (session) => {
-          const parker = await storage.getFrequentParker(session.plateNormalized);
+          const parker = await storage.getFrequentParker(tenantId, session.plateNormalized);
           return enrichSessionWithCalculations(session, settings || null, parker);
         })
       );
@@ -1207,15 +1218,16 @@ export async function registerRoutes(
   });
 
   // Get single parking session with details
-  app.get("/api/parking/sessions/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/sessions/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const session = await storage.getParkingSession(String(req.params.id));
+      const tenantId = (req as any).tenantId || "default";
+      const session = await storage.getParkingSession(String(req.params.id), tenantId);
       if (!session) {
         return res.status(404).json({ message: "Session not found" });
       }
 
-      const settings = await storage.getParkingSettings();
-      const parker = await storage.getFrequentParker(session.plateNormalized);
+      const settings = await storage.getParkingSettings(tenantId);
+      const parker = await storage.getFrequentParker(tenantId, session.plateNormalized);
       const enriched = enrichSessionWithCalculations(session, settings || null, parker);
 
       res.json(enriched);
@@ -1226,15 +1238,16 @@ export async function registerRoutes(
   });
 
   // Update parking session (assign zone/spot, add notes, link to wash)
-  app.patch("/api/parking/sessions/:id", isAuthenticated, async (req, res) => {
+  app.patch("/api/parking/sessions/:id", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { zoneId, spotNumber, notes, washJobId } = req.body;
       const session = await storage.updateParkingSession(String(req.params.id), {
         zoneId,
         spotNumber,
         notes,
         washJobId
-      });
+      }, tenantId);
 
       if (!session) {
         return res.status(404).json({ message: "Session not found" });
@@ -1249,9 +1262,10 @@ export async function registerRoutes(
   });
 
   // Parking analytics
-  app.get("/api/parking/analytics", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/analytics", isAuthenticated, async (req: any, res) => {
     try {
-      const analytics = await storage.getParkingAnalytics();
+      const tenantId = (req as any).tenantId || "default";
+      const analytics = await storage.getParkingAnalytics(tenantId);
       res.json(analytics);
     } catch (error) {
       console.error("Error fetching parking analytics:", error);
@@ -1263,9 +1277,10 @@ export async function registerRoutes(
   // PARKING SETTINGS
   // =====================
 
-  app.get("/api/parking/settings", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/settings", isAuthenticated, async (req: any, res) => {
     try {
-      let settings = await storage.getParkingSettings();
+      const tenantId = (req as any).tenantId || "default";
+      let settings = await storage.getParkingSettings(tenantId);
       if (!settings) {
         // Return defaults
         settings = {
@@ -1301,6 +1316,7 @@ export async function registerRoutes(
 
   app.put("/api/parking/settings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const {
         hourlyRate, firstHourRate, dailyMaxRate, weeklyRate, monthlyPassRate,
         nightRate, nightStartHour, nightEndHour, weekendRate,
@@ -1309,7 +1325,7 @@ export async function registerRoutes(
       } = req.body;
       const userId = req.user?.claims?.sub;
 
-      const settings = await storage.upsertParkingSettings({
+      const settings = await storage.upsertParkingSettings(tenantId, {
         hourlyRate,
         firstHourRate,
         dailyMaxRate,
@@ -1339,9 +1355,10 @@ export async function registerRoutes(
   // BUSINESS SETTINGS
   // =====================
 
-  app.get("/api/business/settings", isAuthenticated, async (req, res) => {
+  app.get("/api/business/settings", isAuthenticated, async (req: any, res) => {
     try {
-      let settings = await storage.getBusinessSettings();
+      const tenantId = (req as any).tenantId || "default";
+      let settings = await storage.getBusinessSettings(tenantId);
       if (!settings) {
         // Return defaults
         settings = {
@@ -1374,13 +1391,14 @@ export async function registerRoutes(
 
   app.put("/api/business/settings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const {
         businessName, businessLogo, businessAddress, businessPhone, businessEmail,
         currency, currencySymbol, locale, timezone, taxRate, taxLabel, receiptFooter
       } = req.body;
       const userId = req.user?.claims?.sub;
 
-      const settings = await storage.upsertBusinessSettings({
+      const settings = await storage.upsertBusinessSettings(tenantId, {
         businessName,
         businessLogo,
         businessAddress,
@@ -1407,15 +1425,16 @@ export async function registerRoutes(
   // PARKING ZONES
   // =====================
 
-  app.get("/api/parking/zones", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/zones", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { all } = req.query;
-      const zones = await storage.getParkingZones(all !== "true");
+      const zones = await storage.getParkingZones(tenantId, all !== "true");
 
       // Add occupancy info
       const zonesWithOccupancy = await Promise.all(
         zones.map(async (zone) => {
-          const occupied = await storage.getZoneOccupancy(zone.id);
+          const occupied = await storage.getZoneOccupancy(tenantId, zone.id);
           return { ...zone, occupied, available: (zone.capacity || 0) - occupied };
         })
       );
@@ -1427,10 +1446,11 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/parking/zones", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.post("/api/parking/zones", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { name, code, capacity, hourlyRate, description } = req.body;
-      const zone = await storage.createParkingZone({
+      const zone = await storage.createParkingZone(tenantId, {
         name,
         code,
         capacity,
@@ -1444,8 +1464,9 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/parking/zones/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.put("/api/parking/zones/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { name, code, capacity, hourlyRate, description, isActive } = req.body;
       const zone = await storage.updateParkingZone(String(req.params.id), {
         name,
@@ -1454,7 +1475,7 @@ export async function registerRoutes(
         hourlyRate,
         description,
         isActive
-      });
+      }, tenantId);
 
       if (!zone) {
         return res.status(404).json({ message: "Zone not found" });
@@ -1471,14 +1492,15 @@ export async function registerRoutes(
   // FREQUENT PARKERS / VIP
   // =====================
 
-  app.get("/api/parking/frequent-parkers", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/frequent-parkers", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { vip, monthlyPass } = req.query;
       const filters: any = {};
       if (vip === "true") filters.isVip = true;
       if (monthlyPass === "true") filters.hasMonthlyPass = true;
 
-      const parkers = await storage.getFrequentParkers(filters);
+      const parkers = await storage.getFrequentParkers(tenantId, filters);
       res.json(parkers);
     } catch (error) {
       console.error("Error fetching frequent parkers:", error);
@@ -1486,10 +1508,11 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/parking/frequent-parkers/:plate", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/frequent-parkers/:plate", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const normalized = normalizePlate(String(req.params.plate));
-      const parker = await storage.getFrequentParker(normalized);
+      const parker = await storage.getFrequentParker(tenantId, normalized);
 
       if (!parker) {
         return res.status(404).json({ message: "Parker not found" });
@@ -1502,8 +1525,9 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/parking/frequent-parkers/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.put("/api/parking/frequent-parkers/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { customerName, customerPhone, customerEmail, isVip, monthlyPassExpiry, notes } = req.body;
       const parker = await storage.updateFrequentParker(String(req.params.id), {
         customerName,
@@ -1512,7 +1536,7 @@ export async function registerRoutes(
         isVip,
         monthlyPassExpiry: monthlyPassExpiry ? new Date(monthlyPassExpiry) : undefined,
         notes
-      });
+      }, tenantId);
 
       if (!parker) {
         return res.status(404).json({ message: "Parker not found" });
@@ -1529,15 +1553,16 @@ export async function registerRoutes(
   // PARKING RESERVATIONS
   // =====================
 
-  app.get("/api/parking/reservations", isAuthenticated, async (req, res) => {
+  app.get("/api/parking/reservations", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { status, fromDate, toDate } = req.query;
       const filters: any = {};
       if (status) filters.status = status as string;
       if (fromDate) filters.fromDate = new Date(fromDate as string);
       if (toDate) filters.toDate = new Date(toDate as string);
 
-      const reservations = await storage.getParkingReservations(filters);
+      const reservations = await storage.getParkingReservations(tenantId, filters);
       res.json(reservations);
     } catch (error) {
       console.error("Error fetching reservations:", error);
@@ -1545,13 +1570,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/parking/reservations", isAuthenticated, async (req, res) => {
+  app.post("/api/parking/reservations", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { plateDisplay, customerName, customerPhone, customerEmail, zoneId, spotNumber, reservedFrom, reservedUntil, notes } = req.body;
 
       const confirmationCode = generateConfirmationCode();
 
-      const reservation = await storage.createParkingReservation({
+      const reservation = await storage.createParkingReservation(tenantId, {
         plateDisplay,
         customerName,
         customerPhone,
@@ -1572,9 +1598,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/parking/reservations/lookup/:code", async (req, res) => {
+  app.get("/api/parking/reservations/lookup/:code", async (req: any, res) => {
     try {
-      const reservation = await storage.getParkingReservationByCode(String(req.params.code));
+      const tenantId = (req as any).tenantId || "default";
+      const reservation = await storage.getParkingReservationByCode(String(req.params.code), tenantId);
       if (!reservation) {
         return res.status(404).json({ message: "Reservation not found" });
       }
@@ -1585,8 +1612,9 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/parking/reservations/:id", isAuthenticated, async (req, res) => {
+  app.put("/api/parking/reservations/:id", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { status, plateDisplay, zoneId, spotNumber, notes } = req.body;
       const reservation = await storage.updateParkingReservation(String(req.params.id), {
         status,
@@ -1594,7 +1622,7 @@ export async function registerRoutes(
         zoneId,
         spotNumber,
         notes
-      });
+      }, tenantId);
 
       if (!reservation) {
         return res.status(404).json({ message: "Reservation not found" });
@@ -1610,7 +1638,8 @@ export async function registerRoutes(
   // Check-in with reservation code
   app.post("/api/parking/reservations/:id/check-in", isAuthenticated, async (req: any, res) => {
     try {
-      const reservation = await storage.getParkingReservation(String(req.params.id));
+      const tenantId = (req as any).tenantId || "default";
+      const reservation = await storage.getParkingReservation(String(req.params.id), tenantId);
       if (!reservation) {
         return res.status(404).json({ message: "Reservation not found" });
       }
@@ -1624,7 +1653,7 @@ export async function registerRoutes(
       const plateNormalized = normalizePlate(plateDisplay);
 
       // Create parking session
-      const session = await storage.createParkingEntry({
+      const session = await storage.createParkingEntry(tenantId, {
         plateDisplay,
         plateNormalized,
         technicianId: userId,
@@ -1633,12 +1662,12 @@ export async function registerRoutes(
       });
 
       // Update reservation
-      await storage.checkInReservation(reservation.id, session.id);
+      await storage.checkInReservation(reservation.id, session.id, tenantId);
 
       // Track frequent parker
       if (reservation.plateDisplay) {
         const normalized = normalizePlate(reservation.plateDisplay);
-        await storage.getOrCreateFrequentParker(normalized, reservation.plateDisplay);
+        await storage.getOrCreateFrequentParker(tenantId, normalized, reservation.plateDisplay);
       }
 
       broadcastEvent({ type: "parking_entry", session });
@@ -1655,17 +1684,18 @@ export async function registerRoutes(
   // =====================
 
   // Events / Audit Log
-  app.get("/api/events", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.get("/api/events", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { plate, type, limit } = req.query;
-      const events = await storage.getEvents({
+      const events = await storage.getEvents(tenantId, {
         plate: plate as string,
         type: type as string,
         limit: limit ? parseInt(limit as string) : 100,
       });
 
       // Enrich events with user display names
-      const allUsers = await storage.getUsers();
+      const allUsers = await storage.getUsers(tenantId);
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
       const enriched = events.map(event => {
@@ -1686,9 +1716,10 @@ export async function registerRoutes(
   });
 
   // Analytics
-  app.get("/api/analytics/summary", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.get("/api/analytics/summary", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const summary = await storage.getAnalyticsSummary();
+      const tenantId = (req as any).tenantId || "default";
+      const summary = await storage.getAnalyticsSummary(tenantId);
       res.json(summary);
     } catch (error) {
       console.error("Error fetching analytics:", error);
@@ -1697,9 +1728,10 @@ export async function registerRoutes(
   });
 
   // Technician performance (customer ratings aggregation)
-  app.get("/api/analytics/technician-performance", isAuthenticated, requireRole("manager", "admin"), async (_req, res) => {
+  app.get("/api/analytics/technician-performance", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const performance = await storage.getTechnicianPerformance();
+      const tenantId = (req as any).tenantId || "default";
+      const performance = await storage.getTechnicianPerformance(tenantId);
       res.json(performance);
     } catch (error) {
       console.error("Error fetching technician performance:", error);
@@ -1707,16 +1739,41 @@ export async function registerRoutes(
     }
   });
 
-  // Live queue stats
-  app.get("/api/queue/stats", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  // Revenue analytics
+  app.get("/api/analytics/revenue", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
+      const revenue = await storage.getRevenueSummary(tenantId);
+      res.json(revenue);
+    } catch (error) {
+      console.error("Error fetching revenue analytics:", error);
+      res.status(500).json({ message: "Failed to fetch revenue analytics" });
+    }
+  });
+
+  // Customer insights analytics
+  app.get("/api/analytics/customer-insights", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const insights = await storage.getCustomerInsights(tenantId);
+      res.json(insights);
+    } catch (error) {
+      console.error("Error fetching customer insights:", error);
+      res.status(500).json({ message: "Failed to fetch customer insights" });
+    }
+  });
+
+  // Live queue stats
+  app.get("/api/queue/stats", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
       // Only show today's jobs in the live queue
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const todayJobs = await storage.getWashJobs({ fromDate: todayStart });
-      const openParking = await storage.getParkingSessions({ open: true });
-      const analytics = await storage.getAnalyticsSummary();
+      const todayJobs = await storage.getWashJobs(tenantId, { fromDate: todayStart });
+      const openParking = await storage.getParkingSessions(tenantId, { open: true });
+      const analytics = await storage.getAnalyticsSummary(tenantId);
 
       // Calculate priority for active jobs
       const activeJobs = todayJobs.filter(j => j.status !== "complete");
@@ -1735,7 +1792,7 @@ export async function registerRoutes(
             // Auto-fix: if job is still "received" but has confirmed/skipped steps, advance to "high_pressure_wash"
             let updatedJob = job;
             if (job.status === "received" && doneSteps > 0) {
-              const advanced = await storage.updateWashJobStatus(job.id, "high_pressure_wash");
+              const advanced = await storage.updateWashJobStatus(job.id, "high_pressure_wash", tenantId);
               if (advanced) {
                 updatedJob = advanced;
                 broadcastEvent({ type: "wash_status_update", job: advanced });
@@ -2035,9 +2092,10 @@ export async function registerRoutes(
   // LOYALTY POINTS
   // =====================
 
-  // Combined customer lookup by plate: CRM customer + membership + subscription
-  app.get("/api/customer/lookup-by-plate", isAuthenticated, async (req, res) => {
+  // Combined customer lookup by plate: local data (frequent parker + membership + loyalty)
+  app.get("/api/customer/lookup-by-plate", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { plate } = req.query;
       if (!plate || typeof plate !== "string") {
         return res.status(400).json({ message: "Plate parameter required" });
@@ -2045,19 +2103,19 @@ export async function registerRoutes(
 
       const plateNormalized = normalizePlate(plate);
 
-      const [crmCustomer, crmSubscription, crmMembership] = await Promise.all([
-        findCRMCustomerByPlate(plateNormalized).catch(() => null),
-        findCRMSubscriptionByPlate(plate).catch(() => null),
-        findCRMMembershipByPlate(plateNormalized).catch(() => null),
+      const [frequentParker, membership, loyaltyAccount] = await Promise.all([
+        storage.getFrequentParker(tenantId, plateNormalized).catch(() => null),
+        storage.findMembershipByPlate(tenantId, plateNormalized).catch(() => null),
+        storage.getLoyaltyAccountByPlate(tenantId, plateNormalized).catch(() => null),
       ]);
 
-      const isRegistered = !!(crmCustomer || crmMembership);
+      const isRegistered = !!(frequentParker || membership || loyaltyAccount);
 
       res.json({
         isRegistered,
-        crmCustomer,
-        crmSubscription,
-        crmMembership,
+        frequentParker,
+        membership,
+        loyaltyAccount,
       });
     } catch (error) {
       console.error("Error looking up customer by plate:", error);
@@ -2065,56 +2123,41 @@ export async function registerRoutes(
     }
   });
 
-  // Get loyalty membership by plate (from CRM)
-  app.get("/api/loyalty/by-plate", isAuthenticated, async (req, res) => {
+  // Get loyalty account by plate (local)
+  app.get("/api/loyalty/by-plate", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { plate } = req.query;
       if (!plate || typeof plate !== "string") {
         return res.status(400).json({ message: "Plate parameter required" });
       }
 
       const plateNormalized = normalizePlate(plate);
-      const membership = await findCRMMembershipByPlate(plateNormalized);
+      const loyaltyAccount = await storage.getLoyaltyAccountByPlate(tenantId, plateNormalized);
 
-      if (!membership) {
-        return res.status(404).json({ message: "No membership found for this plate" });
+      if (!loyaltyAccount) {
+        return res.status(404).json({ message: "No loyalty account found for this plate" });
       }
 
-      res.json(membership);
+      res.json(loyaltyAccount);
     } catch (error) {
-      console.error("Error fetching loyalty membership:", error);
-      res.status(500).json({ message: "Failed to fetch loyalty membership" });
+      console.error("Error fetching loyalty account:", error);
+      res.status(500).json({ message: "Failed to fetch loyalty account" });
     }
   });
 
-  // Loyalty analytics (CRM members + local transaction history)
-  app.get("/api/loyalty/analytics", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  // Loyalty analytics (local accounts + transaction history)
+  app.get("/api/loyalty/analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const crmAnalytics = await getCRMLoyaltyAnalytics();
-      const localTransactions = await storage.getLoyaltyTransactions({ limit: 1000 });
-
-      // Calculate points issued today from local audit log
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayTransactions = localTransactions.filter(
-        t => t.createdAt && new Date(t.createdAt) >= todayStart && t.points > 0
-      );
-      const pointsIssuedToday = todayTransactions.reduce((sum, t) => sum + t.points, 0);
-      const totalPointsIssued = localTransactions
-        .filter(t => t.points > 0)
-        .reduce((sum, t) => sum + t.points, 0);
+      const tenantId = (req as any).tenantId || "default";
+      const analytics = await storage.getLoyaltyAnalytics(tenantId);
 
       res.json({
-        totalAccounts: crmAnalytics?.totalMembers || 0,
-        totalPointsIssued,
+        totalAccounts: analytics.totalAccounts,
+        totalPointsIssued: analytics.totalPointsIssued,
         totalPointsRedeemed: 0,
-        pointsIssuedToday,
-        topEarners: (crmAnalytics?.topMembers || []).map(m => ({
-          plateDisplay: m.memberNumber,
-          customerName: m.customerName,
-          pointsBalance: m.loyaltyPoints,
-          totalWashes: 0,
-        })),
+        pointsIssuedToday: analytics.pointsIssuedToday,
+        topEarners: analytics.topEarners,
       });
     } catch (error) {
       console.error("Error fetching loyalty analytics:", error);
@@ -2123,30 +2166,31 @@ export async function registerRoutes(
   });
 
   // Get loyalty info for a specific wash job (used on completion screen)
-  app.get("/api/loyalty/by-wash-job/:washJobId", isAuthenticated, async (req, res) => {
+  app.get("/api/loyalty/by-wash-job/:washJobId", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const washJobId = req.params.washJobId as string;
-      const job = await storage.getWashJob(washJobId);
+      const job = await storage.getWashJob(washJobId, tenantId);
       if (!job) {
         return res.status(404).json({ message: "Wash job not found" });
       }
 
-      // Look up CRM membership by plate
-      const membership = await findCRMMembershipByPlate(job.plateNormalized);
-      if (!membership) {
+      // Look up local loyalty account by plate
+      const loyaltyAccount = await storage.getLoyaltyAccountByPlate(tenantId, job.plateNormalized);
+      if (!loyaltyAccount) {
         return res.json({ account: null, transaction: null });
       }
 
-      // Find the local audit transaction for this wash job
-      const transactions = await storage.getLoyaltyTransactions({ limit: 200 });
+      // Find the local transaction for this wash job
+      const transactions = await storage.getLoyaltyTransactions(tenantId, { limit: 200 });
       const washTransaction = transactions.find(t => t.washJobId === washJobId);
 
       res.json({
         account: {
-          membershipNumber: membership.memberNumber,
-          pointsBalance: membership.loyaltyPoints,
-          tier: membership.tierName,
-          totalWashes: 0,
+          membershipNumber: loyaltyAccount.membershipNumber,
+          pointsBalance: loyaltyAccount.pointsBalance,
+          tier: loyaltyAccount.tier,
+          totalWashes: loyaltyAccount.totalWashes,
         },
         transaction: washTransaction ? {
           points: washTransaction.points,
@@ -2159,9 +2203,10 @@ export async function registerRoutes(
     }
   });
 
-  // Manager: Award manual bonus points (credits to CRM)
+  // Manager: Award manual bonus points (local loyalty)
   app.post("/api/loyalty/bonus", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const schema = z.object({
         plate: z.string().min(1),
         points: z.number().int().min(1),
@@ -2177,20 +2222,20 @@ export async function registerRoutes(
       const opUserId = req.user?.claims?.sub;
       const plateNormalized = normalizePlate(plate);
 
-      // Find membership in CRM
-      const membership = await findCRMMembershipByPlate(plateNormalized);
-      if (!membership) {
-        return res.status(404).json({ message: "No CRM membership found for this plate" });
+      // Get or create local loyalty account
+      const loyaltyAccount = await storage.getOrCreateLoyaltyAccount(tenantId, plateNormalized, displayPlate(plate));
+      if (!loyaltyAccount) {
+        return res.status(500).json({ message: "Failed to get or create loyalty account" });
       }
 
-      // Credit to CRM
-      const creditResult = await creditCRMLoyaltyPoints(membership.userId, points);
-      const newBalance = creditResult?.newBalance ?? (membership.loyaltyPoints + points);
+      // Credit points locally
+      const updatedAccount = await storage.creditLoyaltyPoints(tenantId, loyaltyAccount.id, points);
+      const newBalance = updatedAccount?.pointsBalance || (loyaltyAccount.pointsBalance || 0) + points;
 
       // Log locally
-      await storage.logLoyaltyTransaction({
-        crmUserId: membership.userId,
-        memberNumber: membership.memberNumber,
+      await storage.logLoyaltyTransaction(tenantId, {
+        crmUserId: loyaltyAccount.id,
+        memberNumber: loyaltyAccount.membershipNumber,
         type: "earn_bonus",
         points,
         balanceAfter: newBalance,
@@ -2198,15 +2243,15 @@ export async function registerRoutes(
         createdBy: opUserId,
       });
 
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "loyalty_bonus_awarded",
         plateDisplay: displayPlate(plate),
         plateNormalized,
         userId: opUserId,
-        payloadJson: { points, balanceAfter: newBalance, memberNumber: membership.memberNumber },
+        payloadJson: { points, balanceAfter: newBalance, memberNumber: loyaltyAccount.membershipNumber },
       });
 
-      res.json({ membership: { ...membership, loyaltyPoints: newBalance }, points });
+      res.json({ loyaltyAccount: { ...loyaltyAccount, pointsBalance: newBalance }, points });
     } catch (error) {
       console.error("Error awarding bonus points:", error);
       res.status(500).json({ message: "Failed to award bonus points" });
@@ -2217,65 +2262,93 @@ export async function registerRoutes(
   // MANAGER BOOKING MANAGEMENT (Admin/Manager only)
   // =====================
 
-  // Get all bookings with filters
-  app.get("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  // Get all bookings with filters (local storage)
+  app.get("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const { status, fromDate, toDate, search, limit, offset } = req.query;
-
-      console.log("Manager Bookings API: Request received with query:", req.query);
+      const tenantId = (req as any).tenantId || "default";
+      const { status, fromDate, toDate, search, limit } = req.query;
 
       const filters: any = {};
       if (status && typeof status === "string") filters.status = status;
-      if (fromDate && typeof fromDate === "string") filters.fromDate = new Date(fromDate);
-      if (toDate && typeof toDate === "string") filters.toDate = new Date(toDate);
-      if (search && typeof search === "string") filters.customerSearch = search;
+      if (fromDate && typeof fromDate === "string") filters.fromDate = fromDate;
+      if (toDate && typeof toDate === "string") filters.toDate = toDate;
+      if (search && typeof search === "string") filters.search = search;
       if (limit) filters.limit = parseInt(limit as string);
-      if (offset) filters.offset = parseInt(offset as string);
 
-      const result = await getManagerBookings(filters);
+      const bookingsList = await storage.getBookings(tenantId, filters);
 
-      // If there's an error (like DB not connected), log it
-      if (result.error) {
-        console.warn("Manager Bookings API: Error -", result.technicalError || result.error);
-      }
+      // Enrich bookings with service and customer details
+      const enrichedBookings = await Promise.all(bookingsList.map(async (b) => {
+        const [service, customer, vehicle] = await Promise.all([
+          storage.getBookingService(b.serviceId, tenantId).catch(() => null),
+          storage.getBookingCustomer(b.customerId, tenantId).catch(() => null),
+          b.vehicleId ? storage.getBookingVehicles(tenantId, b.customerId).then(vs => vs.find(v => v.id === b.vehicleId)).catch(() => null) : null,
+        ]);
 
-      // Only include technical error for super admin
-      const isSuperAdminUser = (req as any).user?.isSuperAdmin === true;
-      const response: any = {
-        bookings: result.bookings,
-        total: result.total,
-      };
+        return {
+          id: b.id,
+          bookingReference: b.id.slice(0, 8).toUpperCase(),
+          status: b.status,
+          bookingDate: b.bookingDate,
+          timeSlot: b.timeSlot,
+          licensePlate: vehicle?.licensePlate || "",
+          vehicleMake: vehicle?.make || "",
+          vehicleModel: vehicle?.model || "",
+          vehicleColor: vehicle?.color || "",
+          serviceName: service?.name || "Unknown Service",
+          serviceDescription: service?.description || "",
+          customerName: customer?.name || "Unknown",
+          customerEmail: customer?.email || "",
+          customerPhone: customer?.phone || "",
+          totalAmount: b.totalAmount,
+          notes: b.notes,
+          createdAt: b.createdAt,
+        };
+      }));
 
-      if (result.error) {
-        response.error = result.error;
-        // Only super admin sees technical details
-        if (isSuperAdminUser && result.technicalError) {
-          response.technicalError = result.technicalError;
-        }
-      }
-
-      res.json(response);
+      res.json({
+        bookings: enrichedBookings,
+        total: enrichedBookings.length,
+      });
     } catch (error) {
       console.error("Error fetching manager bookings:", error);
-      const isSuperAdminUser = (req as any).user?.isSuperAdmin === true;
-      res.status(500).json({
-        message: "Failed to fetch bookings",
-        technicalError: isSuperAdminUser ? String(error) : undefined
-      });
+      res.status(500).json({ message: "Failed to fetch bookings" });
     }
   });
 
   // Get single booking details
-  app.get("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.get("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const id = req.params.id as string;
-      const booking = await getBookingById(id);
+      const booking = await storage.getBooking(id, tenantId);
 
       if (!booking) {
         return res.status(404).json({ message: "Booking not found" });
       }
 
-      res.json(booking);
+      // Enrich with service/customer/vehicle details
+      const [service, customer] = await Promise.all([
+        storage.getBookingService(booking.serviceId, tenantId).catch(() => null),
+        storage.getBookingCustomer(booking.customerId, tenantId).catch(() => null),
+      ]);
+      const vehicle = booking.vehicleId
+        ? await storage.getBookingVehicles(tenantId, booking.customerId).then(vs => vs.find(v => v.id === booking.vehicleId)).catch(() => null)
+        : null;
+
+      res.json({
+        ...booking,
+        bookingReference: booking.id.slice(0, 8).toUpperCase(),
+        licensePlate: vehicle?.licensePlate || "",
+        vehicleMake: vehicle?.make || "",
+        vehicleModel: vehicle?.model || "",
+        vehicleColor: vehicle?.color || "",
+        serviceName: service?.name || "Unknown Service",
+        serviceDescription: service?.description || "",
+        customerName: customer?.name || "Unknown",
+        customerEmail: customer?.email || "",
+        customerPhone: customer?.phone || "",
+      });
     } catch (error) {
       console.error("Error fetching booking details:", error);
       res.status(500).json({ message: "Failed to fetch booking" });
@@ -2283,8 +2356,9 @@ export async function registerRoutes(
   });
 
   // Update booking (reschedule, change service, update notes)
-  app.patch("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.patch("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const id = req.params.id as string;
       const userId = (req as any).user?.claims?.sub;
 
@@ -2293,8 +2367,8 @@ export async function registerRoutes(
         timeSlot: z.string().optional(),
         serviceId: z.string().optional(),
         notes: z.string().optional(),
-        status: z.enum(["CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "READY_FOR_PICKUP"]).optional(),
-        reason: z.string().optional(), // reason for change, included in notification
+        status: z.enum(["confirmed", "in_progress", "completed", "cancelled", "no_show", "ready_for_pickup"]).optional(),
+        reason: z.string().optional(),
       });
 
       const result = updateSchema.safeParse(req.body);
@@ -2304,58 +2378,43 @@ export async function registerRoutes(
 
       const { reason, ...updates } = result.data;
 
-      // Fetch original booking before changes (for notification diff)
-      const originalBooking = await getBookingById(id);
+      // Fetch original booking
+      const originalBooking = await storage.getBooking(id, tenantId);
       if (!originalBooking) {
         return res.status(404).json({ message: "Booking not found" });
       }
 
       // If rescheduling, check time slot availability
       if (updates.bookingDate || updates.timeSlot) {
-        const newDate = updates.bookingDate ? new Date(updates.bookingDate) : originalBooking.bookingDate;
+        const newDate = updates.bookingDate || originalBooking.bookingDate;
         const newTimeSlot = updates.timeSlot || originalBooking.timeSlot;
-        const isAvailable = await isTimeSlotAvailable(newDate, newTimeSlot, id);
-        if (!isAvailable) {
+        const slots = await storage.getAvailableTimeSlots(tenantId, newDate);
+        const slot = slots.find(s => s.time === newTimeSlot);
+        if (slot && slot.available <= 0) {
           return res.status(409).json({ message: "Time slot is not available" });
         }
       }
 
       const updateData: any = {};
-      if (updates.bookingDate) updateData.bookingDate = new Date(updates.bookingDate);
+      if (updates.bookingDate) updateData.bookingDate = updates.bookingDate;
       if (updates.timeSlot) updateData.timeSlot = updates.timeSlot;
       if (updates.serviceId) updateData.serviceId = updates.serviceId;
       if (updates.notes !== undefined) updateData.notes = updates.notes;
-      if (updates.status) updateData.status = updates.status;
+      if (updates.status) {
+        updateData.status = updates.status;
+        if (updates.status === "completed") updateData.completedAt = new Date();
+        if (updates.status === "cancelled") {
+          updateData.cancelledAt = new Date();
+          updateData.cancelReason = reason || null;
+        }
+      }
 
-      const success = await updateBooking(id, updateData);
-      if (!success) {
+      const updatedBooking = await storage.updateBooking(id, updateData, tenantId);
+      if (!updatedBooking) {
         return res.status(500).json({ message: "Failed to update booking" });
       }
 
-      // Detect change type and queue customer notification
-      const changeSummary = detectBookingChangeType(originalBooking, updateData);
-      const notificationId = await queueBookingNotification(
-        changeSummary.type,
-        {
-          customerName: originalBooking.customerName,
-          customerEmail: originalBooking.customerEmail,
-          customerPhone: originalBooking.customerPhone,
-          bookingReference: originalBooking.bookingReference,
-          licensePlate: originalBooking.licensePlate,
-          vehicleMake: originalBooking.vehicleMake,
-          vehicleModel: originalBooking.vehicleModel,
-          serviceName: originalBooking.serviceName,
-          originalDate: originalBooking.bookingDate,
-          originalTimeSlot: originalBooking.timeSlot,
-          newDate: updateData.bookingDate || originalBooking.bookingDate,
-          newTimeSlot: updateData.timeSlot || originalBooking.timeSlot,
-          reason,
-          bookingId: id,
-        },
-        userId
-      );
-
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "booking_modified",
         userId,
         payloadJson: {
@@ -2363,17 +2422,12 @@ export async function registerRoutes(
           updates: updateData,
           modifiedBy: userId,
           modifiedAt: new Date().toISOString(),
-          notificationQueued: !!notificationId,
-          notificationId,
         },
       });
 
-      const updatedBooking = await getBookingById(id);
       res.json({
         message: "Booking updated successfully",
         booking: updatedBooking,
-        notificationQueued: !!notificationId,
-        notificationId,
       });
     } catch (error) {
       console.error("Error updating booking:", error);
@@ -2382,67 +2436,45 @@ export async function registerRoutes(
   });
 
   // Cancel booking
-  app.delete("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.delete("/api/manager/bookings/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const id = req.params.id as string;
       const userId = (req as any).user?.claims?.sub;
       const { reason } = req.body || {};
 
-      const booking = await getBookingById(id);
+      const booking = await storage.getBooking(id, tenantId);
       if (!booking) {
         return res.status(404).json({ message: "Booking not found" });
       }
 
-      if (booking.status === "CANCELLED") {
+      if (booking.status === "cancelled") {
         return res.status(400).json({ message: "Booking is already cancelled" });
       }
 
-      if (booking.status === "COMPLETED") {
+      if (booking.status === "completed") {
         return res.status(400).json({ message: "Cannot cancel a completed booking" });
       }
 
-      const success = await cancelBooking(id);
-      if (!success) {
+      const cancelled = await storage.cancelBooking(id, reason, tenantId);
+      if (!cancelled) {
         return res.status(500).json({ message: "Failed to cancel booking" });
       }
 
-      // Queue cancellation notification
-      const notificationId = await queueBookingNotification(
-        "BOOKING_CANCELLED",
-        {
-          customerName: booking.customerName,
-          customerEmail: booking.customerEmail,
-          customerPhone: booking.customerPhone,
-          bookingReference: booking.bookingReference,
-          licensePlate: booking.licensePlate,
-          vehicleMake: booking.vehicleMake,
-          vehicleModel: booking.vehicleModel,
-          serviceName: booking.serviceName,
-          originalDate: booking.bookingDate,
-          originalTimeSlot: booking.timeSlot,
-          reason,
-          bookingId: id,
-        },
-        userId
-      );
-
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "booking_cancelled",
         userId,
         payloadJson: {
           bookingId: id,
-          customerName: booking.customerName,
-          customerEmail: booking.customerEmail,
           bookingDate: booking.bookingDate,
           timeSlot: booking.timeSlot,
           cancelledBy: userId,
           cancelledAt: new Date().toISOString(),
-          notificationQueued: !!notificationId,
-          notificationId,
+          reason,
         },
       });
 
-      res.json({ message: "Booking cancelled successfully", notificationQueued: !!notificationId, notificationId });
+      res.json({ message: "Booking cancelled successfully" });
     } catch (error) {
       console.error("Error cancelling booking:", error);
       res.status(500).json({ message: "Failed to cancel booking" });
@@ -2454,8 +2486,9 @@ export async function registerRoutes(
   // =====================
 
   // Preview a notification before sending manually
-  app.post("/api/manager/notifications/preview", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.post("/api/manager/notifications/preview", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { bookingId, type, reason } = req.body;
       if (!bookingId || !type) {
         return res.status(400).json({ message: "bookingId and type are required" });
@@ -2466,27 +2499,32 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid notification type" });
       }
 
-      const booking = await getBookingById(bookingId);
+      const booking = await storage.getBooking(bookingId, tenantId);
       if (!booking) {
         return res.status(404).json({ message: "Booking not found" });
       }
 
+      const [service, customer] = await Promise.all([
+        storage.getBookingService(booking.serviceId, tenantId).catch(() => null),
+        storage.getBookingCustomer(booking.customerId, tenantId).catch(() => null),
+      ]);
+
       const { subject, body } = renderBookingNotification(type as BookingNotificationType, {
-        customerName: booking.customerName,
-        customerEmail: booking.customerEmail,
-        customerPhone: booking.customerPhone,
-        bookingReference: booking.bookingReference,
-        licensePlate: booking.licensePlate,
-        vehicleMake: booking.vehicleMake,
-        vehicleModel: booking.vehicleModel,
-        serviceName: booking.serviceName,
+        customerName: customer?.name || "Customer",
+        customerEmail: customer?.email || "",
+        customerPhone: customer?.phone || "",
+        bookingReference: booking.id.slice(0, 8).toUpperCase(),
+        licensePlate: "",
+        vehicleMake: "",
+        vehicleModel: "",
+        serviceName: service?.name || "Service",
         originalDate: booking.bookingDate,
         originalTimeSlot: booking.timeSlot,
         reason,
         bookingId,
       });
 
-      res.json({ subject, body, customerEmail: booking.customerEmail, customerPhone: booking.customerPhone });
+      res.json({ subject, body, customerEmail: customer?.email, customerPhone: customer?.phone });
     } catch (error) {
       console.error("Error previewing notification:", error);
       res.status(500).json({ message: "Failed to generate preview" });
@@ -2494,8 +2532,9 @@ export async function registerRoutes(
   });
 
   // Manually queue/send a notification
-  app.post("/api/manager/notifications/send", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.post("/api/manager/notifications/send", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { bookingId, type, subject, body, reason } = req.body;
       const userId = (req as any).user?.claims?.sub;
 
@@ -2503,41 +2542,46 @@ export async function registerRoutes(
         return res.status(400).json({ message: "bookingId, type, and body are required" });
       }
 
-      const booking = await getBookingById(bookingId);
+      const booking = await storage.getBooking(bookingId, tenantId);
       if (!booking) {
         return res.status(404).json({ message: "Booking not found" });
       }
 
+      const [service, customer] = await Promise.all([
+        storage.getBookingService(booking.serviceId, tenantId).catch(() => null),
+        storage.getBookingCustomer(booking.customerId, tenantId).catch(() => null),
+      ]);
+
       const notificationId = await queueBookingNotification(
         type as BookingNotificationType,
         {
-          customerName: booking.customerName,
-          customerEmail: booking.customerEmail,
-          customerPhone: booking.customerPhone,
-          bookingReference: booking.bookingReference,
-          licensePlate: booking.licensePlate,
-          vehicleMake: booking.vehicleMake,
-          vehicleModel: booking.vehicleModel,
-          serviceName: booking.serviceName,
+          customerName: customer?.name || "Customer",
+          customerEmail: customer?.email || "",
+          customerPhone: customer?.phone || "",
+          bookingReference: booking.id.slice(0, 8).toUpperCase(),
+          licensePlate: "",
+          vehicleMake: "",
+          vehicleModel: "",
+          serviceName: service?.name || "Service",
           originalDate: booking.bookingDate,
           originalTimeSlot: booking.timeSlot,
           reason,
           bookingId,
         },
-        userId
+        userId,
+        tenantId
       );
 
       if (!notificationId) {
         return res.status(500).json({ message: "Failed to queue notification" });
       }
 
-      // Mark as sent immediately (manual trigger)
       await markNotificationSent(notificationId);
 
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "notification_sent_manual",
         userId,
-        payloadJson: { notificationId, bookingId, notificationType: type, customerEmail: booking.customerEmail },
+        payloadJson: { notificationId, bookingId, notificationType: type, customerEmail: customer?.email },
       });
 
       res.json({ message: "Notification queued successfully", notificationId });
@@ -2547,10 +2591,11 @@ export async function registerRoutes(
     }
   });
 
-  // Get available services
-  app.get("/api/manager/services", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  // Get available services (tenant's own catalog)
+  app.get("/api/manager/services", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const services = await getCRMServices();
+      const tenantId = (req as any).tenantId || "default";
+      const services = await storage.getBookingServices(tenantId, true);
       res.json(services);
     } catch (error) {
       console.error("Error fetching services:", error);
@@ -2558,15 +2603,16 @@ export async function registerRoutes(
     }
   });
 
-  // Get available time slots for a date
-  app.get("/api/manager/timeslots", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  // Get available time slots for a date (local)
+  app.get("/api/manager/timeslots", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { date } = req.query;
       if (!date || typeof date !== "string") {
         return res.status(400).json({ message: "Date parameter required" });
       }
 
-      const slots = await getAvailableTimeSlots(new Date(date));
+      const slots = await storage.getAvailableTimeSlots(tenantId, date);
       res.json(slots);
     } catch (error) {
       console.error("Error fetching time slots:", error);
@@ -2575,13 +2621,238 @@ export async function registerRoutes(
   });
 
   // =====================
+  // NEW BOOKING MANAGEMENT ENDPOINTS
+  // =====================
+
+  // Create a new booking
+  app.post("/api/manager/bookings", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const userId = (req as any).user?.claims?.sub;
+
+      const createSchema = z.object({
+        customerId: z.string().min(1),
+        vehicleId: z.string().optional(),
+        serviceId: z.string().min(1),
+        bookingDate: z.string().min(1), // "YYYY-MM-DD"
+        timeSlot: z.string().min(1), // "HH:MM"
+        notes: z.string().optional(),
+      });
+
+      const result = createSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid booking data", errors: result.error.errors });
+      }
+
+      // Check slot availability
+      const slots = await storage.getAvailableTimeSlots(tenantId, result.data.bookingDate);
+      const slot = slots.find(s => s.time === result.data.timeSlot);
+      if (slot && slot.available <= 0) {
+        return res.status(409).json({ message: "Time slot is fully booked" });
+      }
+
+      // Get service for price
+      const service = await storage.getBookingService(result.data.serviceId, tenantId);
+
+      const booking = await storage.createBooking(tenantId, {
+        ...result.data,
+        totalAmount: service?.price || 0,
+        createdBy: userId,
+        status: "confirmed" as any,
+      });
+
+      await storage.logEvent(tenantId, {
+        type: "booking_created",
+        userId,
+        payloadJson: { bookingId: booking.id, bookingDate: result.data.bookingDate, timeSlot: result.data.timeSlot },
+      });
+
+      res.status(201).json(booking);
+    } catch (error) {
+      console.error("Error creating booking:", error);
+      res.status(500).json({ message: "Failed to create booking" });
+    }
+  });
+
+  // Booking Services CRUD (tenant catalog management)
+  app.post("/api/manager/booking-services", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const schema = z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        price: z.number().int().min(0),
+        durationMinutes: z.number().int().min(5).default(30),
+        category: z.string().optional(),
+        sortOrder: z.number().int().default(0),
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid service data", errors: result.error.errors });
+      }
+
+      const service = await storage.createBookingService(tenantId, { ...result.data, isActive: true } as any);
+      res.status(201).json(service);
+    } catch (error) {
+      console.error("Error creating booking service:", error);
+      res.status(500).json({ message: "Failed to create service" });
+    }
+  });
+
+  app.get("/api/manager/booking-services", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const activeOnly = req.query.activeOnly !== "false";
+      const services = await storage.getBookingServices(tenantId, activeOnly);
+      res.json(services);
+    } catch (error) {
+      console.error("Error fetching booking services:", error);
+      res.status(500).json({ message: "Failed to fetch services" });
+    }
+  });
+
+  app.patch("/api/manager/booking-services/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const id = req.params.id as string;
+      const updated = await storage.updateBookingService(id, req.body, tenantId);
+      if (!updated) return res.status(404).json({ message: "Service not found" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating booking service:", error);
+      res.status(500).json({ message: "Failed to update service" });
+    }
+  });
+
+  // Booking Customers CRUD
+  app.post("/api/manager/booking-customers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const schema = z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        plateNormalized: z.string().optional(),
+        notes: z.string().optional(),
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid customer data", errors: result.error.errors });
+      }
+
+      const customer = await storage.createBookingCustomer(tenantId, result.data as any);
+      res.status(201).json(customer);
+    } catch (error) {
+      console.error("Error creating booking customer:", error);
+      res.status(500).json({ message: "Failed to create customer" });
+    }
+  });
+
+  app.get("/api/manager/booking-customers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const search = req.query.search as string | undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const customers = await storage.getBookingCustomers(tenantId, { search, limit });
+      res.json(customers);
+    } catch (error) {
+      console.error("Error fetching booking customers:", error);
+      res.status(500).json({ message: "Failed to fetch customers" });
+    }
+  });
+
+  // Booking Vehicles
+  app.post("/api/manager/booking-vehicles", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const schema = z.object({
+        customerId: z.string().min(1),
+        licensePlate: z.string().min(1),
+        make: z.string().optional(),
+        model: z.string().optional(),
+        color: z.string().optional(),
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid vehicle data", errors: result.error.errors });
+      }
+
+      const vehicle = await storage.createBookingVehicle(tenantId, result.data as any);
+      res.status(201).json(vehicle);
+    } catch (error) {
+      console.error("Error creating booking vehicle:", error);
+      res.status(500).json({ message: "Failed to create vehicle" });
+    }
+  });
+
+  app.get("/api/manager/booking-vehicles", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const customerId = req.query.customerId as string | undefined;
+      const vehicles = await storage.getBookingVehicles(tenantId, customerId);
+      res.json(vehicles);
+    } catch (error) {
+      console.error("Error fetching booking vehicles:", error);
+      res.status(500).json({ message: "Failed to fetch vehicles" });
+    }
+  });
+
+  // Time Slot Configuration
+  app.get("/api/manager/timeslot-config", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const config = await storage.getTimeSlotConfig(tenantId);
+      res.json(config);
+    } catch (error) {
+      console.error("Error fetching timeslot config:", error);
+      res.status(500).json({ message: "Failed to fetch timeslot config" });
+    }
+  });
+
+  app.put("/api/manager/timeslot-config", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const configs = req.body;
+      if (!Array.isArray(configs)) {
+        return res.status(400).json({ message: "Expected array of time slot configurations" });
+      }
+      const result = await storage.upsertTimeSlotConfig(tenantId, configs);
+      res.json(result);
+    } catch (error) {
+      console.error("Error updating timeslot config:", error);
+      res.status(500).json({ message: "Failed to update timeslot config" });
+    }
+  });
+
+  // Booking Analytics
+  app.get("/api/manager/booking-analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const analytics = await storage.getBookingAnalytics(tenantId);
+      res.json(analytics);
+    } catch (error) {
+      console.error("Error fetching booking analytics:", error);
+      res.status(500).json({ message: "Failed to fetch booking analytics" });
+    }
+  });
+
+  // =====================
   // ADMIN USER MANAGEMENT
   // =====================
 
   // Get all users (admin only)
-  app.get("/api/admin/users", isAuthenticated, requireRole("admin"), async (req, res) => {
+  app.get("/api/admin/users", isAuthenticated, requireRole("admin"), async (req: any, res) => {
     try {
-      const users = await storage.getUsers();
+      const tenantId = (req as any).tenantId || "default";
+      let users;
+      if (req.user?.isSuperAdmin) {
+        users = await storage.getUsers(); // global — super admin sees all
+      } else {
+        users = await storage.getUsers(tenantId); // scoped — tenant admin sees own
+      }
       res.json(users);
     } catch (error) {
       console.error("Error fetching users:", error);
@@ -2590,8 +2861,9 @@ export async function registerRoutes(
   });
 
   // Create new user (admin only)
-  app.post("/api/admin/users", isAuthenticated, requireRole("admin"), async (req, res) => {
+  app.post("/api/admin/users", isAuthenticated, requireRole("admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const schema = z.object({
         email: z.string().email(),
         password: z.string().min(6),
@@ -2599,14 +2871,14 @@ export async function registerRoutes(
         lastName: z.string().optional(),
         role: z.enum(["technician", "manager", "admin"]),
       });
-      
+
       const result = schema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: "Invalid user data" });
       }
 
       const { email, password, firstName, lastName, role } = result.data;
-      
+
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
         return res.status(400).json({ message: "Email already exists" });
@@ -2614,7 +2886,7 @@ export async function registerRoutes(
 
       const { createCredentialsUser } = await import("./lib/credentials-auth");
       const name = lastName ? `${firstName} ${lastName}` : firstName;
-      const user = await createCredentialsUser(email, password, role, name);
+      const user = await createCredentialsUser(email, password, role, name, tenantId);
 
       res.json(user);
     } catch (error) {
@@ -2624,8 +2896,9 @@ export async function registerRoutes(
   });
 
   // Update user role (admin only)
-  app.patch("/api/admin/users/:userId/role", isAuthenticated, requireRole("admin"), async (req, res) => {
+  app.patch("/api/admin/users/:userId/role", isAuthenticated, requireRole("admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = req.params.userId as string;
       const { role } = req.body;
 
@@ -2634,7 +2907,7 @@ export async function registerRoutes(
       }
 
       // Get the user first to check if they're the super admin
-      const allUsers = await storage.getUsers();
+      const allUsers = await storage.getUsers(tenantId);
       const targetUser = allUsers.find(u => u.id === userId);
       if (!targetUser) {
         return res.status(404).json({ message: "User not found" });
@@ -2658,8 +2931,9 @@ export async function registerRoutes(
   });
 
   // Toggle user active status (admin only)
-  app.patch("/api/admin/users/:userId/active", isAuthenticated, requireRole("admin"), async (req, res) => {
+  app.patch("/api/admin/users/:userId/active", isAuthenticated, requireRole("admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = req.params.userId as string;
       const { isActive } = req.body;
 
@@ -2668,7 +2942,7 @@ export async function registerRoutes(
       }
 
       // Get the user first to check if they're the super admin
-      const allUsers = await storage.getUsers();
+      const allUsers = await storage.getUsers(tenantId);
       const targetUser = allUsers.find(u => u.id === userId);
       if (!targetUser) {
         return res.status(404).json({ message: "User not found" });
@@ -2696,12 +2970,13 @@ export async function registerRoutes(
   // =====================
 
   // Get current clock-in status for the logged-in technician
-  app.get("/api/time/status", isAuthenticated, async (req, res) => {
+  app.get("/api/time/status", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-      const activeLog = await storage.getActiveTimeLog(userId);
+      const activeLog = await storage.getActiveTimeLog(tenantId, userId);
       res.json({ clockedIn: !!activeLog, activeLog: activeLog || null });
     } catch (error) {
       res.status(500).json({ message: "Failed to get time status" });
@@ -2709,19 +2984,20 @@ export async function registerRoutes(
   });
 
   // Clock in
-  app.post("/api/time/clock-in", isAuthenticated, async (req, res) => {
+  app.post("/api/time/clock-in", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
       const { notes } = req.body;
 
       // Check if already clocked in
-      const existing = await storage.getActiveTimeLog(userId);
+      const existing = await storage.getActiveTimeLog(tenantId, userId);
       if (existing) {
         return res.status(400).json({ message: "Already clocked in" });
       }
 
-      const log = await storage.clockIn(userId, notes);
-      await storage.logEvent({ type: "clock_in", userId, payloadJson: { logId: log.id } });
+      const log = await storage.clockIn(tenantId, userId, notes);
+      await storage.logEvent(tenantId, { type: "clock_in", userId, payloadJson: { logId: log.id } });
       res.json({ message: "Clocked in successfully", log });
     } catch (error) {
       res.status(500).json({ message: "Failed to clock in" });
@@ -2729,17 +3005,18 @@ export async function registerRoutes(
   });
 
   // Clock out
-  app.post("/api/time/clock-out", isAuthenticated, async (req, res) => {
+  app.post("/api/time/clock-out", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
 
-      const activeLog = await storage.getActiveTimeLog(userId);
+      const activeLog = await storage.getActiveTimeLog(tenantId, userId);
       if (!activeLog) {
         return res.status(400).json({ message: "Not currently clocked in" });
       }
 
-      const log = await storage.clockOut(activeLog.id);
-      await storage.logEvent({ type: "clock_out", userId, payloadJson: { logId: activeLog.id, totalMinutes: log?.totalMinutes } });
+      const log = await storage.clockOut(activeLog.id, tenantId);
+      await storage.logEvent(tenantId, { type: "clock_out", userId, payloadJson: { logId: activeLog.id, totalMinutes: log?.totalMinutes } });
       res.json({ message: "Clocked out successfully", log });
     } catch (error) {
       res.status(500).json({ message: "Failed to clock out" });
@@ -2747,8 +3024,9 @@ export async function registerRoutes(
   });
 
   // Log a break start
-  app.post("/api/time/break/start", isAuthenticated, async (req, res) => {
+  app.post("/api/time/break/start", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
       const { type, notes } = req.body;
 
@@ -2756,12 +3034,12 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid break type" });
       }
 
-      const activeLog = await storage.getActiveTimeLog(userId);
+      const activeLog = await storage.getActiveTimeLog(tenantId, userId);
       if (!activeLog) {
         return res.status(400).json({ message: "Not clocked in" });
       }
 
-      const log = await storage.addBreakLog(activeLog.id, { type, notes });
+      const log = await storage.addBreakLog(activeLog.id, { type, notes }, tenantId);
       res.json({ message: "Break started", log });
     } catch (error) {
       res.status(500).json({ message: "Failed to start break" });
@@ -2769,16 +3047,17 @@ export async function registerRoutes(
   });
 
   // End a break
-  app.post("/api/time/break/end", isAuthenticated, async (req, res) => {
+  app.post("/api/time/break/end", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
 
-      const activeLog = await storage.getActiveTimeLog(userId);
+      const activeLog = await storage.getActiveTimeLog(tenantId, userId);
       if (!activeLog) {
         return res.status(400).json({ message: "Not clocked in" });
       }
 
-      const log = await storage.endBreakLog(activeLog.id);
+      const log = await storage.endBreakLog(activeLog.id, tenantId);
       res.json({ message: "Break ended", log });
     } catch (error) {
       res.status(500).json({ message: "Failed to end break" });
@@ -2786,12 +3065,13 @@ export async function registerRoutes(
   });
 
   // Get my own time logs (technician)
-  app.get("/api/time/logs", isAuthenticated, async (req, res) => {
+  app.get("/api/time/logs", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
       const { fromDate, toDate } = req.query;
 
-      const logs = await storage.getTimeLogs({
+      const logs = await storage.getTimeLogs(tenantId, {
         technicianId: userId,
         fromDate: fromDate ? new Date(fromDate as string) : undefined,
         toDate: toDate ? new Date(toDate as string) : undefined,
@@ -2804,11 +3084,12 @@ export async function registerRoutes(
   });
 
   // Manager/Admin: Get all time logs (roster view)
-  app.get("/api/manager/roster", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.get("/api/manager/roster", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { technicianId, fromDate, toDate } = req.query;
 
-      const logs = await storage.getTimeLogs({
+      const logs = await storage.getTimeLogs(tenantId, {
         technicianId: technicianId as string | undefined,
         fromDate: fromDate ? new Date(fromDate as string) : undefined,
         toDate: toDate ? new Date(toDate as string) : undefined,
@@ -2816,7 +3097,7 @@ export async function registerRoutes(
       });
 
       // Attach user details to each log
-      const allUsers = await storage.getUsers();
+      const allUsers = await storage.getUsers(tenantId);
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
       const enriched = logs.map(log => ({
@@ -2831,12 +3112,13 @@ export async function registerRoutes(
   });
 
   // Manager/Admin: Who is currently clocked in
-  app.get("/api/manager/roster/active", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.get("/api/manager/roster/active", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const logs = await storage.getTimeLogs({ limit: 200 });
+      const tenantId = (req as any).tenantId || "default";
+      const logs = await storage.getTimeLogs(tenantId, { limit: 200 });
       const activeLogs = logs.filter(l => !l.clockOutAt);
 
-      const allUsers = await storage.getUsers();
+      const allUsers = await storage.getUsers(tenantId);
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
       const enriched = activeLogs.map(log => ({
@@ -2851,17 +3133,18 @@ export async function registerRoutes(
   });
 
   // Manager/Admin: Force clock-out a technician who forgot to clock out
-  app.post("/api/manager/roster/force-clockout/:logId", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.post("/api/manager/roster/force-clockout/:logId", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const logId = String(req.params.logId);
       const managerId = (req as any).user?.claims?.sub;
 
-      const log = await storage.clockOut(logId);
+      const log = await storage.clockOut(logId, tenantId);
       if (!log) {
         return res.status(404).json({ message: "Time log not found or already clocked out" });
       }
 
-      storage.logEvent({
+      storage.logEvent(tenantId, {
         type: "force_clock_out",
         userId: managerId,
         payloadJson: { logId, technicianId: log.technicianId, totalMinutes: log.totalMinutes },
@@ -2879,8 +3162,9 @@ export async function registerRoutes(
   // =====================
 
   // Technician: Send an alert to management
-  app.post("/api/time/alert", isAuthenticated, async (req, res) => {
+  app.post("/api/time/alert", isAuthenticated, async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
       const { type, message, estimatedArrival } = req.body;
 
@@ -2892,7 +3176,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid alert type" });
       }
 
-      const alert = await storage.createStaffAlert({
+      const alert = await storage.createStaffAlert(tenantId, {
         technicianId: String(userId),
         type,
         message: message || undefined,
@@ -2900,7 +3184,7 @@ export async function registerRoutes(
       });
 
       // Log event in background — don't block the response
-      storage.logEvent({
+      storage.logEvent(tenantId, {
         type: "staff_alert",
         userId: String(userId),
         payloadJson: { alertId: alert.id, alertType: type },
@@ -2914,14 +3198,15 @@ export async function registerRoutes(
   });
 
   // Manager/Admin: Get staff alerts
-  app.get("/api/manager/alerts", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.get("/api/manager/alerts", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { unacknowledgedOnly } = req.query;
-      const alerts = await storage.getStaffAlerts({
+      const alerts = await storage.getStaffAlerts(tenantId, {
         unacknowledgedOnly: unacknowledgedOnly === "true",
       });
 
-      const allUsers = await storage.getUsers();
+      const allUsers = await storage.getUsers(tenantId);
       const userMap = new Map(allUsers.map(u => [u.id, u]));
 
       const enriched = alerts.map(a => ({
@@ -2937,11 +3222,12 @@ export async function registerRoutes(
   });
 
   // Manager/Admin: Acknowledge a staff alert
-  app.patch("/api/manager/alerts/:id/acknowledge", isAuthenticated, requireRole("manager", "admin"), async (req, res) => {
+  app.patch("/api/manager/alerts/:id/acknowledge", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const userId = (req as any).user?.claims?.sub;
       const alertId = String(req.params.id);
-      const alert = await storage.acknowledgeStaffAlert(alertId, String(userId));
+      const alert = await storage.acknowledgeStaffAlert(alertId, String(userId), tenantId);
       if (!alert) return res.status(404).json({ message: "Alert not found" });
       res.json({ alert });
     } catch (error) {
@@ -2966,7 +3252,8 @@ export async function registerRoutes(
       // Update last viewed
       await storage.updateCustomerJobAccessViewedAt(token);
 
-      const job = await storage.getWashJob(access.washJobId);
+      const tenantId = (req as any).tenantId || "default";
+      const job = await storage.getWashJob(access.washJobId, tenantId);
       if (!job) {
         return res.status(404).json({ message: "Job not found" });
       }
@@ -3052,7 +3339,8 @@ export async function registerRoutes(
       });
 
       // Log event
-      await storage.logEvent({
+      const tenantId = (req as any).tenantId || "default";
+      await storage.logEvent(tenantId, {
         type: "customer_confirmation",
         washJobId: access.washJobId,
         payloadJson: { rating, hasNotes: !!notes, hasIssue: !!issueReported },
@@ -3061,13 +3349,13 @@ export async function registerRoutes(
       // Push notification to managers if issue reported
       if (issueReported) {
         try {
-          const job = await storage.getWashJob(access.washJobId);
+          const job = await storage.getWashJob(access.washJobId, tenantId);
           await sendPushToAllManagers({
             title: "Issue Reported",
             body: `Customer reported an issue${job ? ` for ${job.plateDisplay}` : ""}: ${typeof issueReported === "string" ? issueReported : "See details"}`,
             url: "/manager/dashboard",
             tag: `issue-${access.washJobId}`,
-          });
+          }, tenantId);
         } catch (_pushErr) { /* non-blocking */ }
       }
 
@@ -3120,7 +3408,8 @@ export async function registerRoutes(
       }
 
       // Create wash job
-      const job = await storage.createWashJob({
+      const tenantId = (req as any).tenantId || "default";
+      const job = await storage.createWashJob(tenantId, {
         plateDisplay: displayPlate(plateDisplay),
         plateNormalized: normalizePlate(plateDisplay),
         countryHint: "OTHER",
@@ -3142,7 +3431,7 @@ export async function registerRoutes(
 
       // Create service checklist items from resolved steps
       const checklistItems = resolvedSteps.length > 0 ? resolvedSteps : WASH_STATUS_ORDER.filter(s => s !== "received");
-      await storage.createServiceChecklistItems(
+      await storage.createServiceChecklistItems(tenantId,
         checklistItems.map((label, index) => ({
           washJobId: job.id,
           label,
@@ -3153,7 +3442,7 @@ export async function registerRoutes(
       );
 
       // Log event
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "integration_job_created",
         plateDisplay: job.plateDisplay,
         plateNormalized: job.plateNormalized,
@@ -3333,6 +3622,34 @@ export async function registerRoutes(
       });
       // Create a default branch for the new tenant
       const branch = await storage.createBranch({ tenantId: tenant.id, name: "Main Branch" });
+
+      // Seed default booking services for the new tenant
+      const defaultServices = [
+        { name: "Express Wash", description: "Quick exterior wash", price: 8000, durationMinutes: 15, sortOrder: 0 },
+        { name: "Standard Wash", description: "Full exterior and interior wash", price: 15000, durationMinutes: 30, sortOrder: 1 },
+        { name: "Premium Wash", description: "Complete wash with wax and polish", price: 25000, durationMinutes: 45, sortOrder: 2 },
+        { name: "Full Detail", description: "Comprehensive interior and exterior detailing", price: 45000, durationMinutes: 90, sortOrder: 3 },
+      ];
+      for (const svc of defaultServices) {
+        await storage.createBookingService(tenant.id, { ...svc, isActive: true, branchId: branch.id } as any);
+      }
+
+      // Seed default time slot config (Mon-Sat, 08:00-17:00, 30min intervals, max 3 concurrent)
+      const defaultSlotConfigs = [];
+      for (let day = 1; day <= 6; day++) { // Monday(1) through Saturday(6)
+        defaultSlotConfigs.push({
+          tenantId: tenant.id,
+          branchId: branch.id,
+          dayOfWeek: day,
+          startTime: "08:00",
+          endTime: "17:00",
+          slotIntervalMinutes: 30,
+          maxConcurrentBookings: 3,
+          isActive: true,
+        });
+      }
+      await storage.upsertTimeSlotConfig(tenant.id, defaultSlotConfigs as any);
+
       // Generate the tenant access URL
       const host = req.get("host") || "localhost:5000";
       const protocol = req.protocol || "https";
@@ -3660,8 +3977,9 @@ export async function registerRoutes(
   // --- Inventory Items ---
   app.get("/api/inventory/items", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { category, lowStock, active } = req.query;
-      const items = await storage.getInventoryItems({
+      const items = await storage.getInventoryItems(tenantId, {
         category: category as string | undefined,
         lowStock: lowStock === "true",
         active: active !== undefined ? active === "true" : undefined,
@@ -3675,7 +3993,8 @@ export async function registerRoutes(
 
   app.post("/api/inventory/items", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const item = await storage.createInventoryItem(req.body);
+      const tenantId = (req as any).tenantId || "default";
+      const item = await storage.createInventoryItem(tenantId, req.body);
       res.status(201).json(item);
     } catch (error) {
       console.error("Error creating inventory item:", error);
@@ -3685,7 +4004,8 @@ export async function registerRoutes(
 
   app.get("/api/inventory/items/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const item = await storage.getInventoryItem(req.params.id as string);
+      const tenantId = (req as any).tenantId || "default";
+      const item = await storage.getInventoryItem(req.params.id as string, tenantId);
       if (!item) return res.status(404).json({ message: "Item not found" });
       res.json(item);
     } catch (error) {
@@ -3696,7 +4016,8 @@ export async function registerRoutes(
 
   app.patch("/api/inventory/items/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const item = await storage.updateInventoryItem(req.params.id as string, req.body);
+      const tenantId = (req as any).tenantId || "default";
+      const item = await storage.updateInventoryItem(req.params.id as string, req.body, tenantId);
       if (!item) return res.status(404).json({ message: "Item not found" });
       res.json(item);
     } catch (error) {
@@ -3707,13 +4028,14 @@ export async function registerRoutes(
 
   app.post("/api/inventory/items/:id/adjust", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { quantity, notes } = req.body;
       if (typeof quantity !== "number") return res.status(400).json({ message: "quantity is required" });
-      const item = await storage.adjustInventoryStock(req.params.id as string, quantity);
+      const item = await storage.adjustInventoryStock(req.params.id as string, quantity, tenantId);
       if (!item) return res.status(404).json({ message: "Item not found" });
       // Log the manual adjustment as a consumption record for audit trail
       if (quantity !== 0) {
-        await storage.logEvent({
+        await storage.logEvent(tenantId, {
           type: "inventory_adjustment",
           userId: req.user?.id,
           payloadJson: { itemId: req.params.id, quantity, notes, itemName: item.name },
@@ -3729,6 +4051,7 @@ export async function registerRoutes(
   // --- Stock Take (bulk adjust) ---
   app.post("/api/inventory/stock-take", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { adjustments, notes } = req.body;
       if (!Array.isArray(adjustments) || adjustments.length === 0) {
         return res.status(400).json({ message: "No adjustments provided" });
@@ -3747,12 +4070,12 @@ export async function registerRoutes(
 
       for (const adj of adjustments) {
         if (!adj.itemId || typeof adj.newStock !== "number") continue;
-        const item = await storage.getInventoryItem(adj.itemId);
+        const item = await storage.getInventoryItem(adj.itemId, tenantId);
         if (!item) continue;
         const currentStock = item.currentStock ?? 0;
         const delta = adj.newStock - currentStock;
         if (delta === 0) continue;
-        const updated = await storage.adjustInventoryStock(adj.itemId, delta);
+        const updated = await storage.adjustInventoryStock(adj.itemId, delta, tenantId);
         if (updated) {
           results.push({
             itemId: adj.itemId,
@@ -3768,7 +4091,7 @@ export async function registerRoutes(
       }
 
       const dateStr = new Date().toISOString().split("T")[0];
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "stock_take",
         userId: req.user?.id,
         payloadJson: {
@@ -3800,8 +4123,9 @@ export async function registerRoutes(
   // --- Suppliers ---
   app.get("/api/inventory/suppliers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const activeOnly = req.query.active === "true";
-      const result = await storage.getSuppliers(activeOnly || undefined);
+      const result = await storage.getSuppliers(tenantId, activeOnly || undefined);
       res.json(result);
     } catch (error) {
       console.error("Error fetching suppliers:", error);
@@ -3811,7 +4135,8 @@ export async function registerRoutes(
 
   app.post("/api/inventory/suppliers", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const supplier = await storage.createSupplier(req.body);
+      const tenantId = (req as any).tenantId || "default";
+      const supplier = await storage.createSupplier(tenantId, req.body);
       res.status(201).json(supplier);
     } catch (error) {
       console.error("Error creating supplier:", error);
@@ -3821,7 +4146,8 @@ export async function registerRoutes(
 
   app.get("/api/inventory/suppliers/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const supplier = await storage.getSupplier(req.params.id as string);
+      const tenantId = (req as any).tenantId || "default";
+      const supplier = await storage.getSupplier(req.params.id as string, tenantId);
       if (!supplier) return res.status(404).json({ message: "Supplier not found" });
       res.json(supplier);
     } catch (error) {
@@ -3832,7 +4158,8 @@ export async function registerRoutes(
 
   app.patch("/api/inventory/suppliers/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const supplier = await storage.updateSupplier(req.params.id as string, req.body);
+      const tenantId = (req as any).tenantId || "default";
+      const supplier = await storage.updateSupplier(req.params.id as string, req.body, tenantId);
       if (!supplier) return res.status(404).json({ message: "Supplier not found" });
       res.json(supplier);
     } catch (error) {
@@ -3844,8 +4171,9 @@ export async function registerRoutes(
   // --- Inventory Consumption ---
   app.get("/api/inventory/consumption", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { itemId, fromDate, toDate } = req.query;
-      const result = await storage.getInventoryConsumption({
+      const result = await storage.getInventoryConsumption(tenantId, {
         itemId: itemId as string | undefined,
         fromDate: fromDate ? new Date(fromDate as string) : undefined,
         toDate: toDate ? new Date(toDate as string) : undefined,
@@ -3859,7 +4187,8 @@ export async function registerRoutes(
 
   app.post("/api/inventory/consumption", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const record = await storage.logInventoryConsumption({
+      const tenantId = (req as any).tenantId || "default";
+      const record = await storage.logInventoryConsumption(tenantId, {
         ...req.body,
         createdBy: req.user?.id,
       });
@@ -3873,8 +4202,9 @@ export async function registerRoutes(
   // --- Purchase Orders ---
   app.get("/api/inventory/purchase-orders", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
+      const tenantId = (req as any).tenantId || "default";
       const { status, supplierId } = req.query;
-      const result = await storage.getPurchaseOrders({
+      const result = await storage.getPurchaseOrders(tenantId, {
         status: status as string | undefined,
         supplierId: supplierId as string | undefined,
       });
@@ -3887,7 +4217,8 @@ export async function registerRoutes(
 
   app.post("/api/inventory/purchase-orders", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const order = await storage.createPurchaseOrder({
+      const tenantId = (req as any).tenantId || "default";
+      const order = await storage.createPurchaseOrder(tenantId, {
         ...req.body,
         createdBy: req.user?.id,
       });
@@ -3900,7 +4231,8 @@ export async function registerRoutes(
 
   app.get("/api/inventory/purchase-orders/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const order = await storage.getPurchaseOrder(req.params.id as string);
+      const tenantId = (req as any).tenantId || "default";
+      const order = await storage.getPurchaseOrder(req.params.id as string, tenantId);
       if (!order) return res.status(404).json({ message: "Purchase order not found" });
       res.json(order);
     } catch (error) {
@@ -3911,7 +4243,8 @@ export async function registerRoutes(
 
   app.patch("/api/inventory/purchase-orders/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const order = await storage.updatePurchaseOrder(req.params.id as string, req.body);
+      const tenantId = (req as any).tenantId || "default";
+      const order = await storage.updatePurchaseOrder(req.params.id as string, req.body, tenantId);
       if (!order) return res.status(404).json({ message: "Purchase order not found" });
       res.json(order);
     } catch (error) {
@@ -3922,9 +4255,10 @@ export async function registerRoutes(
 
   app.post("/api/inventory/purchase-orders/:id/receive", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const order = await storage.receivePurchaseOrder(req.params.id as string);
+      const tenantId = (req as any).tenantId || "default";
+      const order = await storage.receivePurchaseOrder(req.params.id as string, tenantId);
       if (!order) return res.status(404).json({ message: "Purchase order not found" });
-      await storage.logEvent({
+      await storage.logEvent(tenantId, {
         type: "purchase_order_received",
         userId: req.user?.id,
         payloadJson: { orderId: order.id, supplierId: order.supplierId, totalCost: order.totalCost },
@@ -3939,7 +4273,8 @@ export async function registerRoutes(
   // --- Inventory Analytics & Alerts ---
   app.get("/api/inventory/analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const analytics = await storage.getInventoryAnalytics();
+      const tenantId = (req as any).tenantId || "default";
+      const analytics = await storage.getInventoryAnalytics(tenantId);
       res.json(analytics);
     } catch (error) {
       console.error("Error fetching inventory analytics:", error);
@@ -3949,7 +4284,8 @@ export async function registerRoutes(
 
   app.get("/api/inventory/low-stock", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const items = await storage.getLowStockItems();
+      const tenantId = (req as any).tenantId || "default";
+      const items = await storage.getLowStockItems(tenantId);
       res.json(items);
     } catch (error) {
       console.error("Error fetching low-stock items:", error);

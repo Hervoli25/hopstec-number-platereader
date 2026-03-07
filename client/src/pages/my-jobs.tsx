@@ -159,7 +159,7 @@ export default function MyJobs() {
                           )}
                           <p className="text-xs text-muted-foreground flex items-center gap-1">
                             <MapPin className="w-3 h-3" />
-                            {format(new Date(booking.bookingDate), "EEE, MMM d")}
+                            {format(new Date(booking.bookingDate + "T00:00:00"), "EEE, MMM d")}
                           </p>
                         </div>
                       </Card>

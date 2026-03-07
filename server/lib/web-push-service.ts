@@ -59,8 +59,8 @@ async function sendPush(subscription: { endpoint: string; p256dh: string; auth: 
   }
 }
 
-export async function sendPushToUser(userId: string, payload: PushPayload): Promise<number> {
-  const subscriptions = await storage.getPushSubscriptionsByUser(userId);
+export async function sendPushToUser(userId: string, payload: PushPayload, tenantId = "default"): Promise<number> {
+  const subscriptions = await storage.getPushSubscriptionsByUser(tenantId, userId);
   let sent = 0;
   for (const sub of subscriptions) {
     const ok = await sendPush(sub, payload);
@@ -79,8 +79,8 @@ export async function sendPushToCustomer(customerToken: string, payload: PushPay
   return sent;
 }
 
-export async function sendPushToAllManagers(payload: PushPayload): Promise<number> {
-  const subscriptions = await storage.getPushSubscriptionsByRole("manager");
+export async function sendPushToAllManagers(payload: PushPayload, tenantId = "default"): Promise<number> {
+  const subscriptions = await storage.getPushSubscriptionsByRole(tenantId, "manager");
   let sent = 0;
   for (const sub of subscriptions) {
     const ok = await sendPush(sub, payload);

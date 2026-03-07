@@ -16,6 +16,8 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(401).json({ message: "User ID not found" });
       }
 
+      const tenantId = (req as any).tenantId || "default";
+
       // For credentials users, get from main storage (includes role)
       if (req.user?.authType === "credentials") {
         const user = await storage.getUserById(userId);
@@ -33,6 +35,7 @@ export function registerAuthRoutes(app: Express): void {
           role: isSuper ? "super_admin" : (user.role || "technician"),
           isSuperAdmin: isSuper,
           profileImageUrl: user.profileImageUrl,
+          tenantId: user.tenantId,
           authType: "credentials",
         });
       }
@@ -44,7 +47,7 @@ export function registerAuthRoutes(app: Express): void {
       }
 
       // Get role from userRoles table for Replit users
-      const userRole = await storage.getUserRole(userId);
+      const userRole = await storage.getUserRole(tenantId, userId);
 
       // Check if super admin
       const isSuper = isSuperAdmin(user.email);
@@ -57,6 +60,7 @@ export function registerAuthRoutes(app: Express): void {
         role: isSuper ? "super_admin" : (userRole?.role || "technician"),
         isSuperAdmin: isSuper,
         profileImageUrl: user.profileImageUrl,
+        tenantId: tenantId,
         authType: "replit",
       });
     } catch (error) {

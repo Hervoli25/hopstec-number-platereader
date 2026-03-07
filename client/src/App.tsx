@@ -28,6 +28,8 @@ import ManagerRoster from "@/pages/manager-roster";
 import ManagerInventory from "@/pages/manager-inventory";
 import ManagerBranding from "@/pages/manager-branding";
 import ManagerBranches from "@/pages/manager-branches";
+import ManagerRevenue from "@/pages/manager-revenue";
+import ManagerCustomers from "@/pages/manager-customers";
 import AdminUsers from "@/pages/admin-users";
 import AdminTenants from "@/pages/admin-tenants";
 import AdminBilling from "@/pages/admin-billing";
@@ -139,6 +141,8 @@ function AppRouter() {
         <Route path="/manager/bookings" component={ManagerBookings} />
         <Route path="/manager/roster" component={ManagerRoster} />
         <Route path="/manager/inventory" component={ManagerInventory} />
+        <Route path="/manager/revenue" component={ManagerRevenue} />
+        <Route path="/manager/customers" component={ManagerCustomers} />
         <Route path="/manager/branding" component={ManagerBranding} />
         <Route path="/manager/branches" component={ManagerBranches} />
         <Route path="/manager/billing" component={TenantBilling} />

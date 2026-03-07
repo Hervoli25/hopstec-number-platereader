@@ -73,18 +73,16 @@ interface Booking {
   customerPhone: string | null;
   totalAmount: number;
   notes: string | null;
-  isWithinOneHour: boolean;
-  canCustomerModify: boolean;
-  lastModifiedAt?: string;
+  createdAt?: string;
 }
 
 const statusColors: Record<string, string> = {
-  CONFIRMED: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  IN_PROGRESS: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  COMPLETED: "bg-green-500/20 text-green-400 border-green-500/30",
-  CANCELLED: "bg-red-500/20 text-red-400 border-red-500/30",
-  NO_SHOW: "bg-gray-500/20 text-gray-400 border-gray-500/30",
-  READY_FOR_PICKUP: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  confirmed: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  in_progress: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  completed: "bg-green-500/20 text-green-400 border-green-500/30",
+  cancelled: "bg-red-500/20 text-red-400 border-red-500/30",
+  no_show: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  ready_for_pickup: "bg-purple-500/20 text-purple-400 border-purple-500/30",
 };
 
 export default function ManagerBookings() {
@@ -120,8 +118,6 @@ export default function ManagerBookings() {
 
   // Check if user has manager, admin, or super_admin role
   const canManageBookings = user?.role === "manager" || user?.role === "admin" || user?.role === "super_admin";
-  const isSuperAdmin = user?.isSuperAdmin === true;
-
   // Fetch bookings
   const { data, isLoading, refetch, error: fetchError } = useQuery({
     queryKey: ["manager-bookings", search, statusFilter, dateFilter],
@@ -142,7 +138,7 @@ export default function ManagerBookings() {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.message || `Failed to fetch bookings (${res.status})`);
       }
-      return res.json() as Promise<{ bookings: Booking[]; total: number; error?: string; technicalError?: string }>;
+      return res.json() as Promise<{ bookings: Booking[]; total: number }>;
     },
     enabled: canManageBookings,
   });
@@ -352,12 +348,12 @@ export default function ManagerBookings() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="CONFIRMED">Confirmed</SelectItem>
-                  <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-                  <SelectItem value="READY_FOR_PICKUP">Ready for Pickup</SelectItem>
-                  <SelectItem value="COMPLETED">Completed</SelectItem>
-                  <SelectItem value="CANCELLED">Cancelled</SelectItem>
-                  <SelectItem value="NO_SHOW">No Show</SelectItem>
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                  <SelectItem value="no_show">No Show</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -404,36 +400,9 @@ export default function ManagerBookings() {
           </Card>
         )}
 
-        {/* CRM Connection Warning */}
-        {data?.error && (
-          <Card className="mb-4 border-yellow-500">
-            <CardContent className="pt-4">
-              <div className="flex items-center gap-2 text-yellow-600">
-                <AlertTriangle className="h-5 w-5" />
-                <span className="font-medium">{data.error}</span>
-              </div>
-              {/* Technical details only for super admin */}
-              {isSuperAdmin && data.technicalError && (
-                <div className="mt-2 p-2 bg-muted rounded text-xs font-mono text-muted-foreground">
-                  Technical: {data.technicalError}
-                </div>
-              )}
-              {!isSuperAdmin && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  Please contact support if this issue persists.
-                </p>
-              )}
-              {isSuperAdmin && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  Check BOOKING_DATABASE_URL configuration.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        )}
 
         {/* Results Count */}
-        {data && !data.error && (
+        {data && (
           <p className="text-sm text-muted-foreground mb-4">
             Showing {data.bookings.length} of {data.total} bookings
           </p>
@@ -456,9 +425,7 @@ export default function ManagerBookings() {
               <Calendar className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="font-semibold mb-2">No bookings found</h3>
               <p className="text-muted-foreground text-sm">
-                {data?.error
-                  ? "CRM database connection issue. Check your configuration."
-                  : "Try adjusting your search or filters"}
+                Try adjusting your search or filters, or create a new booking.
               </p>
             </CardContent>
           </Card>
@@ -477,12 +444,6 @@ export default function ManagerBookings() {
                         <Badge className={statusColors[booking.status] || ""}>
                           {booking.status.replace(/_/g, " ")}
                         </Badge>
-                        {booking.isWithinOneHour && (
-                          <Badge variant="destructive" className="gap-1">
-                            <AlertTriangle className="h-3 w-3" />
-                            Within 1hr
-                          </Badge>
-                        )}
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
@@ -508,7 +469,7 @@ export default function ManagerBookings() {
                         <div className="flex items-center gap-1">
                           <Calendar className="h-4 w-4 text-primary" />
                           <span>
-                            {format(new Date(booking.bookingDate), "EEE, MMM d, yyyy")}
+                            {format(new Date(booking.bookingDate + "T00:00:00"), "EEE, MMM d, yyyy")}
                           </span>
                         </div>
                         <div className="flex items-center gap-1">
@@ -536,7 +497,7 @@ export default function ManagerBookings() {
                         <Eye className="h-4 w-4 mr-1" />
                         View
                       </Button>
-                      {booking.status !== "COMPLETED" && booking.status !== "CANCELLED" && (
+                      {booking.status !== "completed" && booking.status !== "cancelled" && (
                         <>
                           <Button
                             variant="outline"
@@ -584,12 +545,6 @@ export default function ManagerBookings() {
                 <Badge className={statusColors[selectedBooking.status] || ""}>
                   {selectedBooking.status.replace(/_/g, " ")}
                 </Badge>
-                {selectedBooking.isWithinOneHour && (
-                  <Badge variant="destructive" className="gap-1">
-                    <AlertTriangle className="h-3 w-3" />
-                    Customer cannot self-modify
-                  </Badge>
-                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-sm">
@@ -623,7 +578,7 @@ export default function ManagerBookings() {
                 <div>
                   <Label className="text-muted-foreground">Date</Label>
                   <p className="font-medium">
-                    {format(new Date(selectedBooking.bookingDate), "EEEE, MMMM d, yyyy")}
+                    {format(new Date(selectedBooking.bookingDate + "T00:00:00"), "EEEE, MMMM d, yyyy")}
                   </p>
                 </div>
                 <div>
@@ -704,11 +659,11 @@ export default function ManagerBookings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="CONFIRMED">Confirmed</SelectItem>
-                  <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-                  <SelectItem value="READY_FOR_PICKUP">Ready for Pickup</SelectItem>
-                  <SelectItem value="COMPLETED">Completed</SelectItem>
-                  <SelectItem value="NO_SHOW">No Show</SelectItem>
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="no_show">No Show</SelectItem>
                 </SelectContent>
               </Select>
             </div>

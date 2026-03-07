@@ -163,7 +163,8 @@ export function renderBookingNotification(
 export async function queueBookingNotification(
   type: BookingNotificationType,
   data: BookingNotificationData,
-  triggeredBy?: string
+  triggeredBy?: string,
+  tenantId = "default"
 ): Promise<string | null> {
   try {
     const { subject, body } = renderBookingNotification(type, data);
@@ -173,7 +174,7 @@ export async function queueBookingNotification(
     const hasPhone = !!data.customerPhone;
     const channel = hasEmail && hasPhone ? "both" : hasEmail ? "email" : hasPhone ? "sms" : "email";
 
-    const notification = await storage.createNotification({
+    const notification = await storage.createNotification(tenantId, {
       customerName: data.customerName || undefined,
       customerEmail: data.customerEmail || undefined,
       customerPhone: data.customerPhone || undefined,
@@ -187,7 +188,7 @@ export async function queueBookingNotification(
     });
 
     // Log in event log
-    await storage.logEvent({
+    await storage.logEvent(tenantId, {
       type: "notification_queued",
       userId: triggeredBy,
       payloadJson: {

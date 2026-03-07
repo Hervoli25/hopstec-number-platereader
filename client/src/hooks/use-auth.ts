@@ -6,6 +6,7 @@ export type AuthUser = User & {
   role: "technician" | "manager" | "admin" | "super_admin";
   isSuperAdmin?: boolean;
   authType?: "credentials" | "replit";
+  tenantId?: string;
 };
 
 async function fetchUser(): Promise<AuthUser | null> {

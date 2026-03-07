@@ -46,7 +46,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   BarChart3, ClipboardList, LogOut,
   Car, ParkingSquare, Activity, Users, RefreshCw, Clock,
-  TrendingUp, Calendar, Target, ArrowRight, Zap, Settings,
+  TrendingUp, Calendar, Target, ArrowRight, Zap, Settings, DollarSign,
   Search, Eye, Edit, Trash2, X, Phone, Mail, User, CalendarDays, AlertTriangle, Timer, Award, Package
 } from "lucide-react";
 import type { WashJob, WashStatus } from "@shared/schema";
@@ -304,6 +304,8 @@ export default function ManagerDashboard() {
     { href: "/manager/bookings", label: "Bookings", icon: CalendarDays },
     { href: "/manager/roster", label: "Roster", icon: Timer },
     { href: "/manager/inventory", label: "Inventory", icon: Package },
+    { href: "/manager/revenue", label: "Revenue", icon: DollarSign },
+    { href: "/manager/customers", label: "Customers", icon: Users },
     { href: "/manager/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/manager/audit", label: "Audit Log", icon: ClipboardList },
     { href: "/manager/settings", label: "Settings", icon: Settings },
@@ -660,7 +662,7 @@ export default function ManagerDashboard() {
                           {booking.timeSlot}
                         </Badge>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {format(new Date(booking.bookingDate), "MMM d")}
+                          {format(new Date(booking.bookingDate + "T00:00:00"), "MMM d")}
                         </p>
                       </div>
                     </motion.div>
@@ -944,7 +946,7 @@ export default function ManagerDashboard() {
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Calendar className="h-4 w-4" />
                   <span>
-                    {format(new Date(selectedBooking.bookingDate), "EEE, MMM d")} at {selectedBooking.timeSlot}
+                    {format(new Date(selectedBooking.bookingDate + "T00:00:00"), "EEE, MMM d")} at {selectedBooking.timeSlot}
                   </span>
                 </div>
                 <div className="text-sm">
@@ -1045,7 +1047,7 @@ export default function ManagerDashboard() {
                 <div>
                   <Label className="text-muted-foreground">Date</Label>
                   <p className="font-medium">
-                    {format(new Date(selectedBooking.bookingDate), "EEEE, MMMM d, yyyy")}
+                    {format(new Date(selectedBooking.bookingDate + "T00:00:00"), "EEEE, MMMM d, yyyy")}
                   </p>
                 </div>
                 <div>

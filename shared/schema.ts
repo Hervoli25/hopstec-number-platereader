@@ -18,6 +18,7 @@ export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", ["draft",
 export const tenantPlanEnum = pgEnum("tenant_plan", ["free", "basic", "pro", "enterprise"]);
 export const tenantStatusEnum = pgEnum("tenant_status", ["trial", "active", "suspended", "inactive"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", ["draft", "pending", "paid", "overdue", "cancelled"]);
+export const bookingStatusEnum = pgEnum("booking_status", ["confirmed", "in_progress", "completed", "cancelled", "no_show", "ready_for_pickup"]);
 
 // Tenants (multi-tenancy)
 export const tenants = pgTable("tenants", {
@@ -78,6 +79,9 @@ export const washJobs = pgTable("wash_jobs", {
   status: washStatusEnum("status").notNull().default("received"),
   technicianId: varchar("technician_id").notNull(),
   serviceCode: varchar("service_code", { length: 100 }),
+  packageName: varchar("package_name", { length: 100 }),
+  vehicleSize: varchar("vehicle_size", { length: 20 }),
+  price: integer("price"), // in cents (e.g., 15000 = R150.00)
   stageTimestamps: jsonb("stage_timestamps").$type<Record<string, string>>(),
   priority: integer("priority").default(0),
   priorityFactors: jsonb("priority_factors").$type<Record<string, number>>(),
@@ -666,6 +670,85 @@ export const tenantFeatureOverrides = pgTable("tenant_feature_overrides", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// ===== Booking System Tables (tenant-isolated) =====
+
+// Tenant service catalog — each tenant defines their own services, prices, durations
+export const bookingServices = pgTable("booking_services", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  branchId: varchar("branch_id"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  price: integer("price").notNull(), // in cents
+  durationMinutes: integer("duration_minutes").notNull().default(30),
+  isActive: boolean("is_active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  category: varchar("category", { length: 100 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Tenant customer records
+export const bookingCustomers = pgTable("booking_customers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  branchId: varchar("branch_id"),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 50 }),
+  plateNormalized: varchar("plate_normalized", { length: 20 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Customer vehicles
+export const bookingVehicles = pgTable("booking_vehicles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  branchId: varchar("branch_id"),
+  customerId: varchar("customer_id").notNull(),
+  licensePlate: varchar("license_plate", { length: 20 }).notNull(),
+  make: varchar("make", { length: 100 }),
+  model: varchar("model", { length: 100 }),
+  color: varchar("color", { length: 50 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// The bookings themselves
+export const bookings = pgTable("bookings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  branchId: varchar("branch_id"),
+  customerId: varchar("customer_id").notNull(),
+  vehicleId: varchar("vehicle_id"),
+  serviceId: varchar("service_id").notNull(),
+  bookingDate: varchar("booking_date", { length: 10 }).notNull(), // "YYYY-MM-DD"
+  timeSlot: varchar("time_slot", { length: 5 }).notNull(), // "HH:MM"
+  status: bookingStatusEnum("status").notNull().default("confirmed"),
+  totalAmount: integer("total_amount"), // in cents
+  notes: text("notes"),
+  completedAt: timestamp("completed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancelReason: text("cancel_reason"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Available time slots per tenant
+export const bookingTimeSlotConfig = pgTable("booking_time_slot_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull(),
+  branchId: varchar("branch_id"),
+  dayOfWeek: integer("day_of_week").notNull(), // 0=Sunday..6=Saturday
+  startTime: varchar("start_time", { length: 5 }).notNull(), // "HH:MM"
+  endTime: varchar("end_time", { length: 5 }).notNull(), // "HH:MM"
+  slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(30),
+  maxConcurrentBookings: integer("max_concurrent_bookings").notNull().default(3),
+  isActive: boolean("is_active").default(true),
+});
+
 // Insert schemas
 export const insertPushSubscriptionSchema = createInsertSchema(pushSubscriptions).omit({ id: true, createdAt: true });
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
@@ -703,6 +786,11 @@ export const insertBillingSnapshotSchema = createInsertSchema(billingSnapshots).
 export const insertFeatureFlagSchema = createInsertSchema(featureFlags).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertTenantFeatureOverrideSchema = createInsertSchema(tenantFeatureOverrides).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBookingServiceSchema = createInsertSchema(bookingServices).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBookingCustomerSchema = createInsertSchema(bookingCustomers).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBookingVehicleSchema = createInsertSchema(bookingVehicles).omit({ id: true, createdAt: true });
+export const insertBookingSchema = createInsertSchema(bookings).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBookingTimeSlotConfigSchema = createInsertSchema(bookingTimeSlotConfig).omit({ id: true });
 
 // Types
 export type UserRole = typeof userRoles.$inferSelect;
@@ -812,6 +900,21 @@ export type InsertTenantFeatureOverride = z.infer<typeof insertTenantFeatureOver
 
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+
+export type BookingService = typeof bookingServices.$inferSelect;
+export type InsertBookingService = z.infer<typeof insertBookingServiceSchema>;
+
+export type BookingCustomer = typeof bookingCustomers.$inferSelect;
+export type InsertBookingCustomer = z.infer<typeof insertBookingCustomerSchema>;
+
+export type BookingVehicle = typeof bookingVehicles.$inferSelect;
+export type InsertBookingVehicle = z.infer<typeof insertBookingVehicleSchema>;
+
+export type Booking = typeof bookings.$inferSelect;
+export type InsertBooking = z.infer<typeof insertBookingSchema>;
+
+export type BookingTimeSlotConfig = typeof bookingTimeSlotConfig.$inferSelect;
+export type InsertBookingTimeSlotConfig = z.infer<typeof insertBookingTimeSlotConfigSchema>;
 
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"] as const;

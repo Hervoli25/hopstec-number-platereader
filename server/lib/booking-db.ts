@@ -103,7 +103,7 @@ export interface CRMBooking {
   id: string;
   bookingReference: string; // The booking reference/confirmation code from CRM
   status: "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "NO_SHOW" | "READY_FOR_PICKUP";
-  bookingDate: Date;
+  bookingDate: string; // "YYYY-MM-DD"
   timeSlot: string;
   licensePlate: string;
   vehicleMake: string;
@@ -155,7 +155,7 @@ export async function getUpcomingBookings(limit: number = 20): Promise<CRMBookin
       id: row.id,
       bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
-      bookingDate: new Date(row.bookingDate),
+      bookingDate: new Date(row.bookingDate).toISOString().split("T")[0],
       timeSlot: row.timeSlot,
       licensePlate: row.licensePlate,
       vehicleMake: row.vehicleMake,
@@ -211,7 +211,7 @@ export async function getTodayBookings(): Promise<CRMBooking[]> {
       id: row.id,
       bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
-      bookingDate: new Date(row.bookingDate),
+      bookingDate: new Date(row.bookingDate).toISOString().split("T")[0],
       timeSlot: row.timeSlot,
       licensePlate: row.licensePlate,
       vehicleMake: row.vehicleMake,
@@ -275,7 +275,7 @@ export async function findBookingByPlate(licensePlate: string): Promise<CRMBooki
       id: row.id,
       bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
-      bookingDate: new Date(row.bookingDate),
+      bookingDate: new Date(row.bookingDate).toISOString().split("T")[0],
       timeSlot: row.timeSlot,
       licensePlate: row.licensePlate,
       vehicleMake: row.vehicleMake,
@@ -902,7 +902,7 @@ export async function getBookingWithMembership(bookingId: string): Promise<CRMBo
       id: row.id,
       bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
-      bookingDate: new Date(row.bookingDate),
+      bookingDate: new Date(row.bookingDate).toISOString().split("T")[0],
       timeSlot: row.timeSlot,
       licensePlate: row.licensePlate,
       vehicleMake: row.vehicleMake,
@@ -1077,7 +1077,7 @@ export async function getManagerBookings(filters?: BookingFilters): Promise<{ bo
         id: row.id,
         bookingReference: row.id.slice(-8).toUpperCase(),
         status: row.status,
-        bookingDate: new Date(row.bookingDate),
+        bookingDate: new Date(row.bookingDate).toISOString().split("T")[0],
         timeSlot: row.timeSlot,
         licensePlate: row.licensePlate,
         vehicleMake: row.vehicleMake,
@@ -1158,7 +1158,7 @@ export async function getBookingById(bookingId: string): Promise<CRMBookingExten
       id: row.id,
       bookingReference: row.id.slice(-8).toUpperCase(),
       status: row.status,
-      bookingDate: new Date(row.bookingDate),
+      bookingDate: new Date(row.bookingDate).toISOString().split("T")[0],
       timeSlot: row.timeSlot,
       licensePlate: row.licensePlate,
       vehicleMake: row.vehicleMake,

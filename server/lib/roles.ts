@@ -29,7 +29,8 @@ export function requireRole(...allowedRoles: UserRoleType[]): RequestHandler {
         userEmail = req.user.email;
       } else {
         // For Replit auth, get from userRoles table
-        const userRole = await storage.getUserRole(userId);
+        const tenantId = (req as any).tenantId || "default";
+        const userRole = await storage.getUserRole(tenantId, userId);
         role = userRole?.role || "technician";
         // Get email from claims
         userEmail = req.user?.claims?.email || null;
@@ -79,9 +80,9 @@ export function requireSuperAdminMiddleware(): RequestHandler {
 }
 
 // Auto-assign role for new users (defaults to technician)
-export async function ensureUserRole(userId: string): Promise<void> {
-  const existing = await storage.getUserRole(userId);
+export async function ensureUserRole(userId: string, tenantId = "default"): Promise<void> {
+  const existing = await storage.getUserRole(tenantId, userId);
   if (!existing) {
-    await storage.upsertUserRole({ userId, role: "technician" });
+    await storage.upsertUserRole(tenantId, { userId, role: "technician" });
   }
 }
