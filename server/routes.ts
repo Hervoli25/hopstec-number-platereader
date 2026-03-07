@@ -2965,6 +2965,51 @@ export async function registerRoutes(
     }
   });
 
+  // Permanently delete a user (admin only)
+  app.delete("/api/admin/users/:userId", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const userId = req.params.userId as string;
+
+      // Get the user first
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Protect super admin from being deleted
+      if (isSuperAdmin(targetUser.email)) {
+        return res.status(403).json({ message: "Cannot delete super admin account" });
+      }
+
+      // Prevent self-deletion
+      const requestingUserId = (req as any).user?.claims?.sub;
+      if (userId === requestingUserId) {
+        return res.status(403).json({ message: "Cannot delete your own account" });
+      }
+
+      const deleted = await storage.deleteUser(userId);
+      if (!deleted) {
+        return res.status(500).json({ message: "Failed to delete user" });
+      }
+
+      const tenantId = (req as any).tenantId || "default";
+      await storage.logEvent(tenantId, {
+        type: "user_deleted",
+        userId: requestingUserId,
+        payloadJson: {
+          deletedUserId: userId,
+          deletedUserEmail: targetUser.email,
+          deletedUserName: `${targetUser.firstName} ${targetUser.lastName}`,
+        },
+      });
+
+      res.json({ message: "User permanently deleted" });
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+
   // =====================
   // TECHNICIAN TIME TRACKING
   // =====================

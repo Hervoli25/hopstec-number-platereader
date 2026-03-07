@@ -39,7 +39,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Users, UserPlus, Shield, Wrench, Crown,
   Loader2, Check, X, Search, Activity, Settings,
-  Database, Server, Calendar, TrendingUp, Mail
+  Database, Server, Calendar, TrendingUp, Mail, Trash2
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -147,6 +147,20 @@ export default function AdminUsers() {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to create user", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/users/${userId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "User permanently deleted" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete user", description: error.message, variant: "destructive" });
     },
   });
 
@@ -445,6 +459,41 @@ export default function AdminUsers() {
                                     })}
                                   >
                                     {user.isActive ? "Disable" : "Enable"}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  data-testid={`button-delete-${user.id}`}
+                                >
+                                  <Trash2 className="mr-1 h-4 w-4" /> Delete
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Permanently Delete User?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This will permanently delete <strong>{user.firstName} {user.lastName}</strong> ({user.email}).
+                                    This action cannot be undone. All data associated with this user will be removed.
+                                    {user.isActive && (
+                                      <span className="block mt-2 text-yellow-600 font-medium">
+                                        Warning: This user is still active. Consider disabling them first if you want to keep a record.
+                                      </span>
+                                    )}
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    onClick={() => deleteUserMutation.mutate(user.id)}
+                                  >
+                                    {deleteUserMutation.isPending ? "Deleting..." : "Yes, Delete Permanently"}
                                   </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>
