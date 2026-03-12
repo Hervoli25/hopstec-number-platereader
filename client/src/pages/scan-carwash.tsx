@@ -13,7 +13,7 @@ import { enqueueRequest } from "@/lib/offline-queue";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft, Camera, Keyboard, Loader2, Car, Award,
-  Clock, ChevronRight, CheckCircle2
+  Clock, ChevronRight, CheckCircle2, Ticket
 } from "lucide-react";
 import type { CountryHint, VehicleSize } from "@shared/schema";
 import { SERVICE_PACKAGES, SERVICE_TIER_COLORS, VEHICLE_SIZES } from "@shared/schema";
@@ -469,7 +469,58 @@ export default function ScanCarwash() {
               </div>
             )}
 
-            {!customerLookup.crmMembership && !customerLookup.isRegistered && (
+            {/* Local loyalty points */}
+            {customerLookup.loyaltyAccount && (
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4 space-y-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <Award className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-semibold">Loyalty Points</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Balance</span>
+                  <span className="font-bold text-primary">{customerLookup.loyaltyAccount.pointsBalance} pts</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Total Washes</span>
+                  <span>{customerLookup.loyaltyAccount.totalWashes}</span>
+                </div>
+                <div className="w-full bg-muted rounded-full h-2 mt-1">
+                  <div
+                    className="bg-primary h-2 rounded-full transition-all"
+                    data-progress={Math.min(100, Math.round(((customerLookup.loyaltyAccount.pointsBalance % 1000) / 1000) * 100))}
+                    ref={(el) => { if (el) el.style.width = `${Math.min(100, ((customerLookup.loyaltyAccount.pointsBalance % 1000) / 1000) * 100)}%`; }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground text-right">
+                  {1000 - (customerLookup.loyaltyAccount.pointsBalance % 1000)} pts to next free wash
+                </p>
+              </div>
+            )}
+
+            {/* Active vouchers */}
+            {customerLookup.activeVouchers && customerLookup.activeVouchers.length > 0 && (
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 mb-4 space-y-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <Ticket className="w-4 h-4 text-green-600" />
+                  <span className="text-sm font-semibold text-green-700 dark:text-green-400">
+                    {customerLookup.activeVouchers.length} Active Voucher{customerLookup.activeVouchers.length > 1 ? "s" : ""}
+                  </span>
+                </div>
+                {customerLookup.activeVouchers.map((v: any) => (
+                  <div key={v.id} className="flex justify-between items-center text-sm bg-white/50 dark:bg-white/5 rounded p-2">
+                    <div>
+                      <p className="font-mono font-bold text-green-700 dark:text-green-300">{v.code}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Free {v.forPackageCode || "wash"} · Expires {new Date(v.expiresAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <Badge className="bg-green-500 text-white text-xs">Active</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!customerLookup.crmMembership && !customerLookup.isRegistered && !customerLookup.loyaltyAccount && (
               <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 mb-4">
                 <p className="text-sm text-amber-700 dark:text-amber-400">
                   Walk-in customer — not registered. Loyalty points won't be earned. Customer can register at the CRM website.

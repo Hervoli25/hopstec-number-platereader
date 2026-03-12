@@ -1642,3 +1642,214 @@ export async function getCRMGrowthAnalytics(): Promise<{
     return null;
   }
 }
+
+// ==========================================
+// CRM Corporate Account Functions
+// ==========================================
+
+export interface CRMCorporateAccount {
+  id: string;
+  companyName: string;
+  companySlug: string;
+  registrationNumber: number;
+  registrationCode: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string | null;
+  fleetSize: number | null;
+  fleetWashCount: number;
+  freeWashCredits: number;
+  managementNote: string | null;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+// Get all corporate accounts from CRM (optionally filter by status)
+export async function getCRMCorporateAccounts(status?: string): Promise<CRMCorporateAccount[]> {
+  const pool = getBookingPool();
+  if (!pool) return [];
+
+  try {
+    let query = `
+      SELECT
+        id, "companyName", "companySlug", "registrationNumber", "registrationCode",
+        status, "contactName", "contactEmail", "contactPhone",
+        "fleetSize", "fleetWashCount", "freeWashCredits",
+        "managementNote", "approvedAt", "approvedBy",
+        "createdAt", "updatedAt"
+      FROM "CorporateAccount"
+    `;
+    const params: any[] = [];
+
+    if (status) {
+      query += ` WHERE status = $1`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY "createdAt" DESC`;
+
+    const result = await pool.query(query, params);
+
+    return result.rows.map(row => ({
+      id: row.id,
+      companyName: row.companyName,
+      companySlug: row.companySlug,
+      registrationNumber: row.registrationNumber,
+      registrationCode: row.registrationCode,
+      status: row.status,
+      contactName: row.contactName,
+      contactEmail: row.contactEmail,
+      contactPhone: row.contactPhone,
+      fleetSize: row.fleetSize,
+      fleetWashCount: row.fleetWashCount || 0,
+      freeWashCredits: row.freeWashCredits || 0,
+      managementNote: row.managementNote,
+      approvedAt: row.approvedAt,
+      approvedBy: row.approvedBy,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }));
+  } catch (error) {
+    console.error("Error fetching corporate accounts from CRM:", error);
+    return [];
+  }
+}
+
+// Get single corporate account from CRM
+export async function getCRMCorporateAccount(id: string): Promise<CRMCorporateAccount | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        id, "companyName", "companySlug", "registrationNumber", "registrationCode",
+        status, "contactName", "contactEmail", "contactPhone",
+        "fleetSize", "fleetWashCount", "freeWashCredits",
+        "managementNote", "approvedAt", "approvedBy",
+        "createdAt", "updatedAt"
+      FROM "CorporateAccount"
+      WHERE id = $1
+    `, [id]);
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      companyName: row.companyName,
+      companySlug: row.companySlug,
+      registrationNumber: row.registrationNumber,
+      registrationCode: row.registrationCode,
+      status: row.status,
+      contactName: row.contactName,
+      contactEmail: row.contactEmail,
+      contactPhone: row.contactPhone,
+      fleetSize: row.fleetSize,
+      fleetWashCount: row.fleetWashCount || 0,
+      freeWashCredits: row.freeWashCredits || 0,
+      managementNote: row.managementNote,
+      approvedAt: row.approvedAt,
+      approvedBy: row.approvedBy,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  } catch (error) {
+    console.error("Error fetching corporate account from CRM:", error);
+    return null;
+  }
+}
+
+// Update corporate account in CRM (approve/reject)
+export async function updateCRMCorporateAccount(
+  id: string,
+  updates: {
+    status?: "PENDING" | "APPROVED" | "REJECTED";
+    approvedAt?: Date;
+    approvedBy?: string;
+    managementNote?: string;
+  }
+): Promise<CRMCorporateAccount | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const setClauses: string[] = ['"updatedAt" = CURRENT_TIMESTAMP'];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.status) {
+      setClauses.push(`status = $${paramIndex++}`);
+      params.push(updates.status);
+    }
+    if (updates.approvedAt) {
+      setClauses.push(`"approvedAt" = $${paramIndex++}`);
+      params.push(updates.approvedAt);
+    }
+    if (updates.approvedBy) {
+      setClauses.push(`"approvedBy" = $${paramIndex++}`);
+      params.push(updates.approvedBy);
+    }
+    if (updates.managementNote !== undefined) {
+      setClauses.push(`"managementNote" = $${paramIndex++}`);
+      params.push(updates.managementNote);
+    }
+
+    params.push(id);
+
+    const result = await pool.query(`
+      UPDATE "CorporateAccount"
+      SET ${setClauses.join(', ')}
+      WHERE id = $${paramIndex}
+      RETURNING
+        id, "companyName", "companySlug", "registrationNumber", "registrationCode",
+        status, "contactName", "contactEmail", "contactPhone",
+        "fleetSize", "fleetWashCount", "freeWashCredits",
+        "managementNote", "approvedAt", "approvedBy",
+        "createdAt", "updatedAt"
+    `, params);
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      companyName: row.companyName,
+      companySlug: row.companySlug,
+      registrationNumber: row.registrationNumber,
+      registrationCode: row.registrationCode,
+      status: row.status,
+      contactName: row.contactName,
+      contactEmail: row.contactEmail,
+      contactPhone: row.contactPhone,
+      fleetSize: row.fleetSize,
+      fleetWashCount: row.fleetWashCount || 0,
+      freeWashCredits: row.freeWashCredits || 0,
+      managementNote: row.managementNote,
+      approvedAt: row.approvedAt,
+      approvedBy: row.approvedBy,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  } catch (error) {
+    console.error("Error updating corporate account in CRM:", error);
+    return null;
+  }
+}
+
+// Delete corporate account from CRM
+export async function deleteCRMCorporateAccount(id: string): Promise<boolean> {
+  const pool = getBookingPool();
+  if (!pool) return false;
+
+  try {
+    const result = await pool.query(`DELETE FROM "CorporateAccount" WHERE id = $1`, [id]);
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error("Error deleting corporate account from CRM:", error);
+    return false;
+  }
+}

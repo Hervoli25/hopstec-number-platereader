@@ -6,10 +6,11 @@ import {
   parkingSettings, parkingZones, frequentParkers, parkingReservations,
   businessSettings, servicePackages, customerMemberships, parkingValidations,
   customerNotifications, notificationTemplates, technicianTimeLogs, staffAlerts,
-  loyaltyAccounts, loyaltyTransactions, pushSubscriptions,
+  loyaltyAccounts, loyaltyTransactions, loyaltyVouchers, pushSubscriptions,
   suppliers, inventoryItems, inventoryConsumption, purchaseOrders,
   tenants, branches, webhookRetries, invoices,
   bookingServices, bookingCustomers, bookingVehicles, bookings, bookingTimeSlotConfig, bookingPayments,
+  corporateAccounts,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -27,6 +28,7 @@ import {
   type StaffAlert, type InsertStaffAlert,
   type LoyaltyAccount,
   type LoyaltyTransaction,
+  type LoyaltyVoucher,
   type PushSubscription, type InsertPushSubscription,
   type Supplier, type InsertSupplier,
   type InventoryItem, type InsertInventoryItem,
@@ -49,6 +51,7 @@ import {
   type Booking, type InsertBooking,
   type BookingTimeSlotConfig, type InsertBookingTimeSlotConfig,
   type BookingPayment, type InsertBookingPayment,
+  type CorporateAccount,
   WASH_STATUS_ORDER
 } from "@shared/schema";
 import { normalizePlate } from "./lib/plate-utils";
@@ -359,6 +362,11 @@ export interface IStorage {
 
   // Customer Insights
   getCustomerInsights(tenantId: string): Promise<any>;
+
+  // Corporate Accounts
+  getCorporateAccounts(status?: string): Promise<CorporateAccount[]>;
+  getCorporateAccount(id: string): Promise<CorporateAccount | undefined>;
+  updateCorporateAccount(id: string, data: Partial<CorporateAccount>): Promise<CorporateAccount | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1857,6 +1865,17 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
+  async deductLoyaltyPoints(tenantId: string, accountId: string, points: number): Promise<LoyaltyAccount | undefined> {
+    const [result] = await db.update(loyaltyAccounts).set({
+      pointsBalance: sql`GREATEST(0, ${loyaltyAccounts.pointsBalance} - ${points})`,
+      updatedAt: new Date(),
+    } as any).where(and(
+      eq(loyaltyAccounts.id, accountId),
+      eq(loyaltyAccounts.tenantId, tenantId)
+    )).returning();
+    return result;
+  }
+
   async getLoyaltyAnalytics(tenantId: string): Promise<{
     totalAccounts: number;
     totalPointsIssued: number;
@@ -1925,7 +1944,7 @@ export class DatabaseStorage implements IStorage {
   async logLoyaltyTransaction(tenantId: string, data: {
     crmUserId: string;
     memberNumber: string;
-    type: "earn_wash" | "earn_bonus" | "adjust";
+    type: "earn_wash" | "earn_bonus" | "redeem" | "expire" | "adjust";
     points: number;
     balanceAfter: number;
     washJobId?: string;
@@ -1946,6 +1965,92 @@ export class DatabaseStorage implements IStorage {
     }).returning();
     return transaction;
   }
+  // ==========================================
+  // Loyalty Vouchers
+  // ==========================================
+
+  async issueVoucher(tenantId: string, data: {
+    loyaltyAccountId: string;
+    forPackageCode?: string;
+    forServiceCode?: string;
+    branchId?: string;
+  }): Promise<LoyaltyVoucher> {
+    // Generate a short unique code: VCH-XXXXX
+    const code = `VCH-${Date.now().toString(36).toUpperCase().slice(-5)}${Math.random().toString(36).toUpperCase().slice(2, 4)}`;
+    const expiresAt = new Date();
+    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+    const [voucher] = await db.insert(loyaltyVouchers).values({
+      tenantId,
+      branchId: data.branchId || null,
+      loyaltyAccountId: data.loyaltyAccountId,
+      code,
+      pointsRedeemed: 1000,
+      forPackageCode: data.forPackageCode || null,
+      forServiceCode: data.forServiceCode || null,
+      status: "active",
+      issuedAt: new Date(),
+      expiresAt,
+    } as any).returning();
+    return voucher;
+  }
+
+  async getActiveVouchersForAccount(tenantId: string, loyaltyAccountId: string): Promise<LoyaltyVoucher[]> {
+    const now = new Date();
+    return db.select().from(loyaltyVouchers).where(and(
+      eq(loyaltyVouchers.tenantId, tenantId),
+      eq(loyaltyVouchers.loyaltyAccountId, loyaltyAccountId),
+      eq(loyaltyVouchers.status, "active"),
+      sql`${loyaltyVouchers.expiresAt} > ${now}`,
+    )).orderBy(asc(loyaltyVouchers.issuedAt));
+  }
+
+  async getVouchersForAccount(tenantId: string, loyaltyAccountId: string): Promise<LoyaltyVoucher[]> {
+    return db.select().from(loyaltyVouchers).where(and(
+      eq(loyaltyVouchers.tenantId, tenantId),
+      eq(loyaltyVouchers.loyaltyAccountId, loyaltyAccountId),
+    )).orderBy(desc(loyaltyVouchers.issuedAt));
+  }
+
+  async getVoucherByCode(tenantId: string, code: string): Promise<LoyaltyVoucher | undefined> {
+    const [result] = await db.select().from(loyaltyVouchers).where(and(
+      eq(loyaltyVouchers.tenantId, tenantId),
+      eq(loyaltyVouchers.code, code.toUpperCase()),
+    ));
+    return result;
+  }
+
+  async redeemVoucher(tenantId: string, code: string, staffId: string, washJobId?: string): Promise<LoyaltyVoucher> {
+    const voucher = await this.getVoucherByCode(tenantId, code);
+    if (!voucher) throw new Error("Voucher not found");
+    if (voucher.status !== "active") throw new Error(`Voucher is already ${voucher.status}`);
+    const now = new Date();
+    if (voucher.expiresAt && voucher.expiresAt < now) {
+      await db.update(loyaltyVouchers).set({ status: "expired", updatedAt: now } as any)
+        .where(eq(loyaltyVouchers.id, voucher.id));
+      throw new Error("Voucher has expired");
+    }
+
+    const [updated] = await db.update(loyaltyVouchers).set({
+      status: "used",
+      usedAt: now,
+      usedInWashJobId: washJobId || null,
+      usedByStaffId: staffId,
+      updatedAt: now,
+    } as any).where(eq(loyaltyVouchers.id, voucher.id)).returning();
+    return updated;
+  }
+
+  async expireStaleVouchers(tenantId: string): Promise<number> {
+    const now = new Date();
+    const result = await db.update(loyaltyVouchers).set({ status: "expired", updatedAt: now } as any).where(and(
+      eq(loyaltyVouchers.tenantId, tenantId),
+      eq(loyaltyVouchers.status, "active"),
+      sql`${loyaltyVouchers.expiresAt} <= ${now}`,
+    )).returning();
+    return result.length;
+  }
+
   // ==========================================
   // Technician Performance (ratings aggregation)
   // ==========================================
@@ -2709,6 +2814,30 @@ export class DatabaseStorage implements IStorage {
       parkingSessionCount: parkingResult?.count || 0,
       branchCount: branchResult?.count || 0,
     };
+  }
+
+  // Corporate Accounts
+  async getCorporateAccounts(status?: string): Promise<CorporateAccount[]> {
+    if (status) {
+      return db.select().from(corporateAccounts)
+        .where(eq(corporateAccounts.status, status as any))
+        .orderBy(desc(corporateAccounts.createdAt));
+    }
+    return db.select().from(corporateAccounts).orderBy(desc(corporateAccounts.createdAt));
+  }
+
+  async getCorporateAccount(id: string): Promise<CorporateAccount | undefined> {
+    const [account] = await db.select().from(corporateAccounts).where(eq(corporateAccounts.id, id));
+    return account;
+  }
+
+  async updateCorporateAccount(id: string, data: Partial<CorporateAccount>): Promise<CorporateAccount | undefined> {
+    const [updated] = await db
+      .update(corporateAccounts)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(corporateAccounts.id, id))
+      .returning();
+    return updated;
   }
 }
 

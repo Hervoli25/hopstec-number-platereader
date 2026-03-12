@@ -34,6 +34,7 @@ import AdminUsers from "@/pages/admin-users";
 import AdminTenants from "@/pages/admin-tenants";
 import AdminBilling from "@/pages/admin-billing";
 import AdminAnalytics from "@/pages/admin-analytics";
+import AdminCorporate from "@/pages/admin-corporate";
 import TenantBilling from "@/pages/tenant-billing";
 import CustomerJob from "@/pages/customer-job";
 import About from "@/pages/about";
@@ -151,6 +152,7 @@ function AppRouter() {
         <Route path="/admin/tenants" component={AdminTenants} />
         <Route path="/admin/billing" component={AdminBilling} />
         <Route path="/admin/analytics" component={AdminAnalytics} />
+        <Route path="/admin/corporate" component={AdminCorporate} />
         <Route component={NotFound} />
       </Switch>
     </ProtectedRoute>

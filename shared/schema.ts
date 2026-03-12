@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, pgEnum, jsonb, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, serial, pgEnum, jsonb, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -19,6 +19,8 @@ export const tenantPlanEnum = pgEnum("tenant_plan", ["free", "basic", "pro", "en
 export const tenantStatusEnum = pgEnum("tenant_status", ["trial", "active", "suspended", "inactive"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", ["draft", "pending", "paid", "overdue", "cancelled"]);
 export const bookingStatusEnum = pgEnum("booking_status", ["confirmed", "in_progress", "completed", "cancelled", "no_show", "ready_for_pickup"]);
+export const corporateStatusEnum = pgEnum("corporate_status", ["PENDING", "APPROVED", "REJECTED"]);
+export const voucherStatusEnum = pgEnum("voucher_status", ["active", "used", "expired"]);
 
 // Tenants (multi-tenancy)
 export const tenants = pgTable("tenants", {
@@ -413,6 +415,26 @@ export const loyaltyTransactions = pgTable("loyalty_transactions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Loyalty Vouchers (auto-issued when pointsBalance >= 1000)
+export const loyaltyVouchers = pgTable("loyalty_vouchers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  loyaltyAccountId: varchar("loyalty_account_id").notNull(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  pointsRedeemed: integer("points_redeemed").notNull().default(1000),
+  forPackageCode: varchar("for_package_code", { length: 50 }), // e.g. "MAMACITA", "LE_RACONTEUR"
+  forServiceCode: varchar("for_service_code", { length: 50 }),  // legacy service code
+  status: voucherStatusEnum("status").notNull().default("active"),
+  issuedAt: timestamp("issued_at").defaultNow(),
+  expiresAt: timestamp("expires_at"),           // 1 year from issue
+  usedAt: timestamp("used_at"),
+  usedInWashJobId: varchar("used_in_wash_job_id"),
+  usedByStaffId: varchar("used_by_staff_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Parking Validations (for mall/store validations)
 export const parkingValidations = pgTable("parking_validations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -774,7 +796,29 @@ export const bookingPayments = pgTable("booking_payments", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Corporate Accounts
+export const corporateAccounts = pgTable("corporate_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyName: varchar("company_name", { length: 255 }).notNull(),
+  companySlug: varchar("company_slug", { length: 255 }).notNull(),
+  registrationNumber: serial("registration_number").notNull(),
+  registrationCode: varchar("registration_code", { length: 255 }).notNull().unique(),
+  status: corporateStatusEnum("status").notNull().default("PENDING"),
+  contactName: varchar("contact_name", { length: 255 }).notNull(),
+  contactEmail: varchar("contact_email", { length: 255 }).notNull(),
+  contactPhone: varchar("contact_phone", { length: 50 }),
+  fleetSize: integer("fleet_size"),
+  fleetWashCount: integer("fleet_wash_count").notNull().default(0),
+  freeWashCredits: integer("free_wash_credits").notNull().default(0),
+  managementNote: text("management_note"),
+  approvedAt: timestamp("approved_at"),
+  approvedBy: varchar("approved_by", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Insert schemas
+export const insertCorporateAccountSchema = createInsertSchema(corporateAccounts).omit({ id: true, registrationNumber: true, createdAt: true, updatedAt: true });
 export const insertPushSubscriptionSchema = createInsertSchema(pushSubscriptions).omit({ id: true, createdAt: true });
 export const insertUserRoleSchema = createInsertSchema(userRoles).omit({ id: true, createdAt: true });
 export const insertWashJobSchema = createInsertSchema(washJobs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -801,6 +845,7 @@ export const insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLo
 export const insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
 export const insertLoyaltyAccountSchema = createInsertSchema(loyaltyAccounts).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertLoyaltyTransactionSchema = createInsertSchema(loyaltyTransactions).omit({ id: true, createdAt: true });
+export const insertLoyaltyVoucherSchema = createInsertSchema(loyaltyVouchers).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertInventoryConsumptionSchema = createInsertSchema(inventoryConsumption).omit({ id: true, createdAt: true });
@@ -897,6 +942,9 @@ export type InsertLoyaltyAccount = z.infer<typeof insertLoyaltyAccountSchema>;
 export type LoyaltyTransaction = typeof loyaltyTransactions.$inferSelect;
 export type InsertLoyaltyTransaction = z.infer<typeof insertLoyaltyTransactionSchema>;
 
+export type LoyaltyVoucher = typeof loyaltyVouchers.$inferSelect;
+export type InsertLoyaltyVoucher = z.infer<typeof insertLoyaltyVoucherSchema>;
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type InsertSupplier = z.infer<typeof insertSupplierSchema>;
 
@@ -944,6 +992,9 @@ export type InsertBookingTimeSlotConfig = z.infer<typeof insertBookingTimeSlotCo
 
 export type BookingPayment = typeof bookingPayments.$inferSelect;
 export type InsertBookingPayment = z.infer<typeof insertBookingPaymentSchema>;
+
+export type CorporateAccount = typeof corporateAccounts.$inferSelect;
+export type InsertCorporateAccount = z.infer<typeof insertCorporateAccountSchema>;
 
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"] as const;
@@ -1112,14 +1163,31 @@ export const SERVICE_TIER_COLORS: Record<ServiceTier, string> = {
   EXECUTIVE: "bg-rose-500",
 };
 
-// Loyalty points earned per service type
+// Loyalty points earned per service type (fallback when no package match)
 export const LOYALTY_POINTS_PER_SERVICE: Record<ServiceCode, number> = {
   STANDARD: 100,
   RIM_ONLY: 30,
   TYRE_SHINE_ONLY: 25,
   HEADLIGHT_RESTORATION: 50,
-  FULL_VALET: 150,
+  FULL_VALET: 250,
 };
+
+// Loyalty points earned per named package (takes priority over service code lookup).
+// Threshold is always 1000 pts = 1 free wash voucher for the same package.
+// Le Raconteur = 100 pts → 10 washes; premium packages = 250+ pts → fewer washes.
+export const LOYALTY_POINTS_PER_PACKAGE: Record<string, number> = {
+  VAMOS: 50,
+  VAGABUNDO: 70,
+  LE_RACONTEUR: 100,
+  LA_OBRA: 250,
+  MAMACITA: 250,
+  THE_JL_SPECIAL: 350,
+  THE_GUNNER: 400,
+  THE_BIG_KAHUNA: 500,
+};
+
+// Points needed to earn a free wash voucher
+export const LOYALTY_VOUCHER_THRESHOLD = 1000;
 
 // Priority weights by service code (for Smart Task Queue)
 export const SERVICE_PRIORITY_WEIGHT: Record<ServiceCode, number> = {

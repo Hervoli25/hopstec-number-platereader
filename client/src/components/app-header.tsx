@@ -109,6 +109,12 @@ export function AppHeader({ title }: AppHeaderProps) {
                       Analytics
                     </DropdownMenuItem>
                   </Link>
+                  <Link href="/admin/corporate">
+                    <DropdownMenuItem className="cursor-pointer">
+                      <Building2 className="h-4 w-4 mr-2" />
+                      Corporate
+                    </DropdownMenuItem>
+                  </Link>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -181,6 +187,12 @@ export function AppHeader({ title }: AppHeaderProps) {
                     <DropdownMenuItem className="cursor-pointer sm:hidden">
                       <Activity className="h-4 w-4 mr-2" />
                       Analytics
+                    </DropdownMenuItem>
+                  </Link>
+                  <Link href="/admin/corporate">
+                    <DropdownMenuItem className="cursor-pointer sm:hidden">
+                      <Building2 className="h-4 w-4 mr-2" />
+                      Corporate
                     </DropdownMenuItem>
                   </Link>
                 </>

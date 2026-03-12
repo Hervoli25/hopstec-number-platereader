@@ -1,11 +1,14 @@
 import { useState, useMemo } from "react";
 import { useLocation, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useToast } from "@/hooks/use-toast";
 import { AppHeader } from "@/components/app-header";
 import { AppFooter } from "@/components/app-footer";
 import {
@@ -34,6 +37,11 @@ import {
   Search,
   Star,
   TrendingUp,
+  Ticket,
+  Award,
+  CheckCircle2,
+  XCircle,
+  Clock,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -96,8 +104,12 @@ type SegmentFilter = "all" | "vip" | "regular" | "one_timer" | "churned";
 export default function ManagerCustomers() {
   const [location] = useLocation();
   const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [segmentFilter, setSegmentFilter] = useState<SegmentFilter>("all");
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerData | null>(null);
+  const [voucherCode, setVoucherCode] = useState("");
 
   const { data: insights, isLoading } = useQuery<CustomerInsights>({
     queryKey: ["/api/analytics/customer-insights"],
@@ -106,6 +118,57 @@ export default function ManagerCustomers() {
 
   const { data: bizSettings } = useQuery<{ currency: string; currencySymbol: string; locale: string }>({
     queryKey: ["/api/business/settings"],
+  });
+
+  // Voucher data for selected customer
+  const { data: voucherData, isLoading: voucherLoading } = useQuery<{
+    vouchers: any[];
+    account: any;
+  }>({
+    queryKey: ["/api/loyalty/vouchers/by-plate", selectedCustomer?.plate],
+    queryFn: async () => {
+      if (!selectedCustomer) return { vouchers: [], account: null };
+      const res = await fetch(`/api/loyalty/vouchers/by-plate?plate=${encodeURIComponent(selectedCustomer.plate)}`, { credentials: "include" });
+      if (!res.ok) return { vouchers: [], account: null };
+      return res.json();
+    },
+    enabled: !!selectedCustomer,
+  });
+
+  const { data: voucherHistory } = useQuery<{ vouchers: any[] }>({
+    queryKey: ["/api/loyalty/vouchers/history", voucherData?.account?.id],
+    queryFn: async () => {
+      if (!voucherData?.account?.id) return { vouchers: [] };
+      const res = await fetch(`/api/loyalty/vouchers/history/${voucherData.account.id}`, { credentials: "include" });
+      if (!res.ok) return { vouchers: [] };
+      return res.json();
+    },
+    enabled: !!voucherData?.account?.id,
+  });
+
+  const redeemMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await fetch("/api/loyalty/vouchers/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to redeem voucher");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Voucher validated", description: "The voucher has been marked as used." });
+      setVoucherCode("");
+      queryClient.invalidateQueries({ queryKey: ["/api/loyalty/vouchers/by-plate", selectedCustomer?.plate] });
+      queryClient.invalidateQueries({ queryKey: ["/api/loyalty/vouchers/history", voucherData?.account?.id] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Validation failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const sym = bizSettings?.currencySymbol || "R";
@@ -538,7 +601,7 @@ export default function ManagerCustomers() {
                 {filteredCustomers.length > 0 ? (
                   <div className="space-y-1 max-h-[400px] overflow-y-auto">
                     {filteredCustomers.slice(0, 100).map((c) => (
-                      <div key={c.plate} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-muted/50 transition-colors">
+                      <div key={c.plate} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => setSelectedCustomer(c)}>
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
@@ -585,6 +648,147 @@ export default function ManagerCustomers() {
 
         </motion.div>
       </main>
+
+      {/* Customer Loyalty & Voucher Detail Sheet */}
+      <Sheet open={!!selectedCustomer} onOpenChange={(open) => { if (!open) { setSelectedCustomer(null); setVoucherCode(""); } }}>
+        <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+          {selectedCustomer && (
+            <>
+              <SheetHeader className="mb-4">
+                <SheetTitle className="flex items-center gap-2">
+                  <Award className="w-5 h-5 text-primary" />
+                  {selectedCustomer.customerName || selectedCustomer.plateDisplay || selectedCustomer.plate}
+                </SheetTitle>
+                <p className="text-sm text-muted-foreground font-mono">{selectedCustomer.plateDisplay || selectedCustomer.plate}</p>
+              </SheetHeader>
+
+              {voucherLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Points balance */}
+                  {voucherData?.account ? (
+                    <Card className="p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold">Loyalty Points</span>
+                        <Badge variant="outline">{voucherData.account.tier}</Badge>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Balance</span>
+                        <span className="font-bold text-primary text-lg">{voucherData.account.pointsBalance} pts</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Lifetime Points</span>
+                        <span>{voucherData.account.lifetimePoints}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Washes</span>
+                        <span>{voucherData.account.totalWashes}</span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2">
+                        <div
+                          className="bg-primary h-2 rounded-full"
+                          ref={(el) => { if (el) el.style.width = `${Math.min(100, ((voucherData.account.pointsBalance % 1000) / 1000) * 100)}%`; }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground text-right">
+                        {1000 - (voucherData.account.pointsBalance % 1000)} pts to next free wash
+                      </p>
+                    </Card>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No loyalty account yet — points will be created on next wash.</p>
+                  )}
+
+                  {/* Active vouchers */}
+                  {voucherData?.vouchers && voucherData.vouchers.length > 0 && (
+                    <div>
+                      <p className="text-sm font-semibold mb-2 flex items-center gap-2">
+                        <Ticket className="w-4 h-4 text-green-600" />
+                        Active Vouchers
+                      </p>
+                      <div className="space-y-2">
+                        {voucherData.vouchers.map((v: any) => (
+                          <div key={v.id} className="flex justify-between items-center p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                            <div>
+                              <p className="font-mono font-bold text-green-700 dark:text-green-300">{v.code}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Free {v.forPackageCode || "wash"} · Expires {new Date(v.expiresAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <Badge className="bg-green-500 text-white">Active</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Validate voucher */}
+                  <div>
+                    <p className="text-sm font-semibold mb-2">Validate a Voucher</p>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="e.g. VCH-AB12C"
+                        value={voucherCode}
+                        onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
+                        className="font-mono text-sm"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => redeemMutation.mutate(voucherCode.trim())}
+                        disabled={!voucherCode.trim() || redeemMutation.isPending}
+                      >
+                        {redeemMutation.isPending ? "..." : "Validate"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Voucher history */}
+                  {voucherHistory?.vouchers && voucherHistory.vouchers.length > 0 && (
+                    <div>
+                      <p className="text-sm font-semibold mb-2">Voucher History</p>
+                      <div className="space-y-2">
+                        {voucherHistory.vouchers.map((v: any) => (
+                          <div key={v.id} className="flex justify-between items-start p-3 bg-muted/40 rounded-lg text-sm">
+                            <div className="space-y-0.5">
+                              <p className="font-mono font-semibold">{v.code}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {v.forPackageCode || "Any wash"} · Issued {new Date(v.issuedAt).toLocaleDateString()}
+                              </p>
+                              {v.usedAt && (
+                                <p className="text-xs text-muted-foreground">
+                                  Used {new Date(v.usedAt).toLocaleDateString()}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {v.status === "active" && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                              {v.status === "used" && <XCircle className="w-4 h-4 text-muted-foreground" />}
+                              {v.status === "expired" && <Clock className="w-4 h-4 text-amber-500" />}
+                              <Badge
+                                variant="outline"
+                                className={
+                                  v.status === "active" ? "text-green-600 border-green-500/30" :
+                                  v.status === "used" ? "text-muted-foreground" :
+                                  "text-amber-600 border-amber-500/30"
+                                }
+                              >
+                                {v.status}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
 
       <AppFooter />
     </div>

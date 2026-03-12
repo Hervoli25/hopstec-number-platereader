@@ -20,7 +20,7 @@ import { getEnabledFeatures, seedFeatureFlags, requireFeature } from "./lib/feat
 import { generateBillingSnapshot, generateAllSnapshots } from "./lib/billing-snapshot";
 import { overseerRequestScanner, trackFailedLogin, clearFailedLogins, getClientIp } from "./lib/overseer-security";
 import { z } from "zod";
-import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE, SERVICE_PACKAGES, VEHICLE_SIZES } from "@shared/schema";
+import { WASH_STATUS_ORDER, COUNTRY_HINTS, RESERVATION_STATUSES, SERVICE_CODES, SERVICE_TYPE_CONFIG, LOYALTY_POINTS_PER_SERVICE, LOYALTY_POINTS_PER_PACKAGE, LOYALTY_VOUCHER_THRESHOLD, SERVICE_PACKAGES, VEHICLE_SIZES } from "@shared/schema";
 import type { ServiceCode, WashStatus, VehicleSize } from "@shared/schema";
 import {
   // CRM functions — used ONLY by /api/crm/* routes (Ekhaya's own system)
@@ -45,6 +45,10 @@ import {
   findCRMCustomerByPlate,
   getCRMLoyaltyAnalytics,
   getCRMGrowthAnalytics,
+  getCRMCorporateAccounts,
+  getCRMCorporateAccount,
+  updateCRMCorporateAccount,
+  deleteCRMCorporateAccount,
 } from "./lib/booking-db";
 import {
   calculateParkingFee,
@@ -588,7 +592,11 @@ export async function registerRoutes(
       if (status === "complete" && job) {
         try {
           const svcCode = (job.serviceCode || "STANDARD") as ServiceCode;
-          const basePoints = LOYALTY_POINTS_PER_SERVICE[svcCode] || 0;
+          // Package-specific points take priority over service-code points
+          const packageCode = job.packageName?.toUpperCase() || null;
+          const basePoints = (packageCode && LOYALTY_POINTS_PER_PACKAGE[packageCode])
+            ? LOYALTY_POINTS_PER_PACKAGE[packageCode]
+            : (LOYALTY_POINTS_PER_SERVICE[svcCode] || 0);
 
           if (basePoints > 0) {
             // Get or create local loyalty account for this plate
@@ -603,6 +611,7 @@ export async function registerRoutes(
             const newBalance = updatedAccount?.pointsBalance || (loyaltyAccount.pointsBalance || 0) + pointsToAward;
 
             // Log transaction locally
+            const packageLabel = packageCode ? (SERVICE_PACKAGES[packageCode]?.label || packageCode) : SERVICE_TYPE_CONFIG[svcCode]?.label;
             await storage.logLoyaltyTransaction(tenantId, {
               crmUserId: loyaltyAccount.id,
               memberNumber: loyaltyAccount.membershipNumber,
@@ -611,9 +620,78 @@ export async function registerRoutes(
               balanceAfter: newBalance,
               washJobId: job.id,
               serviceCode: svcCode,
-              description: `Earned ${pointsToAward} points for ${SERVICE_TYPE_CONFIG[svcCode].label}`,
+              description: `Earned ${pointsToAward} points for ${packageLabel}`,
               createdBy: userId,
             });
+
+            // === AUTO-ISSUE VOUCHER when balance crosses the 1000-pt threshold ===
+            const issuedVouchers: Awaited<ReturnType<typeof storage.issueVoucher>>[] = [];
+            if (newBalance >= LOYALTY_VOUCHER_THRESHOLD) {
+              const vouchersToIssue = Math.floor(newBalance / LOYALTY_VOUCHER_THRESHOLD);
+              for (let i = 0; i < vouchersToIssue; i++) {
+                const v = await storage.issueVoucher(tenantId, {
+                  loyaltyAccountId: loyaltyAccount.id,
+                  forPackageCode: packageCode || undefined,
+                  forServiceCode: svcCode,
+                  branchId: job.branchId || undefined,
+                });
+                issuedVouchers.push(v);
+              }
+              // Deduct 1000 pts per voucher — leftover points carry forward
+              const pointsDeducted = vouchersToIssue * LOYALTY_VOUCHER_THRESHOLD;
+              const balanceAfterDeduction = newBalance - pointsDeducted;
+              await storage.deductLoyaltyPoints(tenantId, loyaltyAccount.id, pointsDeducted);
+              await storage.logLoyaltyTransaction(tenantId, {
+                crmUserId: loyaltyAccount.id,
+                memberNumber: loyaltyAccount.membershipNumber,
+                type: "redeem",
+                points: -pointsDeducted,
+                balanceAfter: balanceAfterDeduction,
+                washJobId: job.id,
+                serviceCode: svcCode,
+                description: `Auto-issued ${vouchersToIssue} free wash voucher(s) — ${pointsDeducted} pts redeemed`,
+                createdBy: "system",
+              });
+              const lastVoucher = issuedVouchers[issuedVouchers.length - 1];
+              await storage.logEvent(tenantId, {
+                type: "loyalty_voucher_issued",
+                plateDisplay: job.plateDisplay,
+                plateNormalized: job.plateNormalized,
+                washJobId: job.id,
+                payloadJson: {
+                  voucherCode: lastVoucher?.code,
+                  forPackageCode: packageCode,
+                  pointsDeducted,
+                  balanceAfter: balanceAfterDeduction,
+                },
+              });
+              broadcastEvent({
+                type: "loyalty_voucher_issued",
+                washJobId: job.id,
+                voucherCode: lastVoucher?.code,
+                forPackageCode: packageCode,
+                balance: balanceAfterDeduction,
+                memberNumber: loyaltyAccount.membershipNumber,
+              });
+              // Fire CRM webhook for each issued voucher (non-blocking)
+              for (const v of issuedVouchers) {
+                fireWebhook("loyalty_voucher_issued", {
+                  voucherCode: v.code,
+                  plate: job.plateDisplay,
+                  plateNormalized: job.plateNormalized,
+                  memberNumber: loyaltyAccount.membershipNumber,
+                  loyaltyAccountId: loyaltyAccount.id,
+                  forPackageCode: v.forPackageCode ?? null,
+                  forServiceCode: v.forServiceCode ?? null,
+                  pointsRedeemed: v.pointsRedeemed,
+                  issuedAt: v.issuedAt?.toISOString() ?? null,
+                  expiresAt: v.expiresAt?.toISOString() ?? null,
+                  washJobId: job.id,
+                  branchId: job.branchId ?? null,
+                }, tenantId).catch(() => {});
+              }
+            }
+            const voucherIssued = issuedVouchers[issuedVouchers.length - 1] ?? null;
 
             // Log the loyalty event
             await storage.logEvent(tenantId, {
@@ -625,9 +703,11 @@ export async function registerRoutes(
               payloadJson: {
                 points: pointsToAward,
                 serviceCode: svcCode,
+                packageCode,
                 balanceAfter: newBalance,
                 memberNumber: loyaltyAccount.membershipNumber,
                 tier: loyaltyAccount.tier,
+                voucherIssued: voucherIssued?.code || null,
               },
             });
 
@@ -2469,6 +2549,10 @@ export async function registerRoutes(
         storage.getLoyaltyAccountByPlate(tenantId, plateNormalized).catch(() => null),
       ]);
 
+      const activeVouchers = loyaltyAccount
+        ? await storage.getActiveVouchersForAccount(tenantId, loyaltyAccount.id).catch(() => [])
+        : [];
+
       const isRegistered = !!(frequentParker || membership || loyaltyAccount);
 
       res.json({
@@ -2476,6 +2560,7 @@ export async function registerRoutes(
         frequentParker,
         membership,
         loyaltyAccount,
+        activeVouchers,
       });
     } catch (error) {
       console.error("Error looking up customer by plate:", error);
@@ -2643,6 +2728,102 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error awarding bonus points:", error);
       res.status(500).json({ message: "Failed to award bonus points" });
+    }
+  });
+
+  // =====================
+  // LOYALTY VOUCHERS
+  // =====================
+
+  // Get active vouchers for a plate (used on scan page)
+  app.get("/api/loyalty/vouchers/by-plate", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const { plate } = req.query;
+      if (!plate) return res.status(400).json({ message: "plate is required" });
+
+      const plateNormalized = normalizePlate(plate as string);
+      const loyaltyAccount = await storage.getLoyaltyAccountByPlate(tenantId, plateNormalized);
+      if (!loyaltyAccount) return res.json({ vouchers: [], account: null });
+
+      const vouchers = await storage.getActiveVouchersForAccount(tenantId, loyaltyAccount.id);
+      res.json({ vouchers, account: loyaltyAccount });
+    } catch (error) {
+      console.error("Error fetching vouchers by plate:", error);
+      res.status(500).json({ message: "Failed to fetch vouchers" });
+    }
+  });
+
+  // Get all vouchers (active + history) for a loyalty account
+  app.get("/api/loyalty/vouchers/history/:loyaltyAccountId", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const { loyaltyAccountId } = req.params;
+      const vouchers = await storage.getVouchersForAccount(tenantId, loyaltyAccountId);
+      res.json({ vouchers });
+    } catch (error) {
+      console.error("Error fetching voucher history:", error);
+      res.status(500).json({ message: "Failed to fetch voucher history" });
+    }
+  });
+
+  // Validate (redeem) a voucher by code
+  app.post("/api/loyalty/vouchers/redeem", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const staffId = req.user?.claims?.sub || req.user?.id;
+      const schema = z.object({
+        code: z.string().min(1),
+        washJobId: z.string().optional(),
+      });
+      const { code, washJobId } = schema.parse(req.body);
+
+      const voucher = await storage.redeemVoucher(tenantId, code, staffId, washJobId);
+
+      await storage.logEvent(tenantId, {
+        type: "loyalty_voucher_redeemed",
+        plateDisplay: "",
+        plateNormalized: "",
+        washJobId: washJobId || undefined,
+        userId: staffId,
+        payloadJson: { voucherCode: code, usedInWashJobId: washJobId },
+      });
+
+      // Fire CRM webhook (non-blocking)
+      fireWebhook("loyalty_voucher_redeemed", {
+        voucherCode: voucher.code,
+        loyaltyAccountId: voucher.loyaltyAccountId,
+        forPackageCode: voucher.forPackageCode ?? null,
+        forServiceCode: voucher.forServiceCode ?? null,
+        usedAt: voucher.usedAt?.toISOString() ?? new Date().toISOString(),
+        usedInWashJobId: washJobId ?? null,
+        usedByStaffId: staffId ?? null,
+      }, tenantId).catch(() => {});
+
+      res.json({ voucher, message: "Voucher redeemed successfully" });
+    } catch (error: any) {
+      console.error("Error redeeming voucher:", error);
+      res.status(400).json({ message: error.message || "Failed to redeem voucher" });
+    }
+  });
+
+  // Look up a voucher by code (for pre-validation check)
+  app.get("/api/loyalty/vouchers/check/:code", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const code = (req.params.code as string).toUpperCase();
+      const voucher = await storage.getVoucherByCode(tenantId, code);
+      if (!voucher) return res.status(404).json({ message: "Voucher not found" });
+
+      // Check expiry
+      if (voucher.status === "active" && voucher.expiresAt && new Date(voucher.expiresAt) < new Date()) {
+        return res.json({ voucher: { ...voucher, status: "expired" }, valid: false, reason: "Voucher has expired" });
+      }
+      const valid = voucher.status === "active";
+      res.json({ voucher, valid, reason: valid ? null : `Voucher is ${voucher.status}` });
+    } catch (error) {
+      console.error("Error checking voucher:", error);
+      res.status(500).json({ message: "Failed to check voucher" });
     }
   });
 
@@ -4957,6 +5138,206 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching trends:", error);
       res.status(500).json({ message: "Failed to fetch trends" });
+    }
+  });
+
+  // =====================
+  // Corporate Account Management (Admin/Manager only)
+  // =====================
+
+  // List all corporate accounts (from CRM database)
+  app.get("/api/corporate/accounts", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const accounts = await getCRMCorporateAccounts(status);
+      res.json(accounts);
+    } catch (error) {
+      console.error("Error fetching corporate accounts:", error);
+      res.status(500).json({ message: "Failed to fetch corporate accounts" });
+    }
+  });
+
+  // Get single corporate account (from CRM database)
+  app.get("/api/corporate/accounts/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const account = await getCRMCorporateAccount(req.params.id as string);
+      if (!account) return res.status(404).json({ message: "Corporate account not found" });
+      res.json(account);
+    } catch (error) {
+      console.error("Error fetching corporate account:", error);
+      res.status(500).json({ message: "Failed to fetch corporate account" });
+    }
+  });
+
+  // Approve corporate account (in CRM database)
+  app.patch("/api/corporate/accounts/:id/approve", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const id = req.params.id as string;
+      const { managementNote } = req.body || {};
+      const approvedBy = (req as any).user?.claims?.sub || (req as any).user?.email || "admin";
+
+      const existing = await getCRMCorporateAccount(id);
+      if (!existing) return res.status(404).json({ message: "Corporate account not found" });
+      if (existing.status === "APPROVED") return res.status(400).json({ message: "Account is already approved" });
+
+      const updated = await updateCRMCorporateAccount(id, {
+        status: "APPROVED",
+        approvedAt: new Date(),
+        approvedBy,
+        managementNote: managementNote || existing.managementNote || undefined,
+      });
+
+      // Send approval email directly via nodemailer (Zoho SMTP)
+      try {
+        console.log("[Corporate Approval] Sending approval email to:", existing.contactEmail);
+        const nodemailer = await import("nodemailer");
+
+        const emailUser = process.env.EMAIL_USER;
+        const emailPass = process.env.EMAIL_PASS;
+
+        if (!emailUser || !emailPass) {
+          console.warn("[Corporate Approval] EMAIL_USER or EMAIL_PASS not configured — skipping email");
+        } else {
+          const transporter = nodemailer.default.createTransport({
+            host: process.env.SMTP_HOST || "smtp.zoho.eu",
+            port: parseInt(process.env.SMTP_PORT || "465"),
+            secure: true,
+            auth: { user: emailUser, pass: emailPass },
+          });
+
+          const approvalHTML = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:600px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
+    <div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);padding:32px;text-align:center;">
+      <h1 style="color:#f5c518;margin:0;font-size:28px;letter-spacing:1px;">PRESTIGE</h1>
+      <p style="color:#94a3b8;margin:8px 0 0;font-size:14px;">Premium Car Wash & Detailing</p>
+    </div>
+    <div style="padding:32px;">
+      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:16px;margin-bottom:24px;text-align:center;">
+        <span style="font-size:32px;">✅</span>
+        <h2 style="color:#065f46;margin:8px 0 0;font-size:20px;">Corporate Account Approved</h2>
+      </div>
+      <p style="color:#374151;font-size:15px;line-height:1.6;">Dear <strong>${existing.contactName}</strong>,</p>
+      <p style="color:#374151;font-size:15px;line-height:1.6;">
+        We are pleased to inform you that your corporate account application for
+        <strong>${existing.companyName}</strong> has been <strong style="color:#059669;">approved</strong>.
+      </p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:24px 0;">
+        <h3 style="color:#1e293b;margin:0 0 12px;font-size:16px;">Your Account Details</h3>
+        <table style="width:100%;border-collapse:collapse;">
+          <tr><td style="padding:8px 0;color:#64748b;font-size:14px;">Company</td><td style="padding:8px 0;color:#1e293b;font-size:14px;font-weight:600;text-align:right;">${existing.companyName}</td></tr>
+          <tr><td style="padding:8px 0;color:#64748b;font-size:14px;border-top:1px solid #e2e8f0;">Registration Code</td><td style="padding:8px 0;color:#1e293b;font-size:14px;font-weight:600;text-align:right;border-top:1px solid #e2e8f0;"><code style="background:#fef3c7;padding:4px 10px;border-radius:4px;color:#92400e;font-size:15px;">${existing.registrationCode}</code></td></tr>
+        </table>
+      </div>
+      <h3 style="color:#1e293b;font-size:16px;">What's Next?</h3>
+      <ol style="color:#374151;font-size:14px;line-height:2;padding-left:20px;">
+        <li>Visit <a href="https://prestigebyekhaya.com/corporate/register?code=${encodeURIComponent(existing.registrationCode)}" style="color:#2563eb;text-decoration:none;font-weight:600;">prestigebyekhaya.com</a> to complete your account setup</li>
+        <li>Your registration code is <strong>${existing.registrationCode}</strong></li>
+        <li>Your fleet vehicles will receive corporate pricing and priority service</li>
+      </ol>
+      <div style="text-align:center;margin:32px 0 16px;">
+        <a href="https://prestigebyekhaya.com/corporate/register?code=${encodeURIComponent(existing.registrationCode)}" style="display:inline-block;background:linear-gradient(135deg,#f5c518,#eab308);color:#1a1a2e;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;box-shadow:0 2px 8px rgba(245,197,24,0.3);">
+          Create Your Account →
+        </a>
+      </div>
+    </div>
+    <div style="background:#f9fafb;padding:20px 32px;text-align:center;border-top:1px solid #e5e7eb;">
+      <p style="font-size:12px;color:#9ca3af;margin:0;">Thank you for choosing PRESTIGE Car Wash.</p>
+      <p style="font-size:12px;color:#9ca3af;margin:4px 0 0;">This is an automated email — please do not reply directly.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+          const adminEmails = [
+            process.env.ADMIN_EMAIL,
+            process.env.MANAGER_EMAIL,
+            process.env.EMAIL_NOTIFICATION,
+          ].filter(Boolean).join(", ");
+
+          const info = await transporter.sendMail({
+            from: `"PRESTIGE Car Wash" <${emailUser}>`,
+            to: existing.contactEmail,
+            cc: adminEmails || undefined,
+            subject: `✅ Corporate Account Approved — ${existing.companyName}`,
+            html: approvalHTML,
+          });
+
+          console.log("[Corporate Approval] Email sent successfully. MessageId:", info.messageId);
+        }
+      } catch (emailError) {
+        console.error("[Corporate Approval] Failed to send approval email:", emailError);
+        // Don't fail the approval if email fails
+      }
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error approving corporate account:", error);
+      res.status(500).json({ message: "Failed to approve corporate account" });
+    }
+  });
+
+  // Reject corporate account (in CRM database)
+  app.patch("/api/corporate/accounts/:id/reject", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const id = req.params.id as string;
+      const { managementNote } = req.body || {};
+
+      const existing = await getCRMCorporateAccount(id);
+      if (!existing) return res.status(404).json({ message: "Corporate account not found" });
+      if (existing.status === "REJECTED") return res.status(400).json({ message: "Account is already rejected" });
+
+      const updated = await updateCRMCorporateAccount(id, {
+        status: "REJECTED",
+        managementNote: managementNote || existing.managementNote || undefined,
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error rejecting corporate account:", error);
+      res.status(500).json({ message: "Failed to reject corporate account" });
+    }
+  });
+
+  // Reset corporate account back to PENDING (in CRM database)
+  app.patch("/api/corporate/accounts/:id/reset", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const id = req.params.id as string;
+
+      const existing = await getCRMCorporateAccount(id);
+      if (!existing) return res.status(404).json({ message: "Corporate account not found" });
+      if (existing.status === "PENDING") return res.status(400).json({ message: "Account is already pending" });
+
+      const updated = await updateCRMCorporateAccount(id, {
+        status: "PENDING",
+        managementNote: existing.managementNote || undefined,
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error resetting corporate account:", error);
+      res.status(500).json({ message: "Failed to reset corporate account" });
+    }
+  });
+
+  // Delete corporate account (in CRM database)
+  app.delete("/api/corporate/accounts/:id", isAuthenticated, requireRole("admin"), async (req: any, res) => {
+    try {
+      const id = req.params.id as string;
+
+      const existing = await getCRMCorporateAccount(id);
+      if (!existing) return res.status(404).json({ message: "Corporate account not found" });
+
+      const deleted = await deleteCRMCorporateAccount(id);
+      if (!deleted) return res.status(500).json({ message: "Failed to delete corporate account" });
+
+      res.json({ message: "Corporate account deleted", id });
+    } catch (error) {
+      console.error("Error deleting corporate account:", error);
+      res.status(500).json({ message: "Failed to delete corporate account" });
     }
   });
 
