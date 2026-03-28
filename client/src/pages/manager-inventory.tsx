@@ -122,6 +122,28 @@ interface PurchaseOrder {
   updatedAt: Date | null;
 }
 
+interface ForecastItem {
+  itemId: string;
+  itemName: string;
+  unit: string;
+  currentStock: number;
+  minimumStock: number;
+  projectedConsumption: number;
+  projectedRemaining: number;
+  willRunOut: boolean;
+  shortfallAmount: number;
+  neededToOrder: number;
+  supplierId: string | null;
+  costPerUnit: number;
+}
+
+interface ForecastData {
+  forecastDays: number;
+  totalUpcomingBookings: number;
+  bookingBreakdown: { serviceId: string; serviceName: string; count: number }[];
+  forecast: ForecastItem[];
+}
+
 interface InventoryAnalytics {
   totalItems: number;
   lowStockCount: number;
@@ -381,6 +403,49 @@ export default function ManagerInventory() {
     queryKey: ["/api/inventory/low-stock"],
     enabled: canAccess,
     refetchInterval: 1000 * 60 * 2, // auto-refresh every 2 min
+  });
+
+  const [forecastDays, setForecastDays] = useState(7);
+  const { data: forecastData, isLoading: isForecastLoading, refetch: refetchForecast } = useQuery<ForecastData>({
+    queryKey: ["/api/inventory/forecast", forecastDays],
+    queryFn: () => fetch(`/api/inventory/forecast?days=${forecastDays}`).then(r => r.json()),
+    enabled: canAccess && activeTab === "forecast",
+  });
+
+  const autoDraftPOMutation = useMutation({
+    mutationFn: async (items: ForecastItem[]) => {
+      // Group items by supplier and create draft POs
+      const bySupplier = new Map<string, ForecastItem[]>();
+      for (const item of items) {
+        const key = item.supplierId || "no-supplier";
+        if (!bySupplier.has(key)) bySupplier.set(key, []);
+        bySupplier.get(key)!.push(item);
+      }
+      const poPromises = Array.from(bySupplier.entries() as Iterable<[string, ForecastItem[]]>).map(([supplierId, grpItems]) => {
+        const poItems = grpItems.map(i => ({
+          inventoryItemId: i.itemId,
+          itemName: i.itemName,
+          quantity: i.neededToOrder,
+          unitCost: i.costPerUnit,
+          totalCost: Math.round((i.neededToOrder / 100) * i.costPerUnit),
+        }));
+        const totalCost = poItems.reduce((s, i) => s + i.totalCost, 0);
+        return apiRequest("POST", "/api/inventory/purchase-orders", {
+          supplierId: supplierId === "no-supplier" ? suppliers?.[0]?.id || "unknown" : supplierId,
+          status: "draft",
+          items: poItems,
+          totalCost,
+          notes: `Auto-generated from ${forecastDays}-day inventory forecast`,
+        });
+      });
+      await Promise.all(poPromises);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inventory/purchase-orders"] });
+      toast({ title: "Draft POs created", description: "Switch to the Orders tab to review and submit." });
+      setActiveTab("purchase-orders");
+    },
+    onError: () => toast({ title: "Failed to create POs", variant: "destructive" }),
   });
 
   // =========================================================================
@@ -939,7 +1004,7 @@ export default function ManagerInventory() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4 mb-6">
+          <TabsList className="grid w-full grid-cols-5 mb-6">
             <TabsTrigger value="items" className="text-xs sm:text-sm">
               <Boxes className="w-4 h-4 mr-1 hidden sm:inline" />
               Items
@@ -955,6 +1020,10 @@ export default function ManagerInventory() {
             <TabsTrigger value="analytics" className="text-xs sm:text-sm">
               <BarChart3 className="w-4 h-4 mr-1 hidden sm:inline" />
               Analytics
+            </TabsTrigger>
+            <TabsTrigger value="forecast" className="text-xs sm:text-sm">
+              <TrendingDown className="w-4 h-4 mr-1 hidden sm:inline" />
+              Forecast
             </TabsTrigger>
           </TabsList>
 
@@ -1700,6 +1769,160 @@ export default function ManagerInventory() {
                   </Card>
                 )}
               </>
+            )}
+          </TabsContent>
+
+          {/* ============================================================= */}
+          {/*  FORECAST TAB                                                  */}
+          {/* ============================================================= */}
+          <TabsContent value="forecast" className="space-y-4">
+            {/* Controls */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Forecast window:</span>
+                <select
+                  title="Forecast window"
+                  value={forecastDays}
+                  onChange={(e) => setForecastDays(parseInt(e.target.value))}
+                  className="h-8 text-sm rounded-md border border-input bg-background px-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value={3}>3 days</option>
+                  <option value={7}>7 days</option>
+                  <option value={14}>14 days</option>
+                  <option value={30}>30 days</option>
+                </select>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => refetchForecast()} className="gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5" />
+                Refresh
+              </Button>
+            </div>
+
+            {isForecastLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+              </div>
+            ) : forecastData ? (
+              <>
+                {/* Summary */}
+                <Card>
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Upcoming bookings</p>
+                        <p className="text-xl font-bold">{forecastData.totalUpcomingBookings}</p>
+                        <p className="text-xs text-muted-foreground">in next {forecastData.forecastDays} days</p>
+                      </div>
+                      {forecastData.bookingBreakdown.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {forecastData.bookingBreakdown.map((b) => (
+                            <Badge key={b.serviceId} variant="outline" className="text-xs">
+                              {b.serviceName}: {b.count}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Items that will run out */}
+                {forecastData.forecast.filter(i => i.willRunOut).length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold flex items-center gap-2 text-red-600">
+                        <AlertTriangle className="w-4 h-4" />
+                        Will Run Out ({forecastData.forecast.filter(i => i.willRunOut).length} items)
+                      </h3>
+                      <Button
+                        size="sm"
+                        onClick={() => autoDraftPOMutation.mutate(forecastData.forecast.filter(i => i.willRunOut))}
+                        disabled={autoDraftPOMutation.isPending}
+                        className="gap-1.5"
+                      >
+                        {autoDraftPOMutation.isPending ? (
+                          <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <PackageCheck className="w-3.5 h-3.5" />
+                        )}
+                        Auto-Draft Purchase Orders
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      {forecastData.forecast.filter(i => i.willRunOut).map((item) => {
+                        const pct = `${Math.min(100, Math.round((item.currentStock / Math.max(item.projectedConsumption, 1)) * 100))}%`;
+                        return (
+                        <Card key={item.itemId} className="border-red-200 dark:border-red-900">
+                          <CardContent className="py-3">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <p className="font-medium text-sm">{item.itemName}</p>
+                                <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                                  <span>Stock: {stockToDisplay(item.currentStock)} {item.unit}</span>
+                                  <span>Uses: {stockToDisplay(item.projectedConsumption)} {item.unit}</span>
+                                  <span className="text-red-600 font-medium">Shortfall: {stockToDisplay(item.shortfallAmount)} {item.unit}</span>
+                                </div>
+                              </div>
+                              <Badge className="text-xs bg-red-100 text-red-700 border-red-200 shrink-0">
+                                Order {stockToDisplay(item.neededToOrder)} {item.unit}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-red-500 mt-1 font-medium">
+                              ⚠ Stock covers {pct} of projected demand
+                            </p>
+                          </CardContent>
+                        </Card>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Items that are OK */}
+                {forecastData.forecast.filter(i => !i.willRunOut && i.projectedConsumption > 0).length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold flex items-center gap-2 text-green-600 mb-3">
+                      <Check className="w-4 h-4" />
+                      Sufficient Stock ({forecastData.forecast.filter(i => !i.willRunOut && i.projectedConsumption > 0).length} items)
+                    </h3>
+                    <div className="space-y-2">
+                      {forecastData.forecast.filter(i => !i.willRunOut && i.projectedConsumption > 0).map((item) => (
+                        <Card key={item.itemId}>
+                          <CardContent className="py-3">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <p className="font-medium text-sm">{item.itemName}</p>
+                                <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                                  <span>Stock: {stockToDisplay(item.currentStock)} {item.unit}</span>
+                                  <span>Uses: {stockToDisplay(item.projectedConsumption)} {item.unit}</span>
+                                  <span className="text-green-600 font-medium">Remaining: {stockToDisplay(item.projectedRemaining)} {item.unit}</span>
+                                </div>
+                              </div>
+                              <Badge className="text-xs bg-green-100 text-green-700 border-green-200 shrink-0">OK</Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {forecastData.forecast.length === 0 && (
+                  <Card className="border-dashed">
+                    <CardContent className="py-10 text-center text-muted-foreground text-sm">
+                      <Package className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      <p>No forecast data available.</p>
+                      <p className="mt-1">Add consumption maps to inventory items to enable forecasting.</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="py-10 text-center text-muted-foreground text-sm">
+                  Click Refresh to load the forecast.
+                </CardContent>
+              </Card>
             )}
           </TabsContent>
         </Tabs>

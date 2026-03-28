@@ -540,6 +540,21 @@ export const staffAlerts = pgTable("staff_alerts", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Staff Messages (two-way messaging between technicians and managers)
+export const staffMessages = pgTable("staff_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: varchar("tenant_id").notNull().default("default"),
+  branchId: varchar("branch_id"),
+  senderId: varchar("sender_id").notNull(),
+  senderName: varchar("sender_name", { length: 255 }),
+  senderRole: varchar("sender_role", { length: 50 }), // technician, manager, admin
+  recipientId: varchar("recipient_id"), // null = broadcast to all managers
+  message: text("message").notNull(),
+  isRead: boolean("is_read").default(false),
+  readAt: timestamp("read_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Push Subscriptions (Web Push notifications)
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -846,6 +861,7 @@ export const insertCustomerNotificationSchema = createInsertSchema(customerNotif
 export const insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertTechnicianTimeLogSchema = createInsertSchema(technicianTimeLogs).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertStaffAlertSchema = createInsertSchema(staffAlerts).omit({ id: true, createdAt: true });
+export const insertStaffMessageSchema = createInsertSchema(staffMessages).omit({ id: true, createdAt: true });
 export const insertLoyaltyAccountSchema = createInsertSchema(loyaltyAccounts).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertLoyaltyTransactionSchema = createInsertSchema(loyaltyTransactions).omit({ id: true, createdAt: true });
 export const insertLoyaltyVoucherSchema = createInsertSchema(loyaltyVouchers).omit({ id: true, createdAt: true, updatedAt: true });
@@ -998,6 +1014,9 @@ export type InsertBookingPayment = z.infer<typeof insertBookingPaymentSchema>;
 
 export type CorporateAccount = typeof corporateAccounts.$inferSelect;
 export type InsertCorporateAccount = z.infer<typeof insertCorporateAccountSchema>;
+
+export type StaffMessage = typeof staffMessages.$inferSelect;
+export type InsertStaffMessage = z.infer<typeof insertStaffMessageSchema>;
 
 // Status flow for wash jobs
 export const WASH_STATUS_ORDER = ["received", "high_pressure_wash", "foam_application", "rinse", "hand_dry_vacuum", "tyre_shine", "quality_check", "complete"] as const;

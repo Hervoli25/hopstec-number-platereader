@@ -754,6 +754,38 @@ export async function registerRoutes(
             }
             const voucherIssued = issuedVouchers[issuedVouchers.length - 1] ?? null;
 
+            // === NOTIFY CUSTOMER ON VOUCHER ISSUANCE ===
+            if (issuedVouchers.length > 0 && voucherIssued) {
+              const notifPhone = loyaltyAccount.customerPhone;
+              const notifName = loyaltyAccount.customerName || "there";
+              const expiryStr = voucherIssued.expiresAt
+                ? new Date(voucherIssued.expiresAt).toLocaleDateString("en-ZA", { day: "numeric", month: "long", year: "numeric" })
+                : "1 year from today";
+              if (notifPhone) {
+                storage.createNotification(tenantId, {
+                  customerName: loyaltyAccount.customerName || undefined,
+                  customerPhone: notifPhone,
+                  customerEmail: loyaltyAccount.customerEmail || undefined,
+                  plateNormalized: job.plateNormalized,
+                  channel: "sms",
+                  type: "VOUCHER_ISSUED",
+                  message: `🎉 Hi ${notifName}! You've earned a FREE wash voucher. Code: ${voucherIssued.code}. Valid until ${expiryStr}. Show this code at your next visit. Thank you for being a loyal customer!`,
+                  washJobId: job.id,
+                  status: "pending",
+                }).catch(() => {});
+              }
+              // Push notification to customer if they subscribed via customer tracking page
+              const customerAccess = await storage.getCustomerJobAccessByJobId(job.id).catch(() => null);
+              if (customerAccess) {
+                sendPushToCustomer(customerAccess.token, {
+                  title: "🎉 You've Earned a Free Wash!",
+                  body: `Voucher code: ${voucherIssued.code}. Use it on your next visit!`,
+                  url: `/customer/job/${customerAccess.token}`,
+                  tag: `voucher-issued-${voucherIssued.id}`,
+                }).catch(() => {});
+              }
+            }
+
             // Log the loyalty event
             await storage.logEvent(tenantId, {
               type: "loyalty_points_earned",
@@ -1338,6 +1370,72 @@ export async function registerRoutes(
     }
   });
 
+  // ==========================================
+  // PARKING VALIDATIONS (Merchant Discounts)
+  // ==========================================
+
+  // Lookup active session by plate for validation (public route — validator kiosk)
+  app.get("/api/parking/validate/lookup", async (req: any, res) => {
+    try {
+      const { plate, tenantId: qTenantId } = req.query as { plate?: string; tenantId?: string };
+      if (!plate) return res.status(400).json({ message: "plate is required" });
+      const tenantId = qTenantId || "default";
+      const normalized = normalizePlate(plate as string);
+      const session = await storage.findOpenParkingSession(tenantId, normalized);
+      if (!session) return res.status(404).json({ message: "No active parking session found for this plate" });
+      const settings = await storage.getParkingSettings(tenantId);
+      const existing = await storage.getParkingValidations(tenantId, session.id);
+      res.json({ session, settings, validations: existing });
+    } catch (error) {
+      console.error("Validation lookup error:", error);
+      res.status(500).json({ message: "Lookup failed" });
+    }
+  });
+
+  // Apply a validation discount (public route — validator kiosk)
+  app.post("/api/parking/validate/apply", async (req: any, res) => {
+    try {
+      const { plate, validatorCode, validatorName, discountMinutes, discountPercent, discountAmount, tenantId: bodyTenantId } = req.body;
+      if (!plate || !validatorCode || !validatorName) {
+        return res.status(400).json({ message: "plate, validatorCode, and validatorName are required" });
+      }
+      const tenantId = bodyTenantId || "default";
+      const normalized = normalizePlate(plate);
+      const session = await storage.findOpenParkingSession(tenantId, normalized);
+      if (!session) return res.status(404).json({ message: "No active parking session found" });
+      const validation = await storage.createParkingValidation(tenantId, {
+        parkingSessionId: session.id,
+        validatorName,
+        validatorCode,
+        discountMinutes: discountMinutes || 0,
+        discountPercent: discountPercent || 0,
+        discountAmount: discountAmount || 0,
+        validatedBy: validatorCode,
+      });
+      await storage.logEvent(tenantId, {
+        type: "parking_validated",
+        plateDisplay: session.plateDisplay,
+        plateNormalized: session.plateNormalized,
+        payloadJson: { validatorCode, validatorName, discountMinutes, discountPercent, discountAmount },
+      });
+      res.json(validation);
+    } catch (error) {
+      console.error("Validation apply error:", error);
+      res.status(500).json({ message: "Failed to apply validation" });
+    }
+  });
+
+  // List validations for a session (authenticated)
+  app.get("/api/parking/sessions/:id/validations", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const validations = await storage.getParkingValidations(tenantId, req.params.id);
+      res.json(validations);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch validations" });
+    }
+  });
+
   // Get parking sessions with enriched data
   app.get("/api/parking/sessions", isAuthenticated, async (req: any, res) => {
     try {
@@ -1912,6 +2010,18 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching customer insights:", error);
       res.status(500).json({ message: "Failed to fetch customer insights" });
+    }
+  });
+
+  // Cross-branch consolidated analytics
+  app.get("/api/analytics/cross-branch", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const data = await storage.getCrossBranchAnalytics(tenantId);
+      res.json(data);
+    } catch (error) {
+      console.error("Error fetching cross-branch analytics:", error);
+      res.status(500).json({ message: "Failed to fetch cross-branch analytics" });
     }
   });
 
@@ -2644,6 +2754,35 @@ export async function registerRoutes(
     }
   });
 
+  // =====================================================
+  // CUSTOMER SELF-SERVICE PORTAL (phone lookup)
+  // =====================================================
+
+  // Look up customer data by phone number (public — for self-serve portal)
+  app.get("/api/customer/portal", async (req: any, res) => {
+    try {
+      const { phone, tenantId: qTenant } = req.query as { phone?: string; tenantId?: string };
+      if (!phone) return res.status(400).json({ message: "phone is required" });
+      const tenantId = qTenant || "default";
+
+      const account = await storage.getLoyaltyAccountByPhone(tenantId, phone.trim());
+      if (!account) {
+        return res.status(404).json({ message: "No account found for this phone number. Visit us to register!" });
+      }
+
+      const [transactions, vouchers, bookings] = await Promise.all([
+        storage.getLoyaltyTransactionsByAccount(tenantId, account.id, 20).catch(() => []),
+        storage.getVouchersForAccount(tenantId, account.id).catch(() => []),
+        storage.getBookingsByPlate(tenantId, account.plateNormalized).catch(() => []),
+      ]);
+
+      res.json({ account, transactions, vouchers, bookings });
+    } catch (error) {
+      console.error("Customer portal error:", error);
+      res.status(500).json({ message: "Failed to load portal data" });
+    }
+  });
+
   // Walk-in customer registration (technician registers walk-in with consent)
   app.post("/api/customer/register-walkin", isAuthenticated, async (req: any, res) => {
     try {
@@ -3307,6 +3446,52 @@ export async function registerRoutes(
     }
   });
 
+  // =============================================
+  // NOTIFICATION TEMPLATES (customisable by manager)
+  // =============================================
+
+  // List all templates for this tenant
+  app.get("/api/manager/notification-templates", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const templates = await storage.getNotificationTemplates(tenantId, false);
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching notification templates:", error);
+      res.status(500).json({ message: "Failed to fetch templates" });
+    }
+  });
+
+  // Update a template
+  app.put("/api/manager/notification-templates/:id", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const { subject, body, isActive } = req.body;
+      const updated = await storage.updateNotificationTemplate(req.params.id, { subject, body, isActive }, tenantId);
+      if (!updated) return res.status(404).json({ message: "Template not found" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating notification template:", error);
+      res.status(500).json({ message: "Failed to update template" });
+    }
+  });
+
+  // Create (seed) a new template
+  app.post("/api/manager/notification-templates", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const { code, name, channel, subject, body } = req.body;
+      if (!code || !name || !channel || !body) {
+        return res.status(400).json({ message: "code, name, channel, and body are required" });
+      }
+      const template = await storage.createNotificationTemplate(tenantId, { code, name, channel, subject, body, isActive: true });
+      res.json(template);
+    } catch (error) {
+      console.error("Error creating notification template:", error);
+      res.status(500).json({ message: "Failed to create template" });
+    }
+  });
+
   // Get available services (tenant's own catalog)
   app.get("/api/manager/services", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
@@ -3540,6 +3725,85 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating timeslot config:", error);
       res.status(500).json({ message: "Failed to update timeslot config" });
+    }
+  });
+
+  // ================================================
+  // CUSTOMER SELF-BOOKING (public, rate-limited)
+  // ================================================
+
+  // Public: get available services for booking page
+  app.get("/api/booking/services", async (req: any, res) => {
+    try {
+      const tenantId = (req.query.tenantId as string) || "default";
+      const services = await storage.getBookingServices(tenantId, true);
+      res.json(services);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load services" });
+    }
+  });
+
+  // Public: get available slots for a specific date
+  app.get("/api/booking/available-slots", async (req: any, res) => {
+    try {
+      const { date, tenantId: qTenant } = req.query as { date?: string; tenantId?: string };
+      if (!date) return res.status(400).json({ message: "date is required (YYYY-MM-DD)" });
+      const tenantId = qTenant || "default";
+      const slots = await storage.getAvailableTimeSlots(tenantId, date);
+      res.json(slots);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load slots" });
+    }
+  });
+
+  // Public: submit a self-service booking (creates as PENDING status)
+  app.post("/api/booking/self-service", async (req: any, res) => {
+    try {
+      const { tenantId: bodyTenant, serviceId, date, time, customerName, customerPhone, customerEmail, plateDisplay } = req.body;
+      if (!serviceId || !date || !time || !customerName) {
+        return res.status(400).json({ message: "serviceId, date, time, and customerName are required" });
+      }
+      const tenantId = bodyTenant || "default";
+
+      // Get or create customer record (required — bookings.customerId is NOT NULL)
+      let customer = customerEmail
+        ? await storage.getBookingCustomerByEmail(tenantId, customerEmail).catch(() => null)
+        : null;
+      if (!customer) {
+        customer = await storage.createBookingCustomer(tenantId, {
+          name: customerName,
+          email: customerEmail || null,
+          phone: customerPhone || null,
+          plateNormalized: plateDisplay ? normalizePlate(plateDisplay) : null,
+        } as any);
+      }
+
+      // Get service details
+      const service = await storage.getBookingService(serviceId, tenantId).catch(() => null);
+
+      // Create the booking (confirmed — manager can review and cancel if capacity exceeded)
+      const booking = await storage.createBooking(tenantId, {
+        customerId: customer.id,
+        serviceId,
+        vehicleId: null,
+        bookingDate: date,
+        timeSlot: time,
+        status: "confirmed",
+        totalAmount: service?.price || null,
+        notes: `Self-service booking by ${customerName}${plateDisplay ? ` (${plateDisplay})` : ""}${customerPhone ? ` — ${customerPhone}` : ""}`,
+        createdBy: "self-service",
+      } as any);
+
+      await storage.logEvent(tenantId, {
+        type: "booking_self_service",
+        plateDisplay: plateDisplay || customerName,
+        payloadJson: { bookingId: booking.id, date, time, serviceId, customerName },
+      });
+
+      res.status(201).json({ bookingId: booking.id, message: "Booking submitted. You will be contacted to confirm." });
+    } catch (error) {
+      console.error("Self-service booking error:", error);
+      res.status(500).json({ message: "Failed to submit booking" });
     }
   });
 
@@ -3993,6 +4257,89 @@ export async function registerRoutes(
       res.json({ alert });
     } catch (error) {
       res.status(500).json({ message: "Failed to acknowledge alert" });
+    }
+  });
+
+  // =====================================================
+  // STAFF MESSAGES (two-way messaging)
+  // =====================================================
+
+  // Send a message (any authenticated user)
+  app.post("/api/staff/messages", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const userId = (req as any).user?.claims?.sub;
+      const userObj = await storage.getUserById(userId).catch(() => null);
+      const { message, recipientId } = req.body;
+      if (!message?.trim()) return res.status(400).json({ message: "message is required" });
+
+      const msg = await storage.createStaffMessage(tenantId, {
+        senderId: userId,
+        senderName: (userObj ? `${userObj.firstName || ""} ${userObj.lastName || ""}`.trim() || userObj.email : null) || userId,
+        senderRole: (req as any).user?.role || "staff",
+        recipientId: recipientId || null,
+        message: message.trim(),
+      });
+
+      // Real-time broadcast
+      broadcastEvent({ type: "new_staff_message", messageId: msg.id, senderId: userId, recipientId: recipientId || null });
+
+      res.status(201).json(msg);
+    } catch (error) {
+      console.error("POST /api/staff/messages error:", error);
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
+  // Get messages for current user
+  app.get("/api/staff/messages", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const userId = (req as any).user?.claims?.sub;
+      const { unreadOnly, limit } = req.query;
+      const messages = await storage.getStaffMessages(tenantId, {
+        userId: String(userId),
+        unreadOnly: unreadOnly === "true",
+        limit: limit ? parseInt(limit as string) : 50,
+      });
+      res.json(messages);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  // Get unread count
+  app.get("/api/staff/messages/unread-count", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const userId = (req as any).user?.claims?.sub;
+      const count = await storage.getUnreadStaffMessageCount(tenantId, String(userId));
+      res.json({ count });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  // Mark message as read
+  app.patch("/api/staff/messages/:id/read", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const updated = await storage.markStaffMessageRead(req.params.id, tenantId);
+      if (!updated) return res.status(404).json({ message: "Message not found" });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark message as read" });
+    }
+  });
+
+  // Get all staff for recipient selection (manager/admin)
+  app.get("/api/staff/members", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const users = await storage.getUsers(tenantId);
+      res.json(users.map((u) => ({ id: u.id, name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email, email: u.email, role: u.role })));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch staff" });
     }
   });
 
@@ -5054,6 +5401,19 @@ export async function registerRoutes(
     }
   });
 
+  // Inventory forecast
+  app.get("/api/inventory/forecast", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const days = Math.min(parseInt(String(req.query.days || "7")), 30);
+      const data = await storage.getInventoryForecast(tenantId, days);
+      res.json(data);
+    } catch (error) {
+      console.error("Error fetching inventory forecast:", error);
+      res.status(500).json({ message: "Failed to fetch inventory forecast" });
+    }
+  });
+
   // =====================
   // BILLING
   // =====================
@@ -5485,6 +5845,47 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting corporate account:", error);
       res.status(500).json({ message: "Failed to delete corporate account" });
+    }
+  });
+
+  // =====================
+  // CORPORATE PORTAL (public — auth by registration code)
+  // =====================
+
+  app.get("/api/corporate/portal/:code", async (req: any, res) => {
+    try {
+      const { code } = req.params;
+      const accounts = await storage.getCorporateAccounts();
+      const account = accounts.find((a) => a.registrationCode === code);
+      if (!account) return res.status(404).json({ message: "Account not found" });
+      if (account.status !== "APPROVED") {
+        return res.json({
+          id: account.id,
+          companyName: account.companyName,
+          status: account.status,
+          contactName: account.contactName,
+          contactEmail: account.contactEmail,
+        });
+      }
+      res.json({
+        id: account.id,
+        companyName: account.companyName,
+        companySlug: account.companySlug,
+        registrationNumber: account.registrationNumber,
+        registrationCode: account.registrationCode,
+        status: account.status,
+        contactName: account.contactName,
+        contactEmail: account.contactEmail,
+        contactPhone: account.contactPhone,
+        fleetSize: account.fleetSize,
+        fleetWashCount: account.fleetWashCount,
+        freeWashCredits: account.freeWashCredits,
+        approvedAt: account.approvedAt,
+        createdAt: account.createdAt,
+      });
+    } catch (error) {
+      console.error("Error fetching corporate portal data:", error);
+      res.status(500).json({ message: "Failed to load portal" });
     }
   });
 

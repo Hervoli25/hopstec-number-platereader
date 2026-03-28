@@ -10,7 +10,7 @@ import {
   suppliers, inventoryItems, inventoryConsumption, purchaseOrders,
   tenants, branches, webhookRetries, invoices,
   bookingServices, bookingCustomers, bookingVehicles, bookings, bookingTimeSlotConfig, bookingPayments,
-  corporateAccounts,
+  corporateAccounts, staffMessages,
   type WashJob, type InsertWashJob,
   type WashPhoto, type InsertWashPhoto,
   type ParkingSession, type InsertParkingSession,
@@ -26,6 +26,7 @@ import {
   type NotificationTemplate, type InsertNotificationTemplate,
   type TechnicianTimeLog, type InsertTechnicianTimeLog,
   type StaffAlert, type InsertStaffAlert,
+  type StaffMessage, type InsertStaffMessage,
   type LoyaltyAccount,
   type LoyaltyTransaction,
   type LoyaltyVoucher,
@@ -245,8 +246,16 @@ export interface IStorage {
   getStaffAlerts(tenantId: string, filters?: { unacknowledgedOnly?: boolean; technicianId?: string }): Promise<StaffAlert[]>;
   acknowledgeStaffAlert(alertId: string, acknowledgedBy: string, tenantId?: string): Promise<StaffAlert | undefined>;
 
+  // Staff Messages (two-way messaging)
+  createStaffMessage(tenantId: string, data: { senderId: string; senderName?: string; senderRole?: string; recipientId?: string; message: string; branchId?: string }): Promise<StaffMessage>;
+  getStaffMessages(tenantId: string, filters?: { userId?: string; unreadOnly?: boolean; limit?: number }): Promise<StaffMessage[]>;
+  markStaffMessageRead(id: string, tenantId?: string): Promise<StaffMessage | undefined>;
+  getUnreadStaffMessageCount(tenantId: string, userId: string): Promise<number>;
+
   // Loyalty Accounts
   getLoyaltyAccountByPlate(tenantId: string, plateNormalized: string): Promise<LoyaltyAccount | undefined>;
+  getLoyaltyAccountByPhone(tenantId: string, phone: string): Promise<LoyaltyAccount | undefined>;
+  getLoyaltyTransactionsByAccount(tenantId: string, loyaltyAccountId: string, limit?: number): Promise<LoyaltyTransaction[]>;
   getOrCreateLoyaltyAccount(tenantId: string, plateNormalized: string, plateDisplay: string, customerData?: { name?: string; phone?: string; email?: string }): Promise<LoyaltyAccount>;
   creditLoyaltyPoints(tenantId: string, accountId: string, points: number): Promise<LoyaltyAccount | undefined>;
   getLoyaltyAnalytics(tenantId: string): Promise<{ totalAccounts: number; totalPointsIssued: number; pointsIssuedToday: number; topEarners: { plateDisplay: string; customerName: string | null; pointsBalance: number; totalWashes: number }[] }>;
@@ -1822,6 +1831,48 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // Staff Messages
+  async createStaffMessage(tenantId: string, data: { senderId: string; senderName?: string; senderRole?: string; recipientId?: string; message: string; branchId?: string }): Promise<StaffMessage> {
+    const [result] = await db.insert(staffMessages).values({ tenantId, ...data }).returning();
+    return result;
+  }
+
+  async getStaffMessages(tenantId: string, filters?: { userId?: string; unreadOnly?: boolean; limit?: number }): Promise<StaffMessage[]> {
+    const conditions: any[] = [eq(staffMessages.tenantId, tenantId)];
+    if (filters?.unreadOnly) conditions.push(eq(staffMessages.isRead, false));
+    if (filters?.userId) {
+      // User sees messages sent to them or broadcast (null recipient) or sent by them
+      conditions.push(
+        sql`(${staffMessages.recipientId} = ${filters.userId} OR ${staffMessages.recipientId} IS NULL OR ${staffMessages.senderId} = ${filters.userId})`
+      );
+    }
+    const query = db.select().from(staffMessages).where(and(...conditions)).orderBy(desc(staffMessages.createdAt));
+    if (filters?.limit) return (query as any).limit(filters.limit);
+    return query;
+  }
+
+  async markStaffMessageRead(id: string, tenantId?: string): Promise<StaffMessage | undefined> {
+    const conditions: any[] = [eq(staffMessages.id, id)];
+    if (tenantId) conditions.push(eq(staffMessages.tenantId, tenantId));
+    const [updated] = await db.update(staffMessages)
+      .set({ isRead: true, readAt: new Date() })
+      .where(and(...conditions))
+      .returning();
+    return updated;
+  }
+
+  async getUnreadStaffMessageCount(tenantId: string, userId: string): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)` })
+      .from(staffMessages)
+      .where(and(
+        eq(staffMessages.tenantId, tenantId),
+        eq(staffMessages.isRead, false),
+        sql`(${staffMessages.recipientId} = ${userId} OR ${staffMessages.recipientId} IS NULL)`,
+        sql`${staffMessages.senderId} != ${userId}`,
+      ));
+    return Number(result?.count ?? 0);
+  }
+
   async findMembershipByEmail(tenantId: string, email: string): Promise<CustomerMembership | undefined> {
     const [membership] = await db
       .select()
@@ -1845,6 +1896,21 @@ export class DatabaseStorage implements IStorage {
       eq(loyaltyAccounts.plateNormalized, plateNormalized)
     ));
     return result;
+  }
+
+  async getLoyaltyAccountByPhone(tenantId: string, phone: string): Promise<LoyaltyAccount | undefined> {
+    const [result] = await db.select().from(loyaltyAccounts).where(and(
+      eq(loyaltyAccounts.tenantId, tenantId),
+      eq(loyaltyAccounts.customerPhone, phone)
+    ));
+    return result;
+  }
+
+  async getLoyaltyTransactionsByAccount(tenantId: string, loyaltyAccountId: string, limit = 30): Promise<LoyaltyTransaction[]> {
+    return db.select().from(loyaltyTransactions).where(and(
+      eq(loyaltyTransactions.tenantId, tenantId),
+      eq(loyaltyTransactions.loyaltyAccountId, loyaltyAccountId)
+    )).orderBy(desc(loyaltyTransactions.createdAt)).limit(limit);
   }
 
   async getOrCreateLoyaltyAccount(tenantId: string, plateNormalized: string, plateDisplay: string, customerData?: { name?: string; phone?: string; email?: string }): Promise<LoyaltyAccount> {
@@ -2435,6 +2501,104 @@ export class DatabaseStorage implements IStorage {
     ).orderBy(sql`${inventoryItems.currentStock}::numeric / GREATEST(${inventoryItems.minimumStock}, 1) asc`);
   }
 
+  // ─── Inventory Forecast ────────────────────────────────────────────────
+
+  async getInventoryForecast(tenantId: string, days: number = 7) {
+    const now = new Date();
+    const forecastEnd = new Date(now);
+    forecastEnd.setDate(forecastEnd.getDate() + days);
+    const todayStr = now.toISOString().split("T")[0];
+    const endStr = forecastEnd.toISOString().split("T")[0];
+
+    // Get upcoming confirmed/in_progress bookings within the forecast window
+    const upcomingBookings = await db
+      .select({ serviceId: bookings.serviceId })
+      .from(bookings)
+      .where(
+        and(
+          eq(bookings.tenantId, tenantId),
+          sql`${bookings.bookingDate} >= ${todayStr}`,
+          sql`${bookings.bookingDate} <= ${endStr}`,
+          sql`${bookings.status} IN ('confirmed', 'in_progress')`
+        )
+      );
+
+    // Get all active inventory items with consumption maps
+    const items = await db
+      .select()
+      .from(inventoryItems)
+      .where(and(eq(inventoryItems.tenantId, tenantId), eq(inventoryItems.isActive, true)));
+
+    // Get booking services to map serviceId → name
+    const services = await db
+      .select({ id: bookingServices.id, name: bookingServices.name })
+      .from(bookingServices)
+      .where(eq(bookingServices.tenantId, tenantId));
+
+    const serviceMap = new Map(services.map((s) => [s.id, s.name]));
+
+    // Count bookings per serviceId
+    const bookingCountByService = new Map<string, number>();
+    for (const b of upcomingBookings) {
+      if (b.serviceId) {
+        bookingCountByService.set(b.serviceId, (bookingCountByService.get(b.serviceId) || 0) + 1);
+      }
+    }
+    const totalBookings = upcomingBookings.length;
+
+    // For each item: estimate projected consumption
+    const forecast = items.map((item) => {
+      const consumptionMap = (item.consumptionMap as Record<string, number>) || {};
+      let projectedConsumption = 0;
+
+      // If item has per-service consumption data, use it
+      for (const [serviceId, count] of Array.from(bookingCountByService.entries())) {
+        const consumption = consumptionMap[serviceId] || 0;
+        projectedConsumption += consumption * count;
+      }
+
+      // Fallback: if no consumption map, use historical average (total consumption / 30 days * forecastDays)
+      if (projectedConsumption === 0 && totalBookings > 0 && Object.keys(consumptionMap).length === 0) {
+        // Skip items with no consumption mapping
+        return null;
+      }
+
+      const currentStock = item.currentStock || 0;
+      const projectedRemaining = currentStock - projectedConsumption;
+      const willRunOut = projectedRemaining < 0;
+      const shortfallAmount = willRunOut ? Math.abs(projectedRemaining) : 0;
+      const neededToOrder = shortfallAmount > 0 ? Math.ceil(shortfallAmount / 100) * 100 : 0; // round up to nearest 100 hundredths
+
+      return {
+        itemId: item.id,
+        itemName: item.name,
+        unit: item.unit,
+        currentStock,
+        minimumStock: item.minimumStock || 0,
+        projectedConsumption,
+        projectedRemaining,
+        willRunOut,
+        shortfallAmount,
+        neededToOrder,
+        supplierId: item.supplierId,
+        costPerUnit: item.costPerUnit || 0,
+      };
+    }).filter(Boolean) as NonNullable<ReturnType<typeof items.map>[number]>[];
+
+    const bookingBreakdown = Array.from(bookingCountByService.entries() as Iterable<[string, number]>).map(([serviceId, count]) => ({
+      serviceId,
+      serviceName: serviceMap.get(serviceId) || serviceId,
+      count,
+    }));
+
+    return {
+      forecastDays: days,
+      totalUpcomingBookings: totalBookings,
+      bookingBreakdown,
+      forecast,
+    };
+  }
+
   // ─── Tenants ──────────────────────────────────────────────────────────
 
   async createTenant(tenant: InsertTenant): Promise<Tenant> {
@@ -2826,6 +2990,114 @@ export class DatabaseStorage implements IStorage {
     const date = new Date();
     const prefix = `RCT-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}`;
     return `${prefix}-${String(num).padStart(5, "0")}`;
+  }
+
+  // ─── Cross-Branch Analytics ────────────────────────────────────────────
+
+  async getCrossBranchAnalytics(tenantId: string) {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    const branchList = await db.select().from(branches).where(and(eq(branches.tenantId, tenantId), eq(branches.isActive, true))).orderBy(asc(branches.name));
+
+    // Revenue & wash counts per branch (current month)
+    const washByBranch = await db
+      .select({
+        branchId: washJobs.branchId,
+        revenue: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(washJobs)
+      .where(and(eq(washJobs.tenantId, tenantId), gte(washJobs.createdAt, monthStart)))
+      .groupBy(washJobs.branchId);
+
+    // Last month for comparison
+    const lastMonthWashByBranch = await db
+      .select({
+        branchId: washJobs.branchId,
+        revenue: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(washJobs)
+      .where(and(eq(washJobs.tenantId, tenantId), gte(washJobs.createdAt, lastMonthStart), lt(washJobs.createdAt, monthStart)))
+      .groupBy(washJobs.branchId);
+
+    // Parking revenue per branch (current month)
+    const parkingByBranch = await db
+      .select({
+        branchId: parkingSessions.branchId,
+        revenue: sql<number>`COALESCE(SUM(${parkingSessions.calculatedFee}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(parkingSessions)
+      .where(and(eq(parkingSessions.tenantId, tenantId), gte(parkingSessions.createdAt, monthStart), isNotNull(parkingSessions.exitAt)))
+      .groupBy(parkingSessions.branchId);
+
+    // Daily revenue for last 30 days (all branches combined)
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const dailyRevenue = await db
+      .select({
+        day: sql<string>`to_char(DATE_TRUNC('day', ${washJobs.createdAt}), 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(${washJobs.price}), 0)::int`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(washJobs)
+      .where(and(eq(washJobs.tenantId, tenantId), gte(washJobs.createdAt, thirtyDaysAgo)))
+      .groupBy(sql`DATE_TRUNC('day', ${washJobs.createdAt})`)
+      .orderBy(sql`DATE_TRUNC('day', ${washJobs.createdAt})`);
+
+    // Build per-branch result
+    const branchData = branchList.map((b) => {
+      const wash = washByBranch.find((w) => w.branchId === b.id) || { revenue: 0, count: 0 };
+      const lastWash = lastMonthWashByBranch.find((w) => w.branchId === b.id) || { revenue: 0, count: 0 };
+      const parking = parkingByBranch.find((p) => p.branchId === b.id) || { revenue: 0, count: 0 };
+      const totalRevenue = wash.revenue + parking.revenue;
+      const lastTotalRevenue = lastWash.revenue;
+      const pctChange = lastTotalRevenue > 0 ? Math.round(((totalRevenue - lastTotalRevenue) / lastTotalRevenue) * 100) : null;
+      return {
+        id: b.id,
+        name: b.name,
+        address: b.address,
+        washCount: wash.count,
+        washRevenue: wash.revenue,
+        parkingCount: parking.count,
+        parkingRevenue: parking.revenue,
+        totalRevenue,
+        lastMonthRevenue: lastTotalRevenue,
+        revenueChangePct: pctChange,
+      };
+    });
+
+    // Also include null-branchId as "Unassigned"
+    const unassignedWash = washByBranch.find((w) => w.branchId === null) || { revenue: 0, count: 0 };
+    const unassignedParking = parkingByBranch.find((p) => p.branchId === null) || { revenue: 0, count: 0 };
+    if (unassignedWash.count > 0 || unassignedParking.count > 0) {
+      branchData.push({
+        id: "unassigned",
+        name: "Unassigned",
+        address: null,
+        washCount: unassignedWash.count,
+        washRevenue: unassignedWash.revenue,
+        parkingCount: unassignedParking.count,
+        parkingRevenue: unassignedParking.revenue,
+        totalRevenue: unassignedWash.revenue + unassignedParking.revenue,
+        lastMonthRevenue: 0,
+        revenueChangePct: null,
+      });
+    }
+
+    const totals = branchData.reduce(
+      (acc, b) => ({
+        revenue: acc.revenue + b.totalRevenue,
+        washes: acc.washes + b.washCount,
+        parkings: acc.parkings + b.parkingCount,
+      }),
+      { revenue: 0, washes: 0, parkings: 0 }
+    );
+
+    return { branches: branchData, totals, dailyRevenue };
   }
 
   // ─── Tenant Stats ─────────────────────────────────────────────────────

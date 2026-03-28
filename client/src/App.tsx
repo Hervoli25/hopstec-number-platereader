@@ -28,6 +28,11 @@ import ManagerRoster from "@/pages/manager-roster";
 import ManagerInventory from "@/pages/manager-inventory";
 import ManagerBranding from "@/pages/manager-branding";
 import ManagerBranches from "@/pages/manager-branches";
+import ManagerNotificationTemplates from "@/pages/manager-notification-templates";
+import ManagerTimeslots from "@/pages/manager-timeslots";
+import CustomerBooking from "@/pages/customer-booking";
+import StaffMessages from "@/pages/staff-messages";
+import ManagerCrossBranch from "@/pages/manager-cross-branch";
 import ManagerRevenue from "@/pages/manager-revenue";
 import ManagerCustomers from "@/pages/manager-customers";
 import AdminUsers from "@/pages/admin-users";
@@ -42,6 +47,9 @@ import ParkingDashboard from "@/pages/parking-dashboard";
 import ParkingZones from "@/pages/parking-zones";
 import ParkingVIP from "@/pages/parking-vip";
 import ParkingReservations from "@/pages/parking-reservations";
+import ParkingValidator from "@/pages/parking-validator";
+import CustomerPortal from "@/pages/customer-portal";
+import CorporatePortal from "@/pages/corporate-portal";
 import BusinessSettings from "@/pages/business-settings";
 import PrivacyPolicy from "@/pages/legal/privacy";
 import TermsOfService from "@/pages/legal/terms";
@@ -87,7 +95,11 @@ function AppRouter() {
                        location.startsWith("/customer/job/") ||
                        location.startsWith("/legal/") ||
                        location.startsWith("/help") ||
-                       location.startsWith("/t/");
+                       location.startsWith("/t/") ||
+                       location === "/parking/validate" ||
+                       location === "/book" ||
+                       location === "/my-account" ||
+                       location === "/corporate";
 
   // Landing page is public
   if (location === "/landing") {
@@ -114,6 +126,10 @@ function AppRouter() {
         <Route path="/help/customer" component={CustomerGuide} />
         <Route path="/help/faq" component={FAQ} />
         <Route path="/help/getting-started" component={GettingStarted} />
+        <Route path="/parking/validate" component={ParkingValidator} />
+        <Route path="/book" component={CustomerBooking} />
+        <Route path="/my-account" component={CustomerPortal} />
+        <Route path="/corporate" component={CorporatePortal} />
         <Route component={NotFound} />
       </Switch>
     );
@@ -145,6 +161,10 @@ function AppRouter() {
         <Route path="/manager/revenue" component={ManagerRevenue} />
         <Route path="/manager/customers" component={ManagerCustomers} />
         <Route path="/manager/branding" component={ManagerBranding} />
+        <Route path="/manager/notification-templates" component={ManagerNotificationTemplates} />
+        <Route path="/manager/timeslots" component={ManagerTimeslots} />
+        <Route path="/staff/messages" component={StaffMessages} />
+        <Route path="/manager/cross-branch" component={ManagerCrossBranch} />
         <Route path="/manager/branches" component={ManagerBranches} />
         <Route path="/manager/billing" component={TenantBilling} />
         <Route path="/manager/settings" component={BusinessSettings} />
