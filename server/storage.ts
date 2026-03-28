@@ -95,6 +95,7 @@ export interface IStorage {
   getWashJob(id: string, tenantId: string): Promise<WashJob | undefined>;
   getWashJobs(tenantId: string, filters?: { status?: string; technicianId?: string; fromDate?: Date }): Promise<WashJob[]>;
   updateWashJobStatus(id: string, status: string, tenantId?: string): Promise<WashJob | undefined>;
+  updateWashJobPrice(id: string, adminPrice: number, reason: string, overrideBy: string, tenantId?: string): Promise<WashJob | undefined>;
   completeWashJob(id: string, tenantId?: string): Promise<WashJob | undefined>;
   deleteWashJob(id: string, tenantId?: string): Promise<boolean>;
 
@@ -270,6 +271,7 @@ export interface IStorage {
   getBookingCustomers(tenantId: string, filters?: { search?: string; limit?: number }): Promise<BookingCustomer[]>;
   getBookingCustomer(id: string, tenantId?: string): Promise<BookingCustomer | undefined>;
   getBookingCustomerByEmail(tenantId: string, email: string): Promise<BookingCustomer | undefined>;
+  getBookingCustomerByPlate(tenantId: string, plateNormalized: string): Promise<BookingCustomer | undefined>;
   updateBookingCustomer(id: string, data: Partial<InsertBookingCustomer>, tenantId?: string): Promise<BookingCustomer | undefined>;
 
   // Booking Vehicles
@@ -592,6 +594,23 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date() 
       })
       .where(eq(washJobs.id, id))
+      .returning();
+    return result;
+  }
+
+  async updateWashJobPrice(id: string, adminPrice: number, reason: string, overrideBy: string, tenantId?: string): Promise<WashJob | undefined> {
+    const conditions = [eq(washJobs.id, id)];
+    if (tenantId) conditions.push(eq(washJobs.tenantId, tenantId));
+
+    const [result] = await db
+      .update(washJobs)
+      .set({
+        adminPrice,
+        priceOverrideReason: reason,
+        priceOverrideBy: overrideBy,
+        updatedAt: new Date(),
+      })
+      .where(and(...conditions))
       .returning();
     return result;
   }
@@ -1831,7 +1850,19 @@ export class DatabaseStorage implements IStorage {
   async getOrCreateLoyaltyAccount(tenantId: string, plateNormalized: string, plateDisplay: string, customerData?: { name?: string; phone?: string; email?: string }): Promise<LoyaltyAccount> {
     // Check if account already exists
     const existing = await this.getLoyaltyAccountByPlate(tenantId, plateNormalized);
-    if (existing) return existing;
+    if (existing) {
+      // If account is anonymous and CRM data is now available, backfill name/phone/email
+      if (existing.customerName === null && customerData?.name) {
+        const [updated] = await db.update(loyaltyAccounts).set({
+          customerName: customerData.name,
+          customerPhone: customerData.phone || existing.customerPhone,
+          customerEmail: customerData.email || existing.customerEmail,
+          updatedAt: new Date(),
+        } as any).where(eq(loyaltyAccounts.id, existing.id)).returning();
+        return updated ?? existing;
+      }
+      return existing;
+    }
 
     // Generate a membership number
     const memberNumber = `LYL-${Date.now().toString(36).toUpperCase()}`;
@@ -2546,6 +2577,11 @@ export class DatabaseStorage implements IStorage {
 
   async getBookingCustomerByEmail(tenantId: string, email: string): Promise<BookingCustomer | undefined> {
     const [result] = await db.select().from(bookingCustomers).where(and(eq(bookingCustomers.tenantId, tenantId), eq(bookingCustomers.email, email)));
+    return result;
+  }
+
+  async getBookingCustomerByPlate(tenantId: string, plateNormalized: string): Promise<BookingCustomer | undefined> {
+    const [result] = await db.select().from(bookingCustomers).where(and(eq(bookingCustomers.tenantId, tenantId), eq(bookingCustomers.plateNormalized, plateNormalized)));
     return result;
   }
 

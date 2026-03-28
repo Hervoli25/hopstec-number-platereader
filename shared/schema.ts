@@ -84,6 +84,9 @@ export const washJobs = pgTable("wash_jobs", {
   packageName: varchar("package_name", { length: 100 }),
   vehicleSize: varchar("vehicle_size", { length: 20 }),
   price: integer("price"), // in cents (e.g., 15000 = R150.00)
+  adminPrice: integer("admin_price"), // admin-overridden price in cents (null = no override)
+  priceOverrideReason: varchar("price_override_reason", { length: 255 }), // reason for admin override
+  priceOverrideBy: varchar("price_override_by", { length: 255 }), // admin user ID who overrode
   stageTimestamps: jsonb("stage_timestamps").$type<Record<string, string>>(),
   priority: integer("priority").default(0),
   priorityFactors: jsonb("priority_factors").$type<Record<string, number>>(),
@@ -1148,6 +1151,15 @@ export const SERVICE_PACKAGES: Record<string, ServicePackageConfig> = {
     serviceCode: "FULL_VALET",
     pricing: { small: 1000, medium: 1200, large: 1400 },
     steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Clay Bar Treatment", "Hand Dry & Vacuum", "Machine Polishing", "Paint Correction", "Ceramic Sealant Application", "Interior Deep Clean", "Fabric & Leather Clean", "Dashboard & Trim Restoration", "Engine Bay Cleaning", "Tyre Shine", "Window Cleaning", "Quality Check"],
+  },
+  UBER_PARTNER: {
+    label: "Uber Partner Wash",
+    description: "Flat R90 rate for registered Uber drivers. Standard exterior and interior wash.",
+    tier: "STANDARD",
+    durationMinutes: 30,
+    serviceCode: "STANDARD",
+    pricing: { small: 90, medium: 90, large: 90 },
+    steps: ["Receive Car", "High Pressure Wash", "Foam Application", "Rinse", "Hand Dry & Vacuum", "Interior Vacuum", "Tyre Shine", "Quality Check"],
   },
 };
 

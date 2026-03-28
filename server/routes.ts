@@ -43,12 +43,15 @@ import {
   getBookingWithMembership,
   getUpcomingBookingsWithMemberships,
   findCRMCustomerByPlate,
+  findCRMUberDriverByPlate,
+  findCRMMembershipByPlate,
   getCRMLoyaltyAnalytics,
   getCRMGrowthAnalytics,
   getCRMCorporateAccounts,
   getCRMCorporateAccount,
   updateCRMCorporateAccount,
   deleteCRMCorporateAccount,
+  creditCRMLoyaltyPoints,
 } from "./lib/booking-db";
 import {
   calculateParkingFee,
@@ -526,6 +529,56 @@ export async function registerRoutes(
     }
   });
 
+  // Admin price override on wash job
+  app.patch("/api/wash-jobs/:id/price", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const userId = req.user?.claims?.sub;
+
+      const schema = z.object({
+        adminPrice: z.number().min(0, "Price must be non-negative"),
+        reason: z.string().min(1, "Reason is required"),
+      });
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.errors[0].message });
+      }
+
+      const { adminPrice, reason } = result.data;
+
+      const job = await storage.updateWashJobPrice(
+        req.params.id,
+        adminPrice, // already in cents from frontend
+        reason,
+        userId || "unknown",
+        tenantId
+      );
+
+      if (!job) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+
+      // Log event
+      await storage.logEvent(tenantId, {
+        type: "wash_price_override",
+        plateDisplay: job.plateDisplay,
+        plateNormalized: job.plateNormalized,
+        countryHint: job.countryHint,
+        washJobId: job.id,
+        userId,
+        payloadJson: { adminPrice, reason, originalPrice: job.price },
+      });
+
+      // Broadcast update
+      broadcastEvent({ type: "wash_price_override", job });
+
+      res.json(job);
+    } catch (error) {
+      console.error("Error updating wash job price:", error);
+      res.status(500).json({ message: "Failed to update price" });
+    }
+  });
+
   // Update wash job status
   app.patch("/api/wash-jobs/:id/status", isAuthenticated, async (req: any, res) => {
     try {
@@ -599,9 +652,17 @@ export async function registerRoutes(
             : (LOYALTY_POINTS_PER_SERVICE[svcCode] || 0);
 
           if (basePoints > 0) {
-            // Get or create local loyalty account for this plate
+            // Look up CRM customer to enrich local loyalty account with name/phone
+            const crmCustForAccount = await findCRMCustomerByPlate(job.plateDisplay).catch(() => null);
+
+            // Get or create local loyalty account for this plate (pass CRM data if available)
             const loyaltyAccount = await storage.getOrCreateLoyaltyAccount(
-              tenantId, job.plateNormalized, job.plateDisplay
+              tenantId, job.plateNormalized, job.plateDisplay,
+              crmCustForAccount ? {
+                name: crmCustForAccount.customerName || undefined,
+                phone: crmCustForAccount.customerPhone || undefined,
+                email: crmCustForAccount.customerEmail || undefined,
+              } : undefined
             );
 
             const pointsToAward = basePoints;
@@ -724,6 +785,11 @@ export async function registerRoutes(
             const localMembership = await storage.getActiveMembershipForPlate(tenantId, job.plateNormalized);
             if (localMembership) {
               await storage.incrementMembershipWashUsed(localMembership.id, tenantId);
+            }
+
+            // === ALSO CREDIT CRM USER POINTS (non-blocking) ===
+            if (crmCustForAccount?.userId) {
+              creditCRMLoyaltyPoints(crmCustForAccount.userId, pointsToAward).catch(() => {});
             }
           }
         } catch (loyaltyErr) {
@@ -2532,7 +2598,7 @@ export async function registerRoutes(
   // LOYALTY POINTS
   // =====================
 
-  // Combined customer lookup by plate: local data (frequent parker + membership + loyalty)
+  // Combined customer lookup by plate: local data + CRM data (membership, subscription, Uber)
   app.get("/api/customer/lookup-by-plate", isAuthenticated, async (req: any, res) => {
     try {
       const tenantId = (req as any).tenantId || "default";
@@ -2543,17 +2609,22 @@ export async function registerRoutes(
 
       const plateNormalized = normalizePlate(plate);
 
-      const [frequentParker, membership, loyaltyAccount] = await Promise.all([
+      const [frequentParker, membership, loyaltyAccount, crmCustomer, crmMembership, crmSubscription, crmUberDriver] = await Promise.all([
         storage.getFrequentParker(tenantId, plateNormalized).catch(() => null),
         storage.findMembershipByPlate(tenantId, plateNormalized).catch(() => null),
         storage.getLoyaltyAccountByPlate(tenantId, plateNormalized).catch(() => null),
+        findCRMCustomerByPlate(plate).catch(() => null),
+        findCRMMembershipByPlate(plate).catch(() => null),
+        findCRMSubscriptionByPlate(plate).catch(() => null),
+        findCRMUberDriverByPlate(plate).catch(() => null),
       ]);
 
       const activeVouchers = loyaltyAccount
         ? await storage.getActiveVouchersForAccount(tenantId, loyaltyAccount.id).catch(() => [])
         : [];
 
-      const isRegistered = !!(frequentParker || membership || loyaltyAccount);
+      const isRegistered = !!(frequentParker || membership || loyaltyAccount || crmCustomer);
+      const isUberDriver = !!crmUberDriver;
 
       res.json({
         isRegistered,
@@ -2561,10 +2632,82 @@ export async function registerRoutes(
         membership,
         loyaltyAccount,
         activeVouchers,
+        crmCustomer,
+        crmMembership,
+        crmSubscription,
+        isUberDriver,
+        crmUberDriver,
       });
     } catch (error) {
       console.error("Error looking up customer by plate:", error);
       res.status(500).json({ message: "Failed to look up customer" });
+    }
+  });
+
+  // Walk-in customer registration (technician registers walk-in with consent)
+  app.post("/api/customer/register-walkin", isAuthenticated, async (req: any, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "default";
+      const userId = req.user?.claims?.sub;
+
+      const walkinSchema = z.object({
+        plate: z.string().min(1, "Plate is required"),
+        name: z.string().min(1, "Name is required"),
+        phone: z.string().optional(),
+        email: z.string().email().optional().or(z.literal("")),
+        consent: z.boolean().refine(v => v === true, "Customer consent is required"),
+      });
+
+      const result = walkinSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error.errors[0].message });
+      }
+
+      const { plate, name, phone, email, consent } = result.data;
+      const plateNormalized = normalizePlate(plate);
+      const plateDisplay = displayPlate(plate);
+
+      // Check if customer already exists
+      const existing = await storage.getBookingCustomerByPlate(tenantId, plateNormalized).catch(() => null);
+      if (existing) {
+        return res.status(409).json({ message: "Customer already registered with this plate", customer: existing });
+      }
+
+      // Create booking customer record
+      const customer = await storage.createBookingCustomer(tenantId, {
+        name,
+        email: email || null,
+        phone: phone || null,
+        plateNormalized,
+        notes: `Walk-in registered by technician. Consent given.`,
+      });
+
+      // Auto-create loyalty account for the walk-in
+      const loyaltyAccount = await storage.getOrCreateLoyaltyAccount(
+        tenantId,
+        plateNormalized,
+        plateDisplay,
+        { name, phone: phone || undefined, email: email || undefined }
+      );
+
+      // Log event
+      await storage.logEvent(tenantId, {
+        type: "walkin_registered",
+        plateDisplay,
+        plateNormalized,
+        washJobId: null,
+        userId,
+        payloadJson: { customerName: name, hasEmail: !!email, hasPhone: !!phone },
+      });
+
+      res.status(201).json({
+        customer,
+        loyaltyAccount,
+        message: "Walk-in customer registered successfully",
+      });
+    } catch (error) {
+      console.error("Error registering walk-in customer:", error);
+      res.status(500).json({ message: "Failed to register customer" });
     }
   });
 
@@ -2594,9 +2737,13 @@ export async function registerRoutes(
   // Loyalty analytics (local accounts + transaction history)
   app.get("/api/loyalty/analytics", isAuthenticated, requireRole("manager", "admin"), async (req: any, res) => {
     try {
-      const crmAnalytics = await getCRMLoyaltyAnalytics();
+      const tenantId = (req as any).tenantId || "default";
+      const [crmAnalytics, localAnalytics] = await Promise.all([
+        getCRMLoyaltyAnalytics().catch(() => null),
+        storage.getLoyaltyAnalytics(tenantId).catch(() => null),
+      ]);
 
-      if (!crmAnalytics) {
+      if (!crmAnalytics && !localAnalytics) {
         return res.json({
           totalAccounts: 0,
           totalPointsIssued: 0,
@@ -2607,16 +2754,16 @@ export async function registerRoutes(
       }
 
       res.json({
-        totalAccounts: crmAnalytics.totalMembers,
-        totalPointsIssued: crmAnalytics.totalPointsAcrossMembers,
+        totalAccounts: crmAnalytics?.totalMembers ?? localAnalytics?.totalAccounts ?? 0,
+        totalPointsIssued: crmAnalytics?.totalPointsAcrossMembers ?? localAnalytics?.totalPointsIssued ?? 0,
         totalPointsRedeemed: 0,
-        pointsIssuedToday: 0,
-        topEarners: crmAnalytics.topMembers.map(m => ({
+        pointsIssuedToday: localAnalytics?.pointsIssuedToday ?? 0,
+        topEarners: crmAnalytics?.topMembers.map(m => ({
           plateDisplay: m.memberNumber || "N/A",
           customerName: m.customerName,
           pointsBalance: m.loyaltyPoints,
           totalWashes: 0,
-        })),
+        })) ?? localAnalytics?.topEarners ?? [],
       });
     } catch (error) {
       console.error("Error fetching loyalty analytics:", error);

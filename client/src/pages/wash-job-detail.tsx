@@ -15,7 +15,7 @@ import { enqueueRequest } from "@/lib/offline-queue";
 import { PhotoCheckpointDialog } from "@/components/photo-checkpoint-dialog";
 import {
   ArrowLeft, Check, Loader2, Camera, Trash2,
-  Car, Clock, Calendar, Award, SkipForward, CheckCircle2, Circle
+  Car, Clock, Calendar, Award, SkipForward, CheckCircle2, Circle, Pencil, DollarSign
 } from "lucide-react";
 import { useVoiceCommands } from "@/hooks/use-voice-commands";
 import { VoiceCommandButton } from "@/components/voice-command-button";
@@ -55,6 +55,7 @@ export default function WashJobDetail() {
   const [pendingComplete, setPendingComplete] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const canDelete = user?.role === "manager" || user?.role === "admin" || user?.role === "super_admin";
+  const canEditPrice = canDelete; // same roles that can delete can also override price
 
   const { data: job, isLoading } = useQuery<JobWithChecklist>({
     queryKey: ["/api/wash-jobs", params.id],
@@ -198,6 +199,65 @@ export default function WashJobDetail() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   });
+
+  // Price override mutation
+  const priceOverrideMutation = useMutation({
+    mutationFn: async (data: { adminPrice: number; reason: string }) => {
+      const res = await apiRequest("PATCH", `/api/wash-jobs/${params.id}/price`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wash-jobs"] });
+      toast({ title: "Price updated", description: "Admin price override applied." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handlePriceOverride = async () => {
+    if (!job) return;
+    const currentPrice = job.adminPrice ?? job.price ?? 0;
+    const currentRands = (currentPrice / 100).toFixed(2);
+
+    const result = await Swal.fire({
+      title: "Override Price",
+      html: `
+        <div style="text-align:left;margin-bottom:8px;">
+          <label style="font-size:14px;font-weight:600;">New Price (Rands)</label>
+        </div>
+        <input id="swal-price" class="swal2-input" type="number" min="0" step="0.01" value="${currentRands}" placeholder="e.g. 90.00" style="margin-top:0">
+        <div style="text-align:left;margin-top:12px;margin-bottom:8px;">
+          <label style="font-size:14px;font-weight:600;">Reason</label>
+        </div>
+        <input id="swal-reason" class="swal2-input" type="text" placeholder="e.g. Loyalty discount, manager approval" style="margin-top:0">
+      `,
+      showCancelButton: true,
+      confirmButtonColor: "#3b82f6",
+      cancelButtonColor: "#6b7280",
+      confirmButtonText: "Update Price",
+      focusConfirm: false,
+      preConfirm: () => {
+        const priceInput = (document.getElementById("swal-price") as HTMLInputElement).value;
+        const reasonInput = (document.getElementById("swal-reason") as HTMLInputElement).value;
+        const priceNum = parseFloat(priceInput);
+        if (isNaN(priceNum) || priceNum < 0) {
+          Swal.showValidationMessage("Please enter a valid price");
+          return;
+        }
+        if (!reasonInput.trim()) {
+          Swal.showValidationMessage("Please provide a reason for the override");
+          return;
+        }
+        return { adminPrice: Math.round(priceNum * 100), reason: reasonInput.trim() };
+      },
+    });
+
+    if (result.isConfirmed && result.value) {
+      priceOverrideMutation.mutate(result.value);
+    }
+  };
 
   // Voice command handler
   const handleVoiceCommand = useCallback(async (command: "next" | "complete") => {
@@ -408,6 +468,57 @@ export default function WashJobDetail() {
                 <Badge variant="outline">{job.countryHint}</Badge>
               )}
             </div>
+
+            {/* Price display & override */}
+            {(job.price || job.adminPrice) && (
+              <div className="mt-3 flex items-center gap-2 text-sm">
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Price:</span>
+                {job.adminPrice ? (
+                  <span className="font-semibold">
+                    <span className="line-through text-muted-foreground mr-1">
+                      R{((job.price || 0) / 100).toFixed(2)}
+                    </span>
+                    <span className="text-primary">R{(job.adminPrice / 100).toFixed(2)}</span>
+                    <Badge variant="outline" className="ml-1 text-[10px]">Override</Badge>
+                  </span>
+                ) : (
+                  <span className="font-semibold">R{((job.price || 0) / 100).toFixed(2)}</span>
+                )}
+                {canEditPrice && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 ml-1"
+                    onClick={handlePriceOverride}
+                    disabled={priceOverrideMutation.isPending}
+                    data-testid="button-edit-price"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+            )}
+            {!job.price && !job.adminPrice && canEditPrice && (
+              <div className="mt-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={handlePriceOverride}
+                  disabled={priceOverrideMutation.isPending}
+                  data-testid="button-set-price"
+                >
+                  <DollarSign className="h-3 w-3 mr-1" />
+                  Set Price
+                </Button>
+              </div>
+            )}
+            {job.priceOverrideReason && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Override reason: {job.priceOverrideReason}
+              </p>
+            )}
 
             {/* Elapsed timer */}
             {!isComplete && (

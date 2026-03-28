@@ -864,6 +864,56 @@ export async function findCRMCustomerByPlate(licensePlate: string): Promise<CRMC
   }
 }
 
+// Uber driver info from CRM
+export interface CRMUberDriver {
+  userId: string;
+  customerName: string | null;
+  customerEmail: string;
+  customerPhone: string | null;
+  licensePlate: string;
+  isUber: boolean;
+}
+
+// Find Uber driver by license plate (User.isUber + Vehicle)
+export async function findCRMUberDriverByPlate(licensePlate: string): Promise<CRMUberDriver | null> {
+  const pool = getBookingPool();
+  if (!pool) return null;
+
+  try {
+    const normalizedPlate = licensePlate.replace(/[\s-]/g, "").toUpperCase();
+
+    const result = await pool.query(`
+      SELECT
+        u.id as "userId",
+        u.name as "customerName",
+        u.email as "customerEmail",
+        u.phone as "customerPhone",
+        u."isUber",
+        v."licensePlate"
+      FROM "Vehicle" v
+      JOIN "User" u ON v."userId" = u.id
+      WHERE UPPER(REPLACE(REPLACE(v."licensePlate", ' ', ''), '-', '')) = $1
+        AND u."isUber" = true
+      LIMIT 1
+    `, [normalizedPlate]);
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      userId: row.userId,
+      customerName: row.customerName,
+      customerEmail: row.customerEmail,
+      customerPhone: row.customerPhone,
+      licensePlate: row.licensePlate,
+      isUber: true,
+    };
+  } catch (error) {
+    console.error("Error finding CRM Uber driver by plate:", error);
+    return null;
+  }
+}
+
 // Get booking with membership info
 export async function getBookingWithMembership(bookingId: string): Promise<CRMBooking & { subscription?: CRMSubscription } | null> {
   const pool = getBookingPool();

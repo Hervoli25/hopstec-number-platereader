@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Swal from "sweetalert2";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -13,7 +14,7 @@ import { enqueueRequest } from "@/lib/offline-queue";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft, Camera, Keyboard, Loader2, Car, Award,
-  Clock, ChevronRight, CheckCircle2, Ticket
+  Clock, ChevronRight, CheckCircle2, Ticket, UserPlus
 } from "lucide-react";
 import type { CountryHint, VehicleSize } from "@shared/schema";
 import { SERVICE_PACKAGES, SERVICE_TIER_COLORS, VEHICLE_SIZES } from "@shared/schema";
@@ -158,6 +159,73 @@ export default function ScanCarwash() {
     setShowServiceSelect(true);
   };
 
+  const handleRegisterWalkin = async () => {
+    if (!pendingPlate) return;
+
+    const result = await Swal.fire({
+      title: "Register Walk-in Customer",
+      html: `
+        <p style="font-size:13px;color:#888;margin-bottom:12px;">Register this customer with their consent to earn loyalty points.</p>
+        <div style="text-align:left;margin-bottom:6px;"><label style="font-size:13px;font-weight:600;">Name *</label></div>
+        <input id="swal-name" class="swal2-input" type="text" placeholder="Customer name" style="margin-top:0;margin-bottom:8px;">
+        <div style="text-align:left;margin-bottom:6px;"><label style="font-size:13px;font-weight:600;">Phone</label></div>
+        <input id="swal-phone" class="swal2-input" type="tel" placeholder="e.g. 0812345678" style="margin-top:0;margin-bottom:8px;">
+        <div style="text-align:left;margin-bottom:6px;"><label style="font-size:13px;font-weight:600;">Email</label></div>
+        <input id="swal-email" class="swal2-input" type="email" placeholder="e.g. customer@email.com" style="margin-top:0;margin-bottom:12px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input id="swal-consent" type="checkbox" style="width:18px;height:18px;">
+          Customer consents to registration
+        </label>
+      `,
+      showCancelButton: true,
+      confirmButtonColor: "#3b82f6",
+      cancelButtonColor: "#6b7280",
+      confirmButtonText: "Register",
+      focusConfirm: false,
+      preConfirm: () => {
+        const name = (document.getElementById("swal-name") as HTMLInputElement).value.trim();
+        const phone = (document.getElementById("swal-phone") as HTMLInputElement).value.trim();
+        const email = (document.getElementById("swal-email") as HTMLInputElement).value.trim();
+        const consent = (document.getElementById("swal-consent") as HTMLInputElement).checked;
+
+        if (!name) { Swal.showValidationMessage("Customer name is required"); return; }
+        if (!consent) { Swal.showValidationMessage("Customer consent is required"); return; }
+
+        return { name, phone, email, consent };
+      },
+    });
+
+    if (result.isConfirmed && result.value) {
+      try {
+        const res = await fetch("/api/customer/register-walkin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            plate: pendingPlate.plate,
+            ...result.value,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          toast({ title: "Customer registered!", description: `${result.value.name} is now enrolled in the loyalty program.` });
+          // Update lookup data to reflect registration
+          setCustomerLookup((prev: any) => ({
+            ...prev,
+            isRegistered: true,
+            loyaltyAccount: data.loyaltyAccount,
+          }));
+        } else {
+          const err = await res.json();
+          toast({ title: "Registration failed", description: err.message, variant: "destructive" });
+        }
+      } catch {
+        toast({ title: "Error", description: "Failed to register customer", variant: "destructive" });
+      }
+    }
+  };
+
   const handlePackageSelect = (code: string) => {
     setSelectedPackageCode(code);
     setShowServiceSelect(false);
@@ -281,7 +349,38 @@ export default function ScanCarwash() {
               </p>
 
               <div className="space-y-2.5">
-                {PACKAGE_ORDER.map(([code, pkg]) => (
+                {/* Show Uber Partner package first if driver is Uber */}
+                {customerLookup?.isUberDriver && SERVICE_PACKAGES["UBER_PARTNER"] && (
+                  <Card
+                    className="p-3.5 cursor-pointer border-2 border-black dark:border-white bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors active:scale-[0.99]"
+                    onClick={() => handlePackageSelect("UBER_PARTNER")}
+                    data-testid="package-UBER_PARTNER"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold">⭐ {SERVICE_PACKAGES["UBER_PARTNER"].label}</p>
+                          <Badge className="bg-black text-white dark:bg-white dark:text-black text-[10px] px-1.5 py-0">
+                            UBER RATE
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1">
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {SERVICE_PACKAGES["UBER_PARTNER"].durationMinutes} min
+                          </span>
+                          <span className="text-lg font-bold text-primary">
+                            R90 flat
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{SERVICE_PACKAGES["UBER_PARTNER"].description}</p>
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-1" />
+                    </div>
+                  </Card>
+                )}
+
+                {PACKAGE_ORDER.filter(([code]) => code !== "UBER_PARTNER").map(([code, pkg]) => (
                   <Card
                     key={code}
                     className="p-3.5 cursor-pointer hover:bg-primary/5 hover:border-primary/30 transition-colors active:scale-[0.99]"
@@ -520,11 +619,34 @@ export default function ScanCarwash() {
               </div>
             )}
 
-            {!customerLookup.crmMembership && !customerLookup.isRegistered && !customerLookup.loyaltyAccount && (
-              <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 mb-4">
-                <p className="text-sm text-amber-700 dark:text-amber-400">
-                  Walk-in customer — not registered. Loyalty points won't be earned. Customer can register at the CRM website.
+            {/* Uber Partner Badge */}
+            {customerLookup.isUberDriver && (
+              <div className="bg-black/5 border border-black/20 dark:bg-white/5 dark:border-white/20 rounded-lg p-4 mb-4 space-y-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <Car className="w-4 h-4" />
+                  <span className="text-sm font-semibold">Uber Partner</span>
+                  <Badge className="bg-black text-white dark:bg-white dark:text-black text-[10px] ml-auto">UBER</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Registered Uber driver — eligible for <span className="font-semibold text-primary">flat R90 rate</span>.
                 </p>
+              </div>
+            )}
+
+            {!customerLookup.crmMembership && !customerLookup.isRegistered && !customerLookup.loyaltyAccount && !customerLookup.isUberDriver && (
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 mb-4">
+                <p className="text-sm text-amber-700 dark:text-amber-400 mb-2">
+                  Walk-in customer — not registered. Loyalty points won't be earned.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+                  onClick={handleRegisterWalkin}
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Register Walk-in Customer
+                </Button>
               </div>
             )}
 
