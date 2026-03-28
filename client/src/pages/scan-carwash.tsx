@@ -1,10 +1,14 @@
 import { useState } from "react";
-import Swal from "sweetalert2";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import { CameraCapture } from "@/components/camera-capture";
 import { PlateConfirmDialog } from "@/components/plate-confirm-dialog";
 import { CustomerUrlDialog } from "@/components/customer-url-dialog";
@@ -14,7 +18,8 @@ import { enqueueRequest } from "@/lib/offline-queue";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft, Camera, Keyboard, Loader2, Car, Award,
-  Clock, ChevronRight, CheckCircle2, Ticket, UserPlus
+  Clock, ChevronRight, CheckCircle2, Ticket, UserPlus,
+  Phone, Mail, CreditCard, ShieldCheck
 } from "lucide-react";
 import type { CountryHint, VehicleSize } from "@shared/schema";
 import { SERVICE_PACKAGES, SERVICE_TIER_COLORS, VEHICLE_SIZES } from "@shared/schema";
@@ -46,6 +51,9 @@ export default function ScanCarwash() {
   const [pendingPlate, setPendingPlate] = useState<{ plate: string; countryHint: CountryHint } | null>(null);
   const [showMembershipInfo, setShowMembershipInfo] = useState(false);
   const [customerLookup, setCustomerLookup] = useState<any>(null);
+  const [showWalkinDialog, setShowWalkinDialog] = useState(false);
+  const [walkinForm, setWalkinForm] = useState({ name: "", phone: "", email: "", consent: false });
+  const [walkinLoading, setWalkinLoading] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
 
   const createJobMutation = useMutation({
@@ -159,70 +167,53 @@ export default function ScanCarwash() {
     setShowServiceSelect(true);
   };
 
-  const handleRegisterWalkin = async () => {
+  const handleRegisterWalkin = () => {
     if (!pendingPlate) return;
+    setWalkinForm({ name: "", phone: "", email: "", consent: false });
+    setShowWalkinDialog(true);
+  };
 
-    const result = await Swal.fire({
-      title: "Register Walk-in Customer",
-      html: `
-        <p style="font-size:13px;color:#888;margin-bottom:12px;">Register this customer with their consent to earn loyalty points.</p>
-        <div style="text-align:left;margin-bottom:6px;"><label style="font-size:13px;font-weight:600;">Name *</label></div>
-        <input id="swal-name" class="swal2-input" type="text" placeholder="Customer name" style="margin-top:0;margin-bottom:8px;">
-        <div style="text-align:left;margin-bottom:6px;"><label style="font-size:13px;font-weight:600;">Phone</label></div>
-        <input id="swal-phone" class="swal2-input" type="tel" placeholder="e.g. 0812345678" style="margin-top:0;margin-bottom:8px;">
-        <div style="text-align:left;margin-bottom:6px;"><label style="font-size:13px;font-weight:600;">Email</label></div>
-        <input id="swal-email" class="swal2-input" type="email" placeholder="e.g. customer@email.com" style="margin-top:0;margin-bottom:12px;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-          <input id="swal-consent" type="checkbox" style="width:18px;height:18px;">
-          Customer consents to registration
-        </label>
-      `,
-      showCancelButton: true,
-      confirmButtonColor: "#3b82f6",
-      cancelButtonColor: "#6b7280",
-      confirmButtonText: "Register",
-      focusConfirm: false,
-      preConfirm: () => {
-        const name = (document.getElementById("swal-name") as HTMLInputElement).value.trim();
-        const phone = (document.getElementById("swal-phone") as HTMLInputElement).value.trim();
-        const email = (document.getElementById("swal-email") as HTMLInputElement).value.trim();
-        const consent = (document.getElementById("swal-consent") as HTMLInputElement).checked;
-
-        if (!name) { Swal.showValidationMessage("Customer name is required"); return; }
-        if (!consent) { Swal.showValidationMessage("Customer consent is required"); return; }
-
-        return { name, phone, email, consent };
-      },
-    });
-
-    if (result.isConfirmed && result.value) {
-      try {
-        const res = await fetch("/api/customer/register-walkin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({
-            plate: pendingPlate.plate,
-            ...result.value,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          toast({ title: "Customer registered!", description: `${result.value.name} is now enrolled in the loyalty program.` });
-          // Update lookup data to reflect registration
-          setCustomerLookup((prev: any) => ({
-            ...prev,
-            isRegistered: true,
-            loyaltyAccount: data.loyaltyAccount,
-          }));
-        } else {
-          const err = await res.json();
-          toast({ title: "Registration failed", description: err.message, variant: "destructive" });
-        }
-      } catch {
-        toast({ title: "Error", description: "Failed to register customer", variant: "destructive" });
+  const handleWalkinSubmit = async () => {
+    if (!pendingPlate) return;
+    if (!walkinForm.name.trim()) {
+      toast({ title: "Name required", description: "Please enter the customer's name.", variant: "destructive" });
+      return;
+    }
+    if (!walkinForm.consent) {
+      toast({ title: "Consent required", description: "Customer must consent to registration.", variant: "destructive" });
+      return;
+    }
+    setWalkinLoading(true);
+    try {
+      const res = await fetch("/api/customer/register-walkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          plate: pendingPlate.plate,
+          name: walkinForm.name.trim(),
+          phone: walkinForm.phone.trim() || undefined,
+          email: walkinForm.email.trim() || undefined,
+          consent: true,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setShowWalkinDialog(false);
+        toast({ title: "Customer enrolled!", description: `${walkinForm.name.trim()} is now in the loyalty program.` });
+        setCustomerLookup((prev: any) => ({
+          ...prev,
+          isRegistered: true,
+          loyaltyAccount: data.loyaltyAccount,
+        }));
+      } else {
+        const err = await res.json();
+        toast({ title: "Registration failed", description: err.message, variant: "destructive" });
       }
+    } catch {
+      toast({ title: "Error", description: "Failed to register customer", variant: "destructive" });
+    } finally {
+      setWalkinLoading(false);
     }
   };
 
@@ -675,6 +666,129 @@ export default function ScanCarwash() {
           </Card>
         </div>
       )}
+
+      {/* Walk-in Registration Dialog */}
+      <Dialog open={showWalkinDialog} onOpenChange={setShowWalkinDialog}>
+        <DialogContent className="sm:max-w-md p-0 overflow-hidden">
+          {/* Gradient header band */}
+          <div className="bg-gradient-to-r from-primary via-primary/90 to-primary/70 px-6 pt-6 pb-5">
+            <div className="flex items-center gap-3 mb-1">
+              <div className="bg-white/20 rounded-full p-2">
+                <UserPlus className="w-5 h-5 text-white" />
+              </div>
+              <DialogTitle className="text-white text-lg font-bold tracking-tight">
+                Walk-in Registration
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-white/75 text-sm ml-11">
+              Enroll this customer in the loyalty rewards programme
+            </DialogDescription>
+          </div>
+
+          <div className="px-6 py-5 space-y-4">
+            {/* Plate badge */}
+            <div className="flex items-center gap-3 bg-muted/60 border rounded-lg px-4 py-3">
+              <CreditCard className="w-4 h-4 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Licence Plate</p>
+                <p className="font-mono font-bold text-base tracking-widest text-foreground">{pendingPlate?.plate}</p>
+              </div>
+              <Badge variant="secondary" className="text-xs shrink-0">Auto-filled</Badge>
+            </div>
+
+            <Separator />
+
+            {/* Name */}
+            <div className="space-y-1.5">
+              <Label htmlFor="wk-name" className="text-sm font-semibold flex items-center gap-1.5">
+                Full Name <span className="text-rose-500">*</span>
+              </Label>
+              <Input
+                id="wk-name"
+                placeholder="e.g. Thabo Nkosi"
+                value={walkinForm.name}
+                onChange={e => setWalkinForm(f => ({ ...f, name: e.target.value }))}
+                className="h-10"
+                autoFocus
+              />
+            </div>
+
+            {/* Phone */}
+            <div className="space-y-1.5">
+              <Label htmlFor="wk-phone" className="text-sm font-semibold flex items-center gap-1.5">
+                <Phone className="w-3.5 h-3.5 text-muted-foreground" /> Phone Number
+                <span className="text-muted-foreground font-normal text-xs ml-1">(optional)</span>
+              </Label>
+              <Input
+                id="wk-phone"
+                type="tel"
+                placeholder="e.g. 082 456 7890"
+                value={walkinForm.phone}
+                onChange={e => setWalkinForm(f => ({ ...f, phone: e.target.value }))}
+                className="h-10"
+              />
+            </div>
+
+            {/* Email */}
+            <div className="space-y-1.5">
+              <Label htmlFor="wk-email" className="text-sm font-semibold flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email Address
+                <span className="text-muted-foreground font-normal text-xs ml-1">(optional)</span>
+              </Label>
+              <Input
+                id="wk-email"
+                type="email"
+                placeholder="e.g. thabo@email.com"
+                value={walkinForm.email}
+                onChange={e => setWalkinForm(f => ({ ...f, email: e.target.value }))}
+                className="h-10"
+              />
+            </div>
+
+            {/* Consent */}
+            <div className="flex items-start gap-3 bg-amber-500/8 border border-amber-500/20 rounded-lg px-4 py-3">
+              <Checkbox
+                id="wk-consent"
+                checked={walkinForm.consent}
+                onCheckedChange={v => setWalkinForm(f => ({ ...f, consent: !!v }))}
+                className="mt-0.5 border-amber-500/60 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+              />
+              <label htmlFor="wk-consent" className="text-sm leading-snug cursor-pointer">
+                <span className="flex items-center gap-1.5 font-semibold mb-0.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                  Customer gives consent
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  Customer agrees to be enrolled in the loyalty programme and receive wash notifications.
+                </span>
+              </label>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-1">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowWalkinDialog(false)}
+                disabled={walkinLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 gap-2"
+                onClick={handleWalkinSubmit}
+                disabled={walkinLoading || !walkinForm.name.trim() || !walkinForm.consent}
+              >
+                {walkinLoading ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Enrolling...</>
+                ) : (
+                  <><UserPlus className="w-4 h-4" /> Enrol Customer</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
